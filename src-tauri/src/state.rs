@@ -1,4 +1,4 @@
-use crate::project::{Notice, Project, Settings};
+use crate::project::{Library, Notice, Project, Settings};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, RwLock};
 /// The single source of truth for the whole application, managed by Tauri.
 pub struct AppState {
     pub project: Arc<RwLock<Project>>,
+    pub library: Arc<RwLock<Library>>,
     pub settings: RwLock<Settings>,
     pub notice: RwLock<Option<Notice>>,
     pub data_dir: RwLock<PathBuf>,
@@ -17,6 +18,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             project: Arc::new(RwLock::new(Project::new("New Project"))),
+            library: Arc::new(RwLock::new(Library::default())),
             settings: RwLock::new(Settings::default()),
             notice: RwLock::new(None),
             data_dir: RwLock::new(PathBuf::new()),

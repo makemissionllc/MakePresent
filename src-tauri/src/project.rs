@@ -36,10 +36,25 @@ impl Default for Background {
     }
 }
 
+/// How the Output (and Stage) switch from one live slide to the next.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Transition {
+    #[default]
+    Cut,
+    Fade,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Slide {
     pub id: String,
+    /// When this playlist slide was added from the library, the source song id.
+    #[serde(default)]
+    pub library_id: Option<String>,
+    /// The source verse/section id within that song.
+    #[serde(default)]
+    pub library_slide_id: Option<String>,
     pub title: String,
     pub body: String,
     pub background: Background,
@@ -53,6 +68,9 @@ pub struct Project {
     pub name: String,
     pub slides: Vec<Slide>,
     pub live: Option<String>,
+    /// How the Output switches between live slides ("cut" or "fade").
+    #[serde(default)]
+    pub transition: Transition,
     pub modified_at: String,
 }
 
@@ -64,11 +82,14 @@ impl Project {
             name: name.to_string(),
             slides: vec![Slide {
                 id: Uuid::new_v4().to_string(),
+                library_id: None,
+                library_slide_id: None,
                 title: "Welcome to MakePresent".to_string(),
                 body: "This is the Phase 1 test slide.".to_string(),
                 background: Background::default(),
             }],
             live: None,
+            transition: Transition::Cut,
             modified_at: now_iso(),
         }
     }
@@ -79,6 +100,13 @@ impl Project {
 
     pub fn find(&self, id: &str) -> Option<&Slide> {
         self.slides.iter().find(|s| s.id == id)
+    }
+
+    /// The slide queued after the given id in the playlist (used for the
+    /// Stage Display "next" preview). Returns None when nothing follows.
+    pub fn next_slide(&self, id: &str) -> Option<&Slide> {
+        let index = self.slides.iter().position(|s| s.id == id)?;
+        self.slides.get(index + 1)
     }
 }
 
@@ -104,10 +132,56 @@ pub struct OutputView {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StageView {
+    pub visible: bool,
+    pub monitor_index: Option<usize>,
+    pub monitor_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ClientState {
     pub project: Project,
     pub notice: Option<Notice>,
     pub output: OutputView,
+    pub stage: StageView,
+    /// Resolved live slide (None when output is black).
+    pub current: Option<Slide>,
+    /// Resolved next slide in the playlist (None when nothing queued).
+    pub next: Option<Slide>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySlide {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySong {
+    pub id: String,
+    pub title: String,
+    pub default_background: Background,
+    pub slides: Vec<LibrarySlide>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Library {
+    pub schema_version: u32,
+    pub songs: Vec<LibrarySong>,
+}
+
+impl Default for Library {
+    fn default() -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            songs: Vec::new(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -125,11 +199,14 @@ pub struct Session {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub output_display_index: Option<usize>,
     pub output_display_name: Option<String>,
     pub output_fullscreen: bool,
+    pub stage_display_index: Option<usize>,
+    pub stage_display_name: Option<String>,
+    pub stage_visible: bool,
 }
 
 impl Default for Settings {
@@ -138,6 +215,9 @@ impl Default for Settings {
             output_display_index: None,
             output_display_name: None,
             output_fullscreen: true,
+            stage_display_index: None,
+            stage_display_name: None,
+            stage_visible: false,
         }
     }
 }
@@ -181,6 +261,83 @@ pub fn write_settings(data_dir: &Path, settings: &Settings) -> io::Result<()> {
     let json = serde_json::to_string_pretty(settings)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
     fs::write(data_dir.join("settings.json"), json)
+}
+
+fn atomic_write_json(data_dir: &Path, file_name: &str, value: &impl Serialize) -> io::Result<()> {
+    fs::create_dir_all(data_dir)?;
+    let json = serde_json::to_string_pretty(value)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    let tmp = data_dir.join(format!("{file_name}.tmp"));
+    {
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(json.as_bytes())?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, data_dir.join(file_name))
+}
+
+/// Load the library from disk, seeding sample songs on first run.
+pub fn read_library(data_dir: &Path) -> Library {
+    let raw = fs::read_to_string(data_dir.join("library.json")).ok();
+    match raw.and_then(|r| serde_json::from_str::<Library>(&r).ok()) {
+        Some(library) => library,
+        None => {
+            let library = seed_library();
+            let _ = write_library(data_dir, &library);
+            library
+        }
+    }
+}
+
+pub fn write_library(data_dir: &Path, library: &Library) -> io::Result<()> {
+    atomic_write_json(data_dir, "library.json", library)
+}
+
+/// A couple of sample songs so the library has content on first launch.
+fn seed_library() -> Library {
+    Library {
+        schema_version: SCHEMA_VERSION,
+        songs: vec![
+            LibrarySong {
+                id: Uuid::new_v4().to_string(),
+                title: "Amazing Grace".to_string(),
+                default_background: Background::Solid {
+                    color: "#1f3a2f".to_string(),
+                },
+                slides: vec![
+                    LibrarySlide {
+                        id: Uuid::new_v4().to_string(),
+                        title: "Verse 1".to_string(),
+                        body: "Amazing grace, how sweet the sound\nThat saved a wretch like me\nI once was lost, but now am found\nWas blind, but now I see.".to_string(),
+                    },
+                    LibrarySlide {
+                        id: Uuid::new_v4().to_string(),
+                        title: "Chorus".to_string(),
+                        body: "Was grace that taught my heart to fear\nAnd grace my fears relieved\nHow precious did that grace appear\nThe hour I first believed.".to_string(),
+                    },
+                ],
+            },
+            LibrarySong {
+                id: Uuid::new_v4().to_string(),
+                title: "Great Is Thy Faithfulness".to_string(),
+                default_background: Background::Solid {
+                    color: "#0f2b4a".to_string(),
+                },
+                slides: vec![
+                    LibrarySlide {
+                        id: Uuid::new_v4().to_string(),
+                        title: "Verse 1".to_string(),
+                        body: "Great is Thy faithfulness, O God my Father\nThere is no shadow of turning with Thee\nThou changest not, Thy compassions, they fail not\nAs Thou hast been, Thou forever wilt be.".to_string(),
+                    },
+                    LibrarySlide {
+                        id: Uuid::new_v4().to_string(),
+                        title: "Chorus".to_string(),
+                        body: "Great is Thy faithfulness!\nGreat is Thy faithfulness!\nMorning by morning new mercies I see\nAll I have needed Thy hand hath provided\nGreat is Thy faithfulness, Lord, unto me.".to_string(),
+                    },
+                ],
+            },
+        ],
+    }
 }
 
 /// Atomically persist the project (temp file + rename) and keep a versioned
@@ -320,6 +477,7 @@ at: saved_at.clone(),
 /// `AUTOSAVE_DEBOUNCE_MS`, then persists a quiet version of the project.
 pub fn spawn_autosave(
     project: Arc<RwLock<Project>>,
+    library: Arc<RwLock<Library>>,
     data_dir: PathBuf,
     app: tauri::AppHandle,
 ) -> mpsc::Sender<()> {
@@ -332,7 +490,9 @@ pub fn spawn_autosave(
         while rx.recv_timeout(Duration::from_millis(AUTOSAVE_DEBOUNCE_MS)).is_ok() {}
 
         let project = project.read().unwrap();
-        match persist(&project, &data_dir) {
+        let library = library.read().unwrap();
+        let result = persist(&project, &data_dir).and_then(|_| write_library(&data_dir, &library));
+        match result {
             Ok(()) => {
                 let _ = app.emit("autosave", serde_json::json!({ "status": "saved", "at": now_iso() }));
             }

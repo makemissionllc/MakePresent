@@ -31,6 +31,7 @@ export default defineConfig({
       input: {
         editor: fileURLToPath(new URL("./index.html", import.meta.url)),
         output: fileURLToPath(new URL("./output.html", import.meta.url)),
+        stage: fileURLToPath(new URL("./stage.html", import.meta.url)),
       },
     },
   },

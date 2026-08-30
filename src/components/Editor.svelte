@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, subscribeState, subscribeAutosave } from "../lib/sync";
-  import type { ClientState, DisplayInfo, Slide } from "../lib/types";
+  import { api, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
+  import type { ClientState, DisplayInfo, Library, LibrarySong, Slide } from "../lib/types";
 
   const PALETTE = [
     "#1a1a24",
@@ -20,6 +20,8 @@
   let savedLabel = $state<string>("Not saved");
   let errorMsg = $state<string | null>(null);
   let noticeDismissed = $state(false);
+  let library = $state<Library | null>(null);
+  let librarySearch = $state("");
 
   const project = $derived(appState?.project ?? null);
   const notice = $derived(
@@ -29,6 +31,11 @@
     project?.slides.find((s) => s.id === selectedId) ??
       project?.slides[0] ??
       null,
+  );
+  const librarySongs = $derived(
+    (library?.songs ?? []).filter((song) =>
+      song.title.toLowerCase().includes(librarySearch.trim().toLowerCase()),
+    ),
   );
 
   function formatAt(at?: string): string {
@@ -98,6 +105,51 @@
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
+  function onStageDisplayChange(e: Event): void {
+    const target = e.target as HTMLSelectElement;
+    const index = Number(target.value);
+    void api
+      .setStageDisplay(index)
+      .then((d) => (displays = d))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
+  function onTransitionChange(e: Event): void {
+    const value = (e.target as HTMLSelectElement).value as "cut" | "fade";
+    void api
+      .setTransition(value)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
+  function toggleStage(): void {
+    void api.toggleStage().catch((e: unknown) => (errorMsg = String(e)));
+  }
+
+  function addToPlaylist(song: LibrarySong): void {
+    void api
+      .addSongToPlaylist(song.id)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
+  function addLibrarySong(): void {
+    const title = window.prompt("Song title");
+    if (!title) return;
+    const body = window.prompt("Lyrics / body text") ?? "";
+    void api
+      .addLibrarySong(title, body)
+      .then((l) => (library = l))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
+  function deleteSong(song: LibrarySong): void {
+    void api
+      .deleteLibrarySong(song.id)
+      .then((l) => (library = l))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
   function toggleFullscreen(): void {
     void api.toggleOutputFullscreen().catch((e: unknown) => (errorMsg = String(e)));
   }
@@ -115,6 +167,7 @@
   onMount(() => {
     let unSub: () => void = () => {};
     let unAuto: () => void = () => {};
+    let unLib: () => void = () => {};
 
     void (async () => {
       unSub = await subscribeState((s) => {
@@ -124,6 +177,9 @@
         savedLabel =
           e.status === "saved" ? `Saved ${formatAt(e.at)}` : `Autosave failed: ${e.message ?? "unknown"}`;
       });
+      unLib = await subscribeLibrary((l) => {
+        library = l;
+      });
       try {
         const s = await api.getState();
         appState = s;
@@ -132,11 +188,13 @@
         errorMsg = String(e);
       }
       api.listDisplays().then((d) => (displays = d)).catch((e: unknown) => (errorMsg = String(e)));
+      api.getLibrary().then((l) => (library = l)).catch((e: unknown) => (errorMsg = String(e)));
     })();
 
     return () => {
       unSub();
       unAuto();
+      unLib();
     };
   });
 </script>
@@ -198,6 +256,37 @@
         {/each}
       </ul>
       <button class="add" onclick={() => addSlide()}>+ Add slide</button>
+
+      <div class="section-title library-title">Library</div>
+      <input
+        type="text"
+        class="search"
+        placeholder="Search songs"
+        bind:value={librarySearch}
+      />
+      <ul class="song-list">
+        {#each librarySongs as song (song.id)}
+          <li>
+            <button class="song-entry" onclick={() => addToPlaylist(song)}>
+              <span class="song-label">{song.title || "Untitled"}</span>
+              <span class="song-count">{song.slides.length} {song.slides.length === 1 ? "slide" : "slides"}</span>
+            </button>
+            <button
+              class="delete"
+              title="Delete song"
+              onclick={(e) => {
+                e.stopPropagation();
+                deleteSong(song);
+              }}
+            >
+              &times;
+            </button>
+          </li>
+        {:else}
+          <li class="empty">No songs yet. Add one below.</li>
+        {/each}
+      </ul>
+      <button class="add" onclick={() => addLibrarySong()}>+ Add song</button>
     </aside>
 
     <main class="editor">
@@ -275,6 +364,17 @@
         {appState?.output.fullscreen ? "Exit fullscreen" : "Go fullscreen"}
       </button>
 
+      <label>
+        Transition
+        <select
+          value={project?.transition ?? "cut"}
+          onchange={onTransitionChange}
+        >
+          <option value="cut">Cut</option>
+          <option value="fade">Fade</option>
+        </select>
+      </label>
+
       <div class="output-status">
         {#if project?.live}
           Live on display
@@ -284,6 +384,40 @@
               : "?")}
         {:else}
           Output is black (no live slide)
+        {/if}
+      </div>
+
+      <div class="section-title stage-title">Stage Display</div>
+
+      <button class="ghost" onclick={() => toggleStage()}>
+        {appState?.stage.visible ? "Hide stage" : "Show stage"}
+      </button>
+
+      <label>
+        Display
+        <select
+          value={appState?.stage.monitorIndex ?? ""}
+          onchange={onStageDisplayChange}
+        >
+          {#each displays ?? [] as d}
+            <option value={d.index}>
+              {d.name || `Display ${d.index + 1}`} &middot; {d.width}&times;{d.height}{d.primary
+                ? " (primary)"
+                : ""}
+            </option>
+          {/each}
+        </select>
+      </label>
+
+      <div class="output-status">
+        {#if appState?.stage.visible}
+          Stage on display
+          {appState.stage.monitorName ||
+            (appState.stage.monitorIndex != null
+              ? `#${appState.stage.monitorIndex}`
+              : "?")}
+        {:else}
+          Stage is hidden
         {/if}
       </div>
     </aside>
@@ -402,6 +536,12 @@
     margin-bottom: 8px;
   }
 
+  .stage-title {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+  }
+
   .slide-list {
     list-style: none;
     margin: 0;
@@ -503,6 +643,61 @@
     width: 100%;
     margin-top: 10px;
     background: transparent;
+  }
+
+  .library-title {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+  }
+
+  .search {
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  .song-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .song-list li {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+  }
+
+  .song-entry {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-align: left;
+    background: var(--panel-2);
+    padding: 6px 10px;
+  }
+
+  .song-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .song-count {
+    font-size: 11px;
+    color: var(--text-dim);
+    flex: none;
+  }
+
+  .song-list .empty {
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 4px;
   }
 
   .editor {

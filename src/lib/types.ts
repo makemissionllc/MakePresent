@@ -5,10 +5,14 @@ export interface Background {
 
 export interface Slide {
   id: string;
+  libraryId: string | null;
+  librarySlideId: string | null;
   title: string;
   body: string;
   background: Background;
 }
+
+export type Transition = "cut" | "fade";
 
 export interface Project {
   schemaVersion: number;
@@ -16,6 +20,7 @@ export interface Project {
   name: string;
   slides: Slide[];
   live: string | null;
+  transition: Transition;
   modifiedAt: string;
 }
 
@@ -31,10 +36,19 @@ export interface OutputView {
   fullscreen: boolean;
 }
 
+export interface StageView {
+  visible: boolean;
+  monitorIndex: number | null;
+  monitorName: string | null;
+}
+
 export interface ClientState {
   project: Project;
   notice: Notice | null;
   output: OutputView;
+  stage: StageView;
+  current: Slide | null;
+  next: Slide | null;
 }
 
 export interface DisplayInfo {
@@ -46,6 +60,24 @@ export interface DisplayInfo {
   y: number;
   primary: boolean;
   current: boolean;
+}
+
+export interface LibrarySlide {
+  id: string;
+  title: string;
+  body: string;
+}
+
+export interface LibrarySong {
+  id: string;
+  title: string;
+  defaultBackground: Background;
+  slides: LibrarySlide[];
+}
+
+export interface Library {
+  schemaVersion: number;
+  songs: LibrarySong[];
 }
 
 export interface AutosaveEvent {

@@ -1,9 +1,12 @@
 use crate::state::AppState;
 use serde::Serialize;
-use tauri::{AppHandle, Manager, Monitor, Position, WebviewUrl, WebviewWindow};
+use tauri::{
+    AppHandle, Manager, Monitor, PhysicalSize, Position, Size, WebviewUrl, WebviewWindow,
+};
 
 pub const EDITOR_WINDOW: &str = "main";
 pub const OUTPUT_WINDOW: &str = "output";
+pub const STAGE_WINDOW: &str = "stage";
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +54,58 @@ pub fn ensure_output(app: &AppHandle) -> Result<WebviewWindow, String> {
         .visible(false)
         .build()
         .map_err(|e| format!("failed to create output window: {e}"))
+}
+
+/// The stage display is a dumb renderer aimed at the performers/presenters.
+/// Created on demand so it only exists while the user has it switched on.
+pub fn get_stage(app: &AppHandle) -> Option<WebviewWindow> {
+    app.get_webview_window(STAGE_WINDOW)
+}
+
+fn stage_url() -> WebviewUrl {
+    #[cfg(debug_assertions)]
+    {
+        WebviewUrl::External(
+            "http://localhost:1420/stage.html"
+                .parse()
+                .expect("valid dev URL"),
+        )
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        WebviewUrl::App("stage.html".into())
+    }
+}
+
+pub fn ensure_stage(app: &AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(window) = get_stage(app) {
+        return Ok(window);
+    }
+    WebviewWindow::builder(app, STAGE_WINDOW, stage_url())
+        .title("MakePresent - Stage Display")
+        .resizable(true)
+        .visible(false)
+        .build()
+        .map_err(|e| format!("failed to create stage window: {e}"))
+}
+
+/// Place the stage window on the given display, windowed at ~70% of the
+/// monitor, and show it. Same display-picker pattern as the output window.
+pub fn move_stage_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWindow, String> {
+    let editor = editor_window(app)?;
+    let monitors = editor.available_monitors().map_err(|e| e.to_string())?;
+    let monitor = monitors
+        .get(monitor_index)
+        .ok_or_else(|| format!("invalid display index {monitor_index}"))?;
+
+    let window = ensure_stage(app)?;
+    let size = monitor.size();
+    let w = (size.width as f64 * 0.7).round() as u32;
+    let h = (size.height as f64 * 0.7).round() as u32;
+    let _ = window.set_size(Size::Physical(PhysicalSize::new(w, h)));
+    let _ = window.set_position(Position::Physical(*monitor.position()));
+    window.show().map_err(|e| e.to_string())?;
+    Ok(window)
 }
 
 fn same_monitor(a: &Monitor, b: &Monitor) -> bool {

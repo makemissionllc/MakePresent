@@ -5,10 +5,16 @@ import type {
   ClientState,
   DisplayInfo,
   Background,
+  Library,
+  Transition,
 } from "./types";
 
 export function subscribeState(cb: (state: ClientState) => void): Promise<UnlistenFn> {
   return listen<ClientState>("state", (event) => cb(event.payload));
+}
+
+export function subscribeLibrary(cb: (library: Library) => void): Promise<UnlistenFn> {
+  return listen<Library>("library", (event) => cb(event.payload));
 }
 
 export function subscribeAutosave(
@@ -45,4 +51,23 @@ export const api = {
 
   toggleOutputFullscreen: () =>
     invoke<boolean>("toggle_output_fullscreen"),
+
+  setStageDisplay: (index: number) =>
+    invoke<DisplayInfo[]>("set_stage_display", { index }),
+
+  toggleStage: () => invoke<boolean>("toggle_stage"),
+
+  getLibrary: () => invoke<Library>("get_library"),
+
+  addLibrarySong: (title: string, body?: string, background?: Background) =>
+    invoke<Library>("add_library_song", { title, body, background }),
+
+  deleteLibrarySong: (songId: string) =>
+    invoke<Library>("delete_library_song", { songId }),
+
+  addSongToPlaylist: (songId: string) =>
+    invoke<ClientState>("add_song_to_playlist", { songId }),
+
+  setTransition: (transition: Transition) =>
+    invoke<ClientState>("set_transition", { transition }),
 };

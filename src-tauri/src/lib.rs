@@ -3,7 +3,7 @@ mod project;
 mod state;
 mod windows;
 
-use project::{persist, read_session, recover_or_seed, write_session};
+use project::{persist, read_library, read_session, recover_or_seed, write_library, write_session};
 use state::AppState;
 use tauri::Manager;
 
@@ -15,6 +15,10 @@ fn finalize(app: &tauri::AppHandle) {
     {
         let project = state.project.read().unwrap();
         let _ = persist(&project, &data_dir);
+    }
+    {
+        let library = state.library.read().unwrap();
+        let _ = write_library(&data_dir, &library);
     }
     let mut session = read_session(&data_dir).unwrap_or_default();
     session.clean_shutdown = true;
@@ -30,16 +34,20 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
 
             // Single source of truth: load the last autosaved project (with
-            // crash-recovery notice) or seed the Phase 1 test project.
+            // crash-recovery notice) or seed the Phase 1 test project, and
+            // load (or seed) the reusable slide library.
             let (project, notice) = recover_or_seed(&data_dir);
+            let library = read_library(&data_dir);
             let state = app.state::<AppState>();
             *state.project.write().unwrap() = project;
+            *state.library.write().unwrap() = library;
             state.set_notice(notice);
             *state.data_dir.write().unwrap() = data_dir.clone();
             state.apply_settings(project::read_settings(&data_dir));
 
             let tx = project::spawn_autosave(
                 state.project.clone(),
+                state.library.clone(),
                 data_dir.clone(),
                 app.handle().clone(),
             );
@@ -50,11 +58,25 @@ pub fn run() {
                 eprintln!("could not place output window: {e}");
             }
 
+            // Restore the stage display if it was left switched on.
+            if state.current_settings().stage_visible {
+                if let Some(index) = state.current_settings().stage_display_index {
+                    if let Err(e) = windows::move_stage_to(app.handle(), index) {
+                        eprintln!("could not restore stage window: {e}");
+                    }
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
+            commands::get_library,
+            commands::add_library_song,
+            commands::delete_library_song,
+            commands::add_song_to_playlist,
             commands::set_live_slide,
+            commands::set_transition,
             commands::clear_output,
             commands::new_project,
             commands::add_slide,
@@ -63,6 +85,8 @@ pub fn run() {
             commands::list_displays,
             commands::set_output_display,
             commands::toggle_output_fullscreen,
+            commands::set_stage_display,
+            commands::toggle_stage,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

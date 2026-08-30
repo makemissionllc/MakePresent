@@ -1,3 +1,5 @@
+use crate::logging::Level;
+use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
@@ -6,7 +8,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use uuid::Uuid;
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -125,6 +127,8 @@ pub struct Notice {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputView {
+    /// true once the on-demand output window exists and is showing.
+    pub visible: bool,
     pub monitor_index: Option<usize>,
     pub monitor_name: Option<String>,
     pub fullscreen: bool,
@@ -145,6 +149,10 @@ pub struct ClientState {
     pub notice: Option<Notice>,
     pub output: OutputView,
     pub stage: StageView,
+    /// true on the very first launch (no saved project or settings yet).
+    pub first_run: bool,
+    /// Per-machine default transition used for new projects.
+    pub default_transition: Transition,
     /// Resolved live slide (None when output is black).
     pub current: Option<Slide>,
     /// Resolved next slide in the playlist (None when nothing queued).
@@ -207,6 +215,8 @@ pub struct Settings {
     pub stage_display_index: Option<usize>,
     pub stage_display_name: Option<String>,
     pub stage_visible: bool,
+    /// Default transition applied to newly created projects.
+    pub default_transition: Transition,
 }
 
 impl Default for Settings {
@@ -218,8 +228,15 @@ impl Default for Settings {
             stage_display_index: None,
             stage_display_name: None,
             stage_visible: false,
+            default_transition: Transition::Cut,
         }
     }
+}
+
+/// True only on the very first launch: no project and no settings have ever
+/// been written to disk. Used to show the one-time welcome message.
+pub fn is_first_run(data_dir: &Path) -> bool {
+    !data_dir.join("project.json").exists() && !data_dir.join("settings.json").exists()
 }
 
 // ---------------------------------------------------------------------------
@@ -494,10 +511,14 @@ pub fn spawn_autosave(
         let result = persist(&project, &data_dir).and_then(|_| write_library(&data_dir, &library));
         match result {
             Ok(()) => {
+                app.state::<AppState>().logger.log(Level::Info, "autosave: saved");
                 let _ = app.emit("autosave", serde_json::json!({ "status": "saved", "at": now_iso() }));
             }
             Err(error) => {
                 eprintln!("autosave failed: {error}");
+                app.state::<AppState>()
+                    .logger
+                    .log(Level::Error, &format!("autosave: failed: {error}"));
                 let _ = app.emit(
                     "autosave",
                     serde_json::json!({ "status": "error", "message": error.to_string() }),

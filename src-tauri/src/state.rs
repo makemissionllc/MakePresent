@@ -1,3 +1,4 @@
+use crate::logging::Logger;
 use crate::project::{Library, Notice, Project, Settings};
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
@@ -10,6 +11,8 @@ pub struct AppState {
     pub settings: RwLock<Settings>,
     pub notice: RwLock<Option<Notice>>,
     pub data_dir: RwLock<PathBuf>,
+    /// Rolling event log (flushed immediately) for crash diagnostics.
+    pub logger: Logger,
     /// Wake channel for the autosave worker thread.
     pub save_tx: Mutex<Option<Sender<()>>>,
 }
@@ -22,6 +25,7 @@ impl Default for AppState {
             settings: RwLock::new(Settings::default()),
             notice: RwLock::new(None),
             data_dir: RwLock::new(PathBuf::new()),
+            logger: Logger::default(),
             save_tx: Mutex::new(None),
         }
     }

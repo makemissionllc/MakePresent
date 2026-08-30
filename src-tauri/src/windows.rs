@@ -174,8 +174,17 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
     Ok(window)
 }
 
-/// Startup placement: honor the stored assignment, else auto-pick a display.
-pub fn place_default_output(app: &AppHandle, state: &AppState) -> Result<(), String> {
+/// Whether the on-demand output window currently exists and is showing.
+pub fn output_visible(app: &AppHandle) -> bool {
+    app.get_webview_window(OUTPUT_WINDOW)
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
+
+/// Show (and create if needed) the output window on the configured or
+/// auto-picked display. This is the "Show Output" action used both by the
+/// explicit button and by the first slide going live.
+pub fn show_output(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let settings = state.current_settings();
     let index = match settings.output_display_index {
         Some(index) => index,

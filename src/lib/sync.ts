@@ -5,7 +5,10 @@ import type {
   ClientState,
   DisplayInfo,
   Background,
+  ExportReport,
+  ImportReport,
   Library,
+  LogEntry,
   Transition,
 } from "./types";
 
@@ -52,6 +55,8 @@ export const api = {
   toggleOutputFullscreen: () =>
     invoke<boolean>("toggle_output_fullscreen"),
 
+  showOutput: () => invoke<ClientState>("show_output"),
+
   setStageDisplay: (index: number) =>
     invoke<DisplayInfo[]>("set_stage_display", { index }),
 
@@ -70,4 +75,15 @@ export const api = {
 
   setTransition: (transition: Transition) =>
     invoke<ClientState>("set_transition", { transition }),
+
+  exportSettings: (path: string) =>
+    invoke<ExportReport>("export_settings", { path }),
+
+  importSettings: (path: string) =>
+    invoke<ImportReport>("import_settings", { path }),
+
+  getLogs: (limit?: number) => invoke<LogEntry[]>("get_logs", { limit }),
+
+  exportLogs: (path: string) =>
+    invoke<string>("export_logs_to", { path }),
 };

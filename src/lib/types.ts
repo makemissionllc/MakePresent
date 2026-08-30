@@ -31,6 +31,7 @@ export interface Notice {
 }
 
 export interface OutputView {
+  visible: boolean;
   monitorIndex: number | null;
   monitorName: string | null;
   fullscreen: boolean;
@@ -47,6 +48,8 @@ export interface ClientState {
   notice: Notice | null;
   output: OutputView;
   stage: StageView;
+  firstRun: boolean;
+  defaultTransition: Transition;
   current: Slide | null;
   next: Slide | null;
 }
@@ -84,4 +87,20 @@ export interface AutosaveEvent {
   status: "saved" | "error";
   at?: string;
   message?: string;
+}
+
+export interface ExportReport {
+  path: string;
+  fields: string[];
+}
+
+export interface ImportReport {
+  changedFields: string[];
+  message: string;
+}
+
+export interface LogEntry {
+  at: string;
+  level: string;
+  message: string;
 }

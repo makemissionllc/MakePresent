@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
   import type { ClientState, DisplayInfo, Library, LibrarySong, Slide } from "../lib/types";
+  import SettingsPanel from "./SettingsPanel.svelte";
 
   const PALETTE = [
     "#1a1a24",
@@ -22,11 +23,14 @@
   let noticeDismissed = $state(false);
   let library = $state<Library | null>(null);
   let librarySearch = $state("");
+  let settingsOpen = $state(false);
+  let welcomeDismissed = $state(false);
 
   const project = $derived(appState?.project ?? null);
   const notice = $derived(
     appState?.notice && !noticeDismissed ? appState.notice : null,
   );
+  const welcome = $derived(appState?.firstRun === true && !welcomeDismissed);
   const selected = $derived(
     project?.slides.find((s) => s.id === selectedId) ??
       project?.slides[0] ??
@@ -65,6 +69,7 @@
   async function addSlide(): Promise<void> {
     try {
       errorMsg = null;
+      welcomeDismissed = true;
       const s = await api.addSlide("New Slide", "");
       appState = s;
       const created = s.project.slides.at(-1);
@@ -154,8 +159,16 @@
     void api.toggleOutputFullscreen().catch((e: unknown) => (errorMsg = String(e)));
   }
 
+  function showOutput(): void {
+    void api
+      .showOutput()
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
   async function newProject(): Promise<void> {
     try {
+      welcomeDismissed = true;
       const s = await api.newProject();
       appState = s;
       selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
@@ -199,6 +212,15 @@
   });
 </script>
 
+{#if appState === null}
+  <div class="loading-shell">
+    <div class="spinner" aria-hidden="true"></div>
+    <p>Starting MakePresent…</p>
+    {#if errorMsg}
+      <p class="loading-error">{errorMsg}</p>
+    {/if}
+  </div>
+{:else}
 <div class="shell">
   <header class="topbar">
     <h1>MakePresent</h1>
@@ -208,6 +230,9 @@
     <span class="saved-label">{savedLabel}</span>
     <button class="ghost" onclick={() => newProject()}>New project</button>
     <button class="ghost" onclick={() => clearOutput()}>Clear output</button>
+    <button class="ghost" title="Settings" onclick={() => (settingsOpen = true)}>
+      &#9881; Settings
+    </button>
   </header>
 
   {#if notice}
@@ -224,6 +249,22 @@
 
   <div class="body">
     <aside class="sidebar">
+      {#if welcome}
+        <div class="welcome">
+          <div>
+            <strong>Welcome to MakePresent</strong>
+            <p>Add your first slide to get started — it will appear live on the output when you're ready.</p>
+          </div>
+          <button
+            class="welcome-dismiss"
+            title="Dismiss"
+            onclick={() => (welcomeDismissed = true)}
+          >
+            &times;
+          </button>
+        </div>
+      {/if}
+
       <div class="section-title">Playlist</div>
       <ul class="slide-list">
         {#each project?.slides ?? [] as slide (slide.id)}
@@ -376,16 +417,26 @@
       </label>
 
       <div class="output-status">
-        {#if project?.live}
-          Live on display
-          {appState?.output.monitorName ||
-            (appState?.output.monitorIndex != null
-              ? `#${appState.output.monitorIndex}`
-              : "?")}
+        {#if appState?.output.visible}
+          {#if project?.live}
+            Live on display
+            {appState?.output.monitorName ||
+              (appState?.output.monitorIndex != null
+                ? `#${appState.output.monitorIndex}`
+                : "?")}
+          {:else}
+            Output is black (no live slide)
+          {/if}
         {:else}
-          Output is black (no live slide)
+          <span class="not-shown">Not shown yet</span> — the output appears here the first time a slide goes live.
         {/if}
       </div>
+
+      {#if !appState?.output.visible}
+        <button class="ghost show-output" onclick={() => showOutput()}>
+          Show Output
+        </button>
+      {/if}
 
       <div class="section-title stage-title">Stage Display</div>
 
@@ -423,6 +474,11 @@
     </aside>
   </div>
 </div>
+{/if}
+
+{#if settingsOpen}
+  <SettingsPanel app={appState} onclose={() => (settingsOpen = false)} />
+{/if}
 
 <style>
   .shell {
@@ -748,5 +804,74 @@
   .output-status {
     font-size: 13px;
     color: var(--text-dim);
+  }
+
+  .not-shown {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .show-output {
+    border-color: var(--live);
+    color: var(--live);
+  }
+
+  .welcome {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 12px;
+    margin-bottom: 14px;
+    background: #17233d;
+    border: 1px solid #2c4a7a;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .welcome p {
+    margin: 3px 0 0;
+    color: var(--text-dim);
+  }
+
+  .welcome-dismiss {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    padding: 0 2px;
+    margin-left: auto;
+    flex: none;
+  }
+
+  .loading-shell {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .spinner {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
+  }
+
+  .loading-error {
+    color: var(--danger);
+    max-width: 60%;
+    text-align: center;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 </style>

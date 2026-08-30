@@ -1,0 +1,163 @@
+# MakePresent — Living Project Doc
+
+This document is the source of truth for **what MakePresent is, how we build
+it, and where we are**. Update it as the project evolves.
+
+## What MakePresent Is
+
+MakePresent is **DwellPraise Ministries' own church presentation software**.
+It is **not a ProPresenter clone** — it is built to fit our specific service
+flow, it is free forever, and it is **ours to control**. That last point
+matters: no license fees, no feature roadmaps dictated by a vendor, no data
+leaving our building, and the freedom to shape every detail to how our
+volunteers actually run a service.
+
+The audience is a **first-time volunteer**: someone who may have fifteen
+minutes of training. The app has to feel obvious.
+
+## Design Principles
+
+1. **Simple first, one obvious path.** A first-time volunteer should see a
+   single clear route from "open the app" to "slide is live" with no dead
+   ends and no unexplained states. Every screen state must answer "what am I
+   looking at and what do I do next?"
+2. **Clarity over density.** Prefer fewer, clearer controls over packed,
+   powerful ones. If a feature makes the common path harder to read, it does
+   not ship yet.
+3. **Polish is deferred.** Visual polish and animation wait until the
+   underlying flow is already simple without them. A boring-but-clear
+   interface beats a pretty-but-confusing one.
+4. **Single source of truth.** All application state lives in the Rust
+   backend; every window (Editor, Output, Stage) is a *dumb renderer* pushed
+   fresh state. No window computes its own copy of "what should be live".
+
+## Reliability Priorities (carried forward from Phase 1)
+
+- **No crashes.** The app must survive anything the operator throws at it
+  mid-service.
+- **Predictable output.** Once a slide is live it stays live; no surprise
+  window changes, no spurious re-layouts on the projection display.
+- **Autosave + crash recovery.** Every edit is persisted automatically and
+  an interrupted session recovers the last good state on the next launch.
+- **Resource management under multi-hour, multi-screen use.** No unbounded
+  memory or log growth; windows are created on demand and released when not
+  needed.
+
+## Anticipated Failure Modes (defend these in future features)
+
+| Failure mode | Desired behavior |
+| --- | --- |
+| Output display disconnected / reconnected mid-service | Output falls back to the next available display (or stays until reconnected), never crashes or silently goes to the wrong screen. |
+| Output display sleeps / screensaver activates independently of the editor | Output continues to show the live slide; re-presenting on wake must "just work". |
+| Font not found on a different machine | Falls back silently to a sensible system font stack — never a blank or broken output. |
+| Project files reference missing media when opened elsewhere | Missing media is detected, reported clearly, and degrades gracefully (placeholder) instead of crashing or silently showing nothing. |
+| Unsaved work lost on abrupt close | Autosave + session bookkeeping means the next launch recovers the work and *tells the user* it did. |
+| No visibility into pre-crash app state | A persistent, immediately-flushed event log (`logs/app.log`) plus versioned project snapshots let us reconstruct what happened. |
+
+## Environment Adaptability (design intent for later phases, not built yet)
+
+The app must behave sensibly across:
+
+- **Single-monitor laptop** — everything on one screen, the Output window
+  tiling or toggling sensibly alongside the Editor.
+- **Dual-monitor setup** — Editor on one, Output on the other, Stage on
+  whichever the operator chooses.
+- **Full multi-display stage rig** — Output on the projection, Stage facing
+  the platform, Editor at the operator desk.
+
+**Default assumptions must degrade gracefully rather than error when a
+display disappears.** Any configured display that no longer exists should be
+skipped with a log entry, falling back to the largest remaining display —
+never a dead end or a crash.
+
+## Current Status
+
+### Built (Phases 1–3)
+
+Phase 1 — Foundation
+- Two-window Tauri app (Editor + Output), single Rust `AppState` source of
+  truth, dumb-renderer windows fed by a `state` broadcast event.
+- Autosave (debounced worker, atomic writes), versioned snapshots, session
+  bookkeeping, crash recovery with a visible notice.
+- CI builds on Ubuntu 22.04 and Windows 2022.
+
+Phase 2 — Stage display, icons, library, transitions
+- Third window: **Stage Display** (large live slide, next-slide preview,
+  running clock), created on demand, restored on launch if left on.
+- App icon set generated and bundled.
+- Persistent **song/slide library** (`library.json`): songs with multiple
+  verses, client-side search, one-click add-to-playlist that links slides
+  back to their source verse.
+- Per-project **Cut / Fade transition**; Fade crossfades the output over
+  ~400 ms via CSS.
+
+Phase 3 — Onboarding, settings, logging
+- Welcome message on first-ever launch; loading animation while the editor
+  initialises.
+- **Single-window onboarding**: only the Editor exists at launch; the Output
+  window appears on demand (first live slide or "Show Output"), the Stage on
+  its own toggle.
+- **Settings import/export** (native dialogs): per-machine settings
+  (display assignments, fullscreen, stage, default transition) — never the
+  project or library — with schema validation and clear errors.
+- **Logs**: persistent, immediately-flushed event log with rotation, a
+  "Settings → Logs" panel (monospace, newest first), copy-to-clipboard and
+  export-log-file buttons.
+
+### Explicitly Deferred
+
+- NDI output
+- Remote control (web/phone)
+- MIDI / OSC
+- Video / media playback
+- GStreamer
+
+None of these should influence the current architecture decisions.
+
+## Onboarding Flow (as of Phase 3)
+
+Startup creates **only the Editor window**.
+
+1. The Editor shows a brief loading animation while the backend runs the
+   recovery check and sends the initial state.
+2. On the **very first launch** the playlist area shows an inline welcome:
+   "Welcome to MakePresent — add your first slide to get started". It
+   dismisses permanently once the first slide is added or a project is
+   created.
+3. The Output panel reads **"Not shown yet"** with a clear **Show Output**
+   button. The Output window is not created at startup — a black fullscreen
+   window with nothing on it is exactly the dead end we are avoiding.
+4. The Output window is created and placed (configured display, or the best
+   second monitor) the first time:
+   - the operator sets a slide live, **or**
+   - the operator clicks **Show Output**.
+   Whichever happens first.
+5. The Stage Display is created purely on demand through its toggle and
+   remains hidden unless the operator switches it on.
+6. On later launches a previously-live project is restored from autosave
+   (with a recovery notice when the last exit was unclean), but windows are
+   still created on demand — the operator decides what is on screen, not
+   the app.
+
+## Layout of the Code
+
+```
+src-tauri/src/
+  lib.rs        App lifecycle: setup (recovery, logger, autosave worker), finalize, commands
+  state.rs      AppState — the single source of truth
+  project.rs    Domain model (Project/Slide/Settings/Library), persistence, autosave worker
+  windows.rs    Window lifecycle: Output + Stage, display picking
+  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs
+  logging.rs    Rolling, immediately-flushed event log (logs/app.log)
+src/
+  editor.ts / Editor.svelte     Operator's window (playlist, edit, output/stage controls, settings)
+  output.ts / Output.svelte     Dumb projection renderer (cut/fade crossfade)
+  stage.ts / Stage.svelte       Dumb performer-facing renderer (current + next)
+  lib/types.ts                  Shared client contract
+  lib/sync.ts                   Tauri invoke + event subscriptions
+```
+
+Data lives under the app data dir (`~/.local/share/com.makesoftware.makepresent`):
+`project.json` (autosaved), `versions/` (snapshots), `session.json`
+(recovery bookkeeping), `settings.json` (per-machine), `library.json`
+(songs), `logs/app.log` (event log).

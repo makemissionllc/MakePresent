@@ -3,7 +3,7 @@ mod project;
 mod state;
 mod windows;
 
-use project::{persist, read_session, recover_or_seed, write_session, Session};
+use project::{persist, read_session, recover_or_seed, write_session};
 use state::AppState;
 use tauri::Manager;
 

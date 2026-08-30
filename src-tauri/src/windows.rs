@@ -67,7 +67,7 @@ pub fn list_displays(app: &AppHandle) -> Result<Vec<DisplayInfo>, String> {
         .enumerate()
         .map(|(i, m)| DisplayInfo {
             index: i,
-            name: m.name().unwrap_or_default(),
+            name: m.name().cloned().unwrap_or_default(),
             width: m.size().width,
             height: m.size().height,
             x: m.position().x,
@@ -114,7 +114,7 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
     if window.is_fullscreen().unwrap_or(false) {
         let _ = window.set_fullscreen(false);
     }
-    let _ = window.set_position(Position::Physical(monitor.position()));
+    let _ = window.set_position(Position::Physical(*monitor.position()));
     window.show().map_err(|e| e.to_string())?;
     Ok(window)
 }

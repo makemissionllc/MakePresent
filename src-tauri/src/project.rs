@@ -292,7 +292,7 @@ pub fn recover_or_seed(data_dir: &Path) -> (Project, Option<Notice>) {
                 "Recovered project \"{}\" from the last autosave.",
                 project.name
             ),
-            at: saved_at,
+at: saved_at.clone(),
         })
     } else {
         None

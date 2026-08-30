@@ -3,13 +3,13 @@ use crate::project::{
 };
 use crate::state::AppState;
 use crate::windows::{self, DisplayInfo};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
 fn snapshot(app: &AppHandle) -> ClientState {
     let state = app.state::<AppState>();
     let settings = state.current_settings();
-    ClientState {
+    let snap = ClientState {
         project: state.project.read().unwrap().clone(),
         notice: state.notice.read().unwrap().clone(),
         output: OutputView {
@@ -17,7 +17,8 @@ fn snapshot(app: &AppHandle) -> ClientState {
             monitor_name: settings.output_display_name,
             fullscreen: settings.output_fullscreen,
         },
-    }
+    };
+    snap
 }
 
 /// Apply a mutation to the single source of truth, schedule an autosave,

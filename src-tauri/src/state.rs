@@ -1,0 +1,51 @@
+use crate::project::{Notice, Project, Settings};
+use std::path::PathBuf;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex, RwLock};
+
+/// The single source of truth for the whole application, managed by Tauri.
+pub struct AppState {
+    pub project: Arc<RwLock<Project>>,
+    pub settings: RwLock<Settings>,
+    pub notice: RwLock<Option<Notice>>,
+    pub data_dir: RwLock<PathBuf>,
+    /// Wake channel for the autosave worker thread.
+    pub save_tx: Mutex<Option<Sender<()>>>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            project: Arc::new(RwLock::new(Project::new("New Project"))),
+            settings: RwLock::new(Settings::default()),
+            notice: RwLock::new(None),
+            data_dir: RwLock::new(PathBuf::new()),
+            save_tx: Mutex::new(None),
+        }
+    }
+}
+
+impl AppState {
+    /// Schedule an autosave. Safe no-op if the worker is not running yet.
+    pub fn request_save(&self) {
+        if let Some(tx) = self.save_tx.lock().unwrap().as_ref() {
+            let _ = tx.send(());
+        }
+    }
+
+    pub fn current_settings(&self) -> Settings {
+        self.settings.read().unwrap().clone()
+    }
+
+    pub fn apply_settings(&self, settings: Settings) {
+        *self.settings.write().unwrap() = settings;
+    }
+
+    pub fn set_notice(&self, notice: Option<Notice>) {
+        *self.notice.write().unwrap() = notice;
+    }
+
+    pub fn app_data_dir(&self) -> PathBuf {
+        self.data_dir.read().unwrap().clone()
+    }
+}

@@ -1,6 +1,35 @@
-export interface Background {
+export interface SolidBackground {
   type: "solid";
   color: string;
+}
+
+export interface ImageBackground {
+  type: "image";
+  path: string;
+  hash: string;
+  thumb: string;
+}
+
+export interface VideoBackground {
+  type: "video";
+  path: string;
+  hash: string;
+  thumb: string;
+  durationMs: number | null;
+}
+
+export type Background = SolidBackground | ImageBackground | VideoBackground;
+
+export interface MediaAsset {
+  background: Background;
+  kind: "image" | "video";
+  fileName: string;
+  hash: string;
+  durationMs: number | null;
+}
+
+export function isMedia(bg: Background): bg is ImageBackground | VideoBackground {
+  return bg.type === "image" || bg.type === "video";
 }
 
 export interface Slide {
@@ -52,6 +81,7 @@ export interface ClientState {
   defaultTransition: Transition;
   current: Slide | null;
   next: Slide | null;
+  onDeck: Slide | null;
 }
 
 export interface DisplayInfo {

@@ -24,6 +24,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
         .as_deref()
         .and_then(|id| project.next_slide(id))
         .cloned();
+    let on_deck = project.on_deck().cloned();
     drop(project);
 
     let snap = ClientState {
@@ -44,6 +45,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
         default_transition: settings.default_transition,
         current,
         next,
+        on_deck,
     };
     snap
 }
@@ -173,7 +175,8 @@ pub fn set_live_slide(app: AppHandle, slide_id: String) -> Result<ClientState, S
             .find(&slide_id)
             .cloned()
             .ok_or_else(|| format!("slide {slide_id} not found"))?;
-        project.live = Some(slide_id);
+        project.live = Some(slide_id.clone());
+        project.selected = Some(slide_id);
         project.modified_at = now_iso();
         slide.title
     };
@@ -240,6 +243,9 @@ pub fn new_project(app: AppHandle) -> Result<ClientState, String> {
     let default_transition = state.current_settings().default_transition;
     let mut project = Project::new("First Service");
     project.transition = default_transition;
+    if let Some(first) = project.slides.first() {
+        project.selected = Some(first.id.clone());
+    }
     log(&app, Level::Info, "project: created new project");
     replace_project(&app, project)
 }
@@ -261,6 +267,9 @@ pub fn add_slide(
     let slide_title = slide.title.clone();
     mutate(&app, |project| {
         project.slides.push(slide);
+        if let Some(created) = project.slides.last() {
+            project.selected = Some(created.id.clone());
+        }
         Ok(())
     })
     .map(|s| {
@@ -476,6 +485,38 @@ pub fn show_output(app: AppHandle) -> Result<ClientState, String> {
     let snap = snapshot(&app);
     let _ = app.emit("state", &snap);
     Ok(snap)
+}
+
+// ---------------------------------------------------------------------------
+// Media
+// ---------------------------------------------------------------------------
+
+/// Copy a picked media file into the managed cache and generate its thumbnail
+/// (via ffmpeg), returning the background to assign to a slide. Runs the disk
+/// work off-thread so the UI stays responsive while a large video is
+/// imported/hashed.
+#[tauri::command]
+pub async fn import_media(app: AppHandle, path: String) -> Result<crate::media::MediaAsset, String> {
+    let data_dir = app.state::<AppState>().app_data_dir();
+    let source = std::path::PathBuf::from(&path);
+    let copy_source = source.clone();
+    let background = tauri::async_runtime::spawn_blocking(move || {
+        crate::media::import(&copy_source, &data_dir)
+    })
+    .await
+    .map_err(|e| format!("import task failed: {e}"))?
+    .map_err(|e| e.to_string())?;
+
+    let asset = crate::media::to_asset(background, &source);
+    log(
+        &app,
+        Level::Info,
+        &format!(
+            "media: imported \"{}\" ({}) — {}",
+            asset.file_name, asset.kind, asset.hash
+        ),
+    );
+    Ok(asset)
 }
 
 // ---------------------------------------------------------------------------

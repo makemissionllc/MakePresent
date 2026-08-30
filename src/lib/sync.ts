@@ -9,6 +9,7 @@ import type {
   ImportReport,
   Library,
   LogEntry,
+  MediaAsset,
   Transition,
 } from "./types";
 
@@ -75,6 +76,8 @@ export const api = {
 
   setTransition: (transition: Transition) =>
     invoke<ClientState>("set_transition", { transition }),
+
+  importMedia: (path: string) => invoke<MediaAsset>("import_media", { path }),
 
   exportSettings: (path: string) =>
     invoke<ExportReport>("export_settings", { path }),

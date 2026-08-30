@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { convertFileSrc } from "@tauri-apps/api/core";
+  import { open } from "@tauri-apps/plugin-dialog";
   import { api, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
   import type { ClientState, DisplayInfo, Library, LibrarySong, Slide } from "../lib/types";
+  import { isMedia } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
 
   const PALETTE = [
@@ -15,6 +18,17 @@
     "#000000",
   ];
 
+  const MEDIA_FILTERS = [
+    {
+      name: "Images",
+      extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "svg", "avif"],
+    },
+    {
+      name: "Videos",
+      extensions: ["mp4", "m4v", "mov", "webm", "mkv", "avi", "ogv"],
+    },
+  ];
+
   let appState = $state<ClientState | null>(null);
   let selectedId = $state<string | null>(null);
   let displays = $state<DisplayInfo[] | null>(null);
@@ -25,6 +39,7 @@
   let librarySearch = $state("");
   let settingsOpen = $state(false);
   let welcomeDismissed = $state(false);
+  let importingMedia = $state(false);
 
   const project = $derived(appState?.project ?? null);
   const notice = $derived(
@@ -94,6 +109,32 @@
     void run(() =>
       api.updateSlide(slide.id, { background: { type: "solid", color } }),
     );
+  }
+
+  function fileUrl(path: string): string {
+    return convertFileSrc(path);
+  }
+
+  // Pick an image/video, import it into the managed media cache, then assign
+  // it as the slide's background (replacing the solid color, not layering).
+  async function addMedia(slide: Slide): Promise<void> {
+    try {
+      errorMsg = null;
+      const picked = await open({ multiple: false, filters: MEDIA_FILTERS });
+      if (typeof picked !== "string") return;
+      importingMedia = true;
+      try {
+        const asset = await api.importMedia(picked);
+        appState = await api.updateSlide(slide.id, {
+          background: asset.background,
+        });
+      } finally {
+        importingMedia = false;
+      }
+    } catch (e) {
+      importingMedia = false;
+      errorMsg = String(e);
+    }
   }
 
   function deleteSlide(slide: Slide): void {
@@ -279,6 +320,11 @@
                 style:background-color={slide.background.type === "solid"
                   ? slide.background.color
                   : "#000"}
+                style:background-image={isMedia(slide.background)
+                  ? `url('${fileUrl(slide.background.thumb)}')`
+                  : "none"}
+                style:background-size="cover"
+                style:background-position="center"
               ></span>
               <span class="slide-label">{slide.title || "Untitled"}</span>
               {#if project?.live === slide.id}<span class="live-dot"></span>{/if}
@@ -374,6 +420,45 @@
                 />
                 <span>Custom</span>
               </label>
+              {#if isMedia(selected.background)}
+                <span class="media-swatch-wrap">
+                  <button
+                    class="swatch media selected"
+                    style:background-color="#000"
+                    title={selected.background.type === "video"
+                      ? `Video background${selected.background.durationMs != null ? ` \u00b7 ${Math.round(selected.background.durationMs / 1000)}s` : ""}`
+                      : "Image background"}
+                  >
+                    <img
+                      src={fileUrl(selected.background.thumb)}
+                      alt=""
+                      draggable="false"
+                      onerror={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  </button>
+                  <button
+                    class="media-remove"
+                    title="Remove media background"
+                    onclick={() => setColor(selected, PALETTE[0] ?? "#000000")}
+                  >
+                    &times;
+                  </button>
+                </span>
+              {/if}
+              <button
+                class="media-add"
+                title="Add image or video background"
+                onclick={() => addMedia(selected)}
+                disabled={importingMedia}
+              >
+                {#if importingMedia}
+                  <span class="media-spinner" aria-hidden="true"></span>
+                {:else}
+                  +
+                {/if}
+              </button>
             </div>
           </div>
         </div>
@@ -674,6 +759,60 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--panel-2);
+  }
+
+  .media-swatch-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .swatches .swatch.media {
+    overflow: hidden;
+  }
+
+  .swatches .swatch.media img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .media-remove {
+    position: absolute;
+    top: -7px;
+    right: -7px;
+    width: 17px;
+    height: 17px;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--danger);
+    border: 1px solid var(--bg);
+    color: #fff;
+    font-size: 11px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .swatches .media-add {
+    font-size: 18px;
+    line-height: 1;
+    color: var(--text-dim);
+  }
+
+  .media-add:disabled {
+    cursor: progress;
+  }
+
+  .media-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
   }
 
   .live-dot {

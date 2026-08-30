@@ -1,5 +1,6 @@
 mod commands;
 mod logging;
+mod media;
 mod project;
 mod state;
 mod windows;
@@ -41,6 +42,17 @@ pub fn run() {
             state.logger.open(data_dir.clone());
             state.logger.log(Level::Info, "app: started");
 
+            if media::ffmpeg_available() {
+                state.logger.log(Level::Info, "media: ffmpeg available for thumbnails");
+            } else {
+                // Never silently skip thumbnails: the operator must know before
+                // importing that image/video backgrounds cannot be thumbnailed.
+                state.logger.log(
+                    Level::Error,
+                    "media: ffmpeg NOT available — media import thumbnails disabled",
+                );
+            }
+
             // Single source of truth: load the last autosaved project (with
             // crash-recovery notice) or seed the sample project, and load (or
             // seed) the reusable slide library.
@@ -73,6 +85,13 @@ pub fn run() {
                 app.handle().clone(),
             );
             *state.save_tx.lock().unwrap() = Some(tx);
+
+            // Rebuild any missing/corrupt cached thumbnails for assets the
+            // project or library references (never show a silent blank).
+            {
+                let app = app.handle().clone();
+                std::thread::spawn(move || media::verify_on_startup(app));
+            }
 
             // Onboarding: only the Editor window exists at launch. The Output
             // window is created on demand (first live slide or "Show Output");
@@ -109,6 +128,7 @@ pub fn run() {
             commands::show_output,
             commands::set_stage_display,
             commands::toggle_stage,
+            commands::import_media,
             commands::export_settings,
             commands::import_settings,
             commands::get_logs,

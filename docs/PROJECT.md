@@ -72,7 +72,7 @@ never a dead end or a crash.
 
 ## Current Status
 
-### Built (Phases 1–3)
+### Built (Phases 1–4)
 
 Phase 1 — Foundation
 - Two-window Tauri app (Editor + Output), single Rust `AppState` source of
@@ -104,17 +104,47 @@ Phase 3 — Onboarding, settings, logging
   "Settings → Logs" panel (monospace, newest first), copy-to-clipboard and
   export-log-file buttons.
 
+Phase 4 — Media (image/video) slide backgrounds
+- `Background::Image` and `Background::Video` slide backgrounds, rendered by
+  native `<img>` / `<video>` elements in the Output (muted, looping,
+  `object-fit: cover`). A **custom GPU pipeline is explicitly deferred**.
+- **Managed import**: picking a file copies it into `media/<hash>.<ext>`
+  inside the app data dir (never references the original), dedupes identical
+  content by **SHA-256 content hash**, and generates a thumbnail into
+  `thumbnails/<hash>.jpg` with ffmpeg (`-ss <duration-aware>` for videos).
+  Metadata (path, hash, thumb, video duration) is stored on the slide.
+- ffmpeg availability is checked at startup and surfaced loudly if missing —
+  thumbnails are never skipped silently.
+- **Startup cache verification**: every media asset referenced by the project
+  or library must still have its source file and thumbnail; missing/corrupt
+  thumbnails are rebuilt automatically and missing sources are logged loudly.
+  The UI shows a dark placeholder (never a broken-image glyph) when a thumb
+  fails to load.
+- Editor: "Add media" in the Background picker opens the import flow; the
+  chosen slide shows a thumbnail swatch (with remove); playlist swatches show
+  each slide's thumbnail.
+- **On-deck preload (resource management)**: the backend names one "on-deck"
+  slide per state (selected-but-not-live, else the next playlist slide). The
+  Output keeps exactly one hidden preloader for it; media is preloaded while
+  a slide is on deck so a cut never decodes on demand mid-service. Only the
+  live + leaving (during a 400 ms fade) + the single on-deck element exist at
+  any time — no unbounded accumulation over a service.
+
+### Date
+- 2026-08-30 — Phase 4 shipped.
+
 ### Explicitly Deferred
 
 - NDI output
 - Remote control (web/phone)
 - MIDI / OSC
-- Video / media playback
-- GStreamer
+- Audio playback (video backgrounds are muted this phase)
+- Custom GPU playback pipeline (native `<video>`/`<img>` in the webview for now)
+- GStreamer (ffmpeg/ffprobe CLI for thumbnails and probing instead)
 
 None of these should influence the current architecture decisions.
 
-## Onboarding Flow (as of Phase 3)
+## Onboarding Flow
 
 Startup creates **only the Editor window**.
 
@@ -147,7 +177,8 @@ src-tauri/src/
   state.rs      AppState — the single source of truth
   project.rs    Domain model (Project/Slide/Settings/Library), persistence, autosave worker
   windows.rs    Window lifecycle: Output + Stage, display picking
-  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs
+  media.rs      Media import/cache: copy+hash, ffmpeg thumbnails, startup verification
+  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import
   logging.rs    Rolling, immediately-flushed event log (logs/app.log)
 src/
   editor.ts / Editor.svelte     Operator's window (playlist, edit, output/stage controls, settings)
@@ -160,4 +191,5 @@ src/
 Data lives under the app data dir (`~/.local/share/com.makesoftware.makepresent`):
 `project.json` (autosaved), `versions/` (snapshots), `session.json`
 (recovery bookkeeping), `settings.json` (per-machine), `library.json`
-(songs), `logs/app.log` (event log).
+(songs), `logs/app.log` (event log), `media/` (managed content-hashed media
+copies), `thumbnails/` (hash-keyed thumbnails).

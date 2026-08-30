@@ -28,6 +28,17 @@ pub fn now_iso() -> String {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Background {
     Solid { color: String },
+    /// Full-bleed image background (managed copy inside the app data dir,
+    /// cached and thumbnailed by content hash).
+    Image { path: String, hash: String, thumb: String },
+    /// Full-bleed looping video background (audio is out of scope this phase).
+    Video {
+        path: String,
+        hash: String,
+        thumb: String,
+        #[serde(default)]
+        duration_ms: Option<u64>,
+    },
 }
 
 impl Default for Background {
@@ -70,6 +81,10 @@ pub struct Project {
     pub name: String,
     pub slides: Vec<Slide>,
     pub live: Option<String>,
+    /// The slide currently selected/being-armed in the editor (used to decide
+    /// which media the Output preloads "on deck").
+    #[serde(default)]
+    pub selected: Option<String>,
     /// How the Output switches between live slides ("cut" or "fade").
     #[serde(default)]
     pub transition: Transition,
@@ -91,6 +106,7 @@ impl Project {
                 background: Background::default(),
             }],
             live: None,
+            selected: None,
             transition: Transition::Cut,
             modified_at: now_iso(),
         }
@@ -109,6 +125,17 @@ impl Project {
     pub fn next_slide(&self, id: &str) -> Option<&Slide> {
         let index = self.slides.iter().position(|s| s.id == id)?;
         self.slides.get(index + 1)
+    }
+
+    /// The slide whose media the Output should preload. The editor's selected
+    /// slide wins when it is not already live; otherwise it is the next slide
+    /// in the playlist (the operator's most likely next cue).
+    pub fn on_deck(&self) -> Option<&Slide> {
+        match &self.selected {
+            Some(id) if self.live.as_deref() == Some(id.as_str()) => self.next_slide(id),
+            Some(id) => self.find(id),
+            None => self.live.as_deref().and_then(|id| self.next_slide(id)),
+        }
     }
 }
 
@@ -157,6 +184,10 @@ pub struct ClientState {
     pub current: Option<Slide>,
     /// Resolved next slide in the playlist (None when nothing queued).
     pub next: Option<Slide>,
+    /// Resolved on-deck slide: the selected-but-not-live slide when there is
+    /// one, otherwise the slide after the live one. Its media is preloaded by
+    /// the Output so a cut to it never decodes on demand.
+    pub on_deck: Option<Slide>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

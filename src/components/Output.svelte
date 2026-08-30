@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import { api, subscribeState } from "../lib/sync";
   import type { ClientState, Slide } from "../lib/types";
 
@@ -29,6 +30,16 @@
       ? slide.background.color
       : "#000000";
   }
+
+  // Full-bleed media layer for a slide's background. Videos play muted on loop
+  // and both image/video fill the frame via object-fit:cover. Audio playback
+  // is explicitly out of scope this phase.
+  //
+  // The on-deck slide comes straight from state (the backend decides who is
+  // "likely next"). Its media is preloaded here — in the window that will
+  // actually play it — so a cut to it starts instantly instead of decoding
+  // on demand mid-service. Exactly ONE hidden element is kept, never a pile.
+  const onDeck = $derived(appState?.onDeck ?? null);
 
   // The Output is a dumb renderer: it only choreographs the fade. The backend
   // decides which slide is live; here we layer the old slide on top of the new
@@ -92,9 +103,34 @@
   {/if}
 {/snippet}
 
+{#snippet mediaLayer(slide: Slide)}
+  {#if slide.background.type === "image"}
+    <img
+      class="media-layer"
+      src={convertFileSrc(slide.background.path)}
+      alt=""
+      draggable="false"
+      onerror={(e) => {
+        (e.currentTarget as HTMLImageElement).style.display = "none";
+      }}
+    />
+  {:else if slide.background.type === "video"}
+    <video
+      class="media-layer"
+      src={convertFileSrc(slide.background.path)}
+      autoplay
+      loop
+      muted
+      playsinline
+      preload="auto"
+    ></video>
+  {/if}
+{/snippet}
+
 <main class="stage">
   {#if shown}
     <div class="slide" class:in={dim} style:background-color={solidColor(shown)}>
+      {@render mediaLayer(shown)}
       {@render slideMarkup(shown)}
     </div>
   {:else if !leaving}
@@ -103,8 +139,28 @@
 
   {#if leaving}
     <div class="leaving" class:out={out} style:background-color={solidColor(leaving)}>
+      {@render mediaLayer(leaving)}
       {@render slideMarkup(leaving)}
     </div>
+  {/if}
+
+  {#if onDeck && onDeck.background.type === "video"}
+    <video
+      class="preloader"
+      src={convertFileSrc(onDeck.background.path)}
+      preload="auto"
+      muted
+      tabindex="-1"
+      aria-hidden="true"
+    ></video>
+  {:else if onDeck && onDeck.background.type === "image"}
+    <img
+      class="preloader"
+      src={convertFileSrc(onDeck.background.path)}
+      alt=""
+      tabindex="-1"
+      aria-hidden="true"
+    />
   {/if}
 </main>
 
@@ -143,6 +199,34 @@
     color: #ffffff;
     opacity: 1;
     transition: opacity 400ms ease;
+    overflow: hidden;
+  }
+
+  .media-layer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .slide > .title,
+  .slide > .body,
+  .leaving > .title,
+  .leaving > .body {
+    position: relative;
+    z-index: 1;
+  }
+
+  .preloader {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 1px;
+    height: 1px;
+    opacity: 0.01;
+    pointer-events: none;
+    /* keep it reachable by the layout engine so WebKit actually fetches it */
   }
 
   .slide.in {

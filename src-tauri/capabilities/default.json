@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the Editor and Output windows",
-  "windows": ["main", "output"],
+  "description": "Permissions for the Editor, Output and Stage windows",
+  "windows": ["main", "output", "stage"],
   "permissions": ["core:default"]
 }

@@ -3,6 +3,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api, subscribeState } from "../lib/sync";
   import type { ClientState, Slide } from "../lib/types";
+  import { fitText } from "../lib/fitText";
 
   const FADE_MS = 400;
 
@@ -96,10 +97,10 @@
 
 {#snippet slideMarkup(slide: Slide)}
   {#if slide.title}
-    <h1 class="title">{slide.title}</h1>
+    <h1 class="title" data-role="title">{slide.title}</h1>
   {/if}
   {#if slide.body}
-    <p class="body">{slide.body}</p>
+    <p class="body" data-role="body">{slide.body}</p>
   {/if}
 {/snippet}
 
@@ -129,7 +130,7 @@
 
 <main class="stage">
   {#if shown}
-    <div class="slide" class:in={dim} style:background-color={solidColor(shown)}>
+    <div class="slide" use:fitText class:in={dim} style:background-color={solidColor(shown)}>
       {@render mediaLayer(shown)}
       {@render slideMarkup(shown)}
     </div>
@@ -138,7 +139,12 @@
   {/if}
 
   {#if leaving}
-    <div class="leaving" class:out={out} style:background-color={solidColor(leaving)}>
+    <div
+      class="leaving"
+      use:fitText
+      class:out={out}
+      style:background-color={solidColor(leaving)}
+    >
       {@render mediaLayer(leaving)}
       {@render slideMarkup(leaving)}
     </div>

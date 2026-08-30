@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, subscribeState } from "../lib/sync";
   import type { ClientState } from "../lib/types";
+  import { fitText } from "../lib/fitText";
 
   let appState = $state<ClientState | null>(null);
   let currentTime = $state("--:--:--");
@@ -38,9 +39,9 @@
 </script>
 
 <div class="stage">
-  <section class="current">
+  <section class="current" use:fitText>
     {#if current}
-      <p class="current-body">{current.body || current.title}</p>
+      <p class="current-body" data-role="body">{current.body || current.title}</p>
     {:else}
       <p class="placeholder">No live slide</p>
     {/if}
@@ -50,7 +51,9 @@
     <div class="next">
       <span class="next-label">NEXT</span>
       {#if next}
-        <p class="next-body">{next.body || next.title}</p>
+        <div class="next-body-wrap" use:fitText>
+          <p class="next-body" data-role="body">{next.body || next.title}</p>
+        </div>
       {:else}
         <p class="placeholder">Nothing queued</p>
       {/if}
@@ -116,6 +119,14 @@
     color: #7f8494;
   }
 
+  .next-body-wrap {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+  }
+
   .next-body {
     font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell,
       sans-serif;
@@ -128,6 +139,7 @@
     -webkit-line-clamp: 8;
     line-clamp: 8;
     -webkit-box-orient: vertical;
+    margin: 0;
   }
 
   .clock {

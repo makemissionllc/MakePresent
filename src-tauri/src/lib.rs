@@ -10,6 +10,37 @@ use project::{persist, read_library, read_session, recover_or_seed, write_librar
 use state::AppState;
 use tauri::Manager;
 
+/// Diagnostic: snapshot every live window's label, visibility, focus, inner
+/// position and size. Called at startup and again a couple of seconds in so a
+/// real Windows run shows whether any window is overlapping/on top of the
+/// Editor window at the moment input stops working.
+fn log_window_state(app: &tauri::AppHandle, state: &AppState, prefix: &str) {
+    let windows = app.webview_windows();
+    state.logger.log(
+        Level::Info,
+        &format!("{prefix}: window count = {}", windows.len()),
+    );
+    for (label, window) in &windows {
+        let visible = window.is_visible().unwrap_or(false);
+        let focused = window.is_focused().unwrap_or(false);
+        let pos = window
+            .inner_position()
+            .map(|p| format!("({}, {})", p.x, p.y))
+            .unwrap_or_else(|_| "(?, ?)".to_string());
+        let size = window
+            .inner_size()
+            .map(|s| format!("{}x{}", s.width, s.height))
+            .unwrap_or_else(|_| "?x?".to_string());
+        state.logger.log(
+            Level::Info,
+            &format!(
+                "{prefix}: label={}, visible={}, focused={}, inner_pos={pos}, inner_size={size}",
+                label, visible, focused,
+            ),
+        );
+    }
+}
+
 /// Called once at exit (clean path): flush the last state and confirm the
 /// shutdown was clean, so startup knows it is NOT recovering from a crash.
 fn finalize(app: &tauri::AppHandle) {
@@ -41,6 +72,9 @@ pub fn run() {
             let state = app.state::<AppState>();
             state.logger.open(data_dir.clone());
             state.logger.log(Level::Info, "app: started");
+
+            // Diagnostic logging for startup windows:
+            log_window_state(app.handle(), &state, "windows: startup");
 
             if media::ffmpeg_available() {
                 state.logger.log(Level::Info, "media: ffmpeg available for thumbnails");
@@ -105,6 +139,18 @@ pub fn run() {
                         }
                     }
                 }
+            }
+
+            // Diagnostic re-check a couple of seconds in: by then the stage
+            // restore (if any) has settled, so this shows the same window
+            // set/focus state a user sees while the editor appears frozen.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(2500));
+                    let st = handle.state::<AppState>();
+                    log_window_state(&handle, &st, "windows: delayed @2.5s");
+                });
             }
 
             Ok(())

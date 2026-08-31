@@ -420,7 +420,8 @@ pub fn set_stage_display(app: AppHandle, index: usize) -> Result<Vec<DisplayInfo
     state.apply_settings(settings);
     let _ = write_settings(&state.app_data_dir(), &state.current_settings());
 
-    let _ = window.set_focus();
+    let focus_res = window.set_focus();
+    log(&app, Level::Info, &format!("commands: set_stage_display: set_focus result: {:?}", focus_res));
     log(&app, Level::Info, &format!("stage: display set to monitor {index}"));
     let snap = snapshot(&app);
     let _ = app.emit("state", &snap);
@@ -447,7 +448,8 @@ pub fn toggle_stage(app: AppHandle) -> Result<bool, String> {
             updated.stage_display_name = display_name(&app, index);
         }
         let window = windows::move_stage_to(&app, index)?;
-        let _ = window.set_focus();
+        let focus_res = window.set_focus();
+        log(&app, Level::Info, &format!("commands: toggle_stage (on): set_focus result: {:?}", focus_res));
         state.apply_settings(updated);
     } else {
         if let Some(window) = windows::get_stage(&app) {

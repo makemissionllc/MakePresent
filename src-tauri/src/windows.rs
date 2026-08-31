@@ -399,13 +399,26 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
         } else {
             None
         };
+        // Explicitly size the window to the target monitor's exact dimensions
+        // *before* any subsequent set_fullscreen. On Linux/GTK, relying on
+        // set_fullscreen alone with a stale/default window size can leave the
+        // window smaller than the monitor depending on the window manager
+        // (X11 vs Wayland). Sizing up-front gives the WM correct bounds to
+        // work from when the fullscreen toggle lands.
+        let size_res = window.set_size(Size::Physical(PhysicalSize::new(
+            target_size.width,
+            target_size.height,
+        )));
         let pos_res = window.set_position(Position::Physical(target_pos));
         let show_res = window.show();
         logger.log(
             crate::logging::Level::Info,
             &format!(
-                "windows: move_output_to: exit_fullscreen -> {:?}, set_position({}, {}) -> {:?}, show() -> {:?}; after: {}",
+                "windows: move_output_to: exit_fullscreen -> {:?}, set_size({}x{}) -> {:?}, set_position({}, {}) -> {:?}, show() -> {:?}; after: {}",
                 exit_fs,
+                target_size.width,
+                target_size.height,
+                size_res,
                 target_pos.x,
                 target_pos.y,
                 pos_res,
@@ -460,14 +473,66 @@ pub fn show_output(app: &AppHandle, state: &AppState) -> Result<(), String> {
         None => default_output_display(app)?,
     };
     let window = move_output_to(app, index)?;
-    if settings.output_fullscreen {
-        window.set_fullscreen(true).map_err(|e| e.to_string())?;
-    }
     let focus_res = window.set_focus();
     state.logger.log(
         crate::logging::Level::Info,
         &format!("windows: show_output: set_focus result: {:?}", focus_res),
     );
+
+    // On Linux/GTK, requesting fullscreen on the *same* synchronous main-thread
+    // pass that just created an unshown window (freshly-created default size,
+    // e.g. 800x600) can leave the window smaller than the monitor: the WM never
+    // gets a chance to realize the set_size/set_position/set_visible geometry
+    // before the fullscreen toggle lands, and set_fullscreen reports success
+    // even though it didn't take effect. Defer the fullscreen request to a
+    // later loop iteration so the GTK event loop processes the geometry first,
+    // then apply fullscreen and log the resulting size for comparison.
+    if settings.output_fullscreen {
+        let target = list_displays(app)
+            .ok()
+            .and_then(|d| d.into_iter().find(|d| d.index == index));
+        let (tw, th, tname) = match target {
+            Some(d) => (d.width, d.height, d.name),
+            None => (0, 0, "(unknown)".to_string()),
+        };
+        let app_clone = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(120));
+            let app_borrowed = app_clone.clone();
+            let st = app_borrowed.state::<AppState>();
+            let _ = run_on_main(&app_borrowed, &st, "show_output_deferred_fullscreen", move || {
+                let w = app_clone
+                    .get_webview_window(OUTPUT_WINDOW)
+                    .ok_or_else(|| "output window missing".to_string())?;
+                let fs_res = w.set_fullscreen(true);
+                let inner = w.inner_size().ok();
+                let outer = w.outer_size().ok();
+                let logger = &app_clone.state::<AppState>().logger;
+                logger.log(
+                    crate::logging::Level::Info,
+                    &format!(
+                        "windows: show_output: deferred set_fullscreen(true) -> {:?}, inner_size={inner:?} outer_size={outer:?}, monitor \"{tname}\" is {tw}x{th}; fullscreen={:?}; {}",
+                        fs_res,
+                        w.is_fullscreen().ok(),
+                        describe_window(&w)
+                    ),
+                );
+                let mismatch = inner
+                    .map(|s| (s.width != tw, s.height != th))
+                    .unwrap_or((false, false));
+                if mismatch.0 || mismatch.1 {
+                    logger.log(
+                        crate::logging::Level::Warn,
+                        &format!(
+                            "windows: show_output: SIZE MISMATCH — window inner is {:?} but monitor \"{tname}\" is {tw}x{th}; fullscreen did not fill the display",
+                            inner
+                        ),
+                    );
+                }
+                Ok(())
+            });
+        });
+    }
 
     // Persist the resolved assignment so restarts keep the same display.
     let name = list_displays(app)

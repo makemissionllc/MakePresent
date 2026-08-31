@@ -1041,6 +1041,9 @@
     position: fixed;
     inset: 0;
     z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .backdrop {
@@ -1054,11 +1057,8 @@
 
   .dialog {
     position: relative;
-    margin: 0 auto;
-    top: 50%;
-    transform: translateY(-50%);
     width: min(680px, 92vw);
-    max-height: 80vh;
+    max-height: 90vh;
     display: flex;
     flex-direction: column;
     background: var(--panel);

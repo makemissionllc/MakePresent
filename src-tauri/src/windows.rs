@@ -66,39 +66,90 @@ fn describe_window(w: &WebviewWindow) -> String {
     )
 }
 
+/// Run the given window-creation/placement closure on the GUI main thread and
+/// block until it completes.
+///
+/// Window creation on Windows (wry/WebView2) must run on the main thread; doing
+/// it from Tauri's command worker threads wedges the event loop. Tauri's own
+/// `builder.build()` posts a `Message::CreateWindow` to the loop asynchronously,
+/// so we force it to run synchronously on the main thread instead. Safe to call
+/// from the main thread too (the main loop runs the closure inline), so the
+/// stage-restore path during `setup()` does not deadlock.
+///
+/// Bounds each dispatch with a log line before and after, so a hang that this
+/// fix does NOT cure is still clearly located between these two lines in
+/// `logs/app.log`.
+fn run_on_main<F, T>(app: &AppHandle, state: &AppState, op: &str, f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    state.logger.log(
+        crate::logging::Level::Info,
+        &format!("windows: {op}: dispatching to main thread"),
+    );
+    let (tx, rx) = std::sync::mpsc::channel::<Result<T, String>>();
+    if let Err(e) = app.run_on_main_thread(move || {
+        let _ = tx.send(f());
+    }) {
+        let msg = format!("{op}: run_on_main_thread dispatch failed: {e}");
+        state
+            .logger
+            .log(crate::logging::Level::Error, &format!("windows: {msg}"));
+        return Err(msg);
+    }
+    let result = rx.recv().map_err(|_| {
+        let msg = format!("{op}: main thread never responded (possible hang)");
+        state
+            .logger
+            .log(crate::logging::Level::Error, &format!("windows: {msg}"));
+        msg
+    })?;
+    state.logger.log(
+        crate::logging::Level::Info,
+        &format!("windows: {op}: main thread dispatch completed"),
+    );
+    result
+}
+
 /// The output window is a dumb renderer. Create it once, keep it around.
+/// Creation runs on the main thread (see `run_on_main`); on Windows, building
+/// a WebView2 window from a command thread can wedge the event loop.
 pub fn ensure_output(app: &AppHandle) -> Result<WebviewWindow, String> {
     if let Some(window) = app.get_webview_window(OUTPUT_WINDOW) {
         return Ok(window);
     }
     let state = app.state::<AppState>();
     state.logger.log(crate::logging::Level::Info, "windows: creating output window");
-    match WebviewWindow::builder(app, OUTPUT_WINDOW, output_url())
-        .title("MakePresent - Output")
-        .decorations(false)
-        .resizable(false)
-        .fullscreen(false)
-        .visible(false)
-        .build()
-    {
-        Ok(window) => {
-            state.logger.log(
-                crate::logging::Level::Info,
-                &format!(
-                    "windows: output window created successfully ({})",
-                    describe_window(&window)
-                ),
-            );
-            Ok(window)
+    let app_main = app.clone();
+    run_on_main(app, &state, "ensure_output", move || {
+        match WebviewWindow::builder(&app_main, OUTPUT_WINDOW, output_url())
+            .title("MakePresent - Output")
+            .decorations(false)
+            .resizable(false)
+            .fullscreen(false)
+            .visible(false)
+            .build()
+        {
+            Ok(window) => {
+                app_main.state::<AppState>().logger.log(
+                    crate::logging::Level::Info,
+                    &format!(
+                        "windows: output window created successfully ({})",
+                        describe_window(&window)
+                    ),
+                );
+                Ok(window)
+            }
+            Err(e) => {
+                app_main.state::<AppState>().logger.log(
+                    crate::logging::Level::Error,
+                    &format!("windows: FAILED to create output window: {e}"),
+                );
+                Err(format!("failed to create output window: {e}"))
+            }
         }
-        Err(e) => {
-            state.logger.log(
-                crate::logging::Level::Error,
-                &format!("windows: FAILED to create output window: {e}"),
-            );
-            Err(format!("failed to create output window: {e}"))
-        }
-    }
+    })
 }
 
 /// The stage display is a dumb renderer aimed at the performers/presenters.
@@ -128,76 +179,88 @@ pub fn ensure_stage(app: &AppHandle) -> Result<WebviewWindow, String> {
     }
     let state = app.state::<AppState>();
     state.logger.log(crate::logging::Level::Info, "windows: creating stage window");
-    match WebviewWindow::builder(app, STAGE_WINDOW, stage_url())
-        .title("MakePresent - Stage Display")
-        .resizable(true)
-        .visible(false)
-        .build()
-    {
-        Ok(window) => {
-            state.logger.log(
-                crate::logging::Level::Info,
-                &format!(
-                    "windows: stage window created successfully ({})",
-                    describe_window(&window)
-                ),
-            );
-            Ok(window)
+    let app_main = app.clone();
+    run_on_main(app, &state, "ensure_stage", move || {
+        match WebviewWindow::builder(&app_main, STAGE_WINDOW, stage_url())
+            .title("MakePresent - Stage Display")
+            .resizable(true)
+            .visible(false)
+            .build()
+        {
+            Ok(window) => {
+                app_main.state::<AppState>().logger.log(
+                    crate::logging::Level::Info,
+                    &format!(
+                        "windows: stage window created successfully ({})",
+                        describe_window(&window)
+                    ),
+                );
+                Ok(window)
+            }
+            Err(e) => {
+                app_main.state::<AppState>().logger.log(
+                    crate::logging::Level::Error,
+                    &format!("windows: FAILED to create stage window: {e}"),
+                );
+                Err(format!("failed to create stage window: {e}"))
+            }
         }
-        Err(e) => {
-            state.logger.log(
-                crate::logging::Level::Error,
-                &format!("windows: FAILED to create stage window: {e}"),
-            );
-            Err(format!("failed to create stage window: {e}"))
-        }
-    }
+    })
 }
 
 /// Place the stage window on the given display, windowed at ~70% of the
 /// monitor, and show it. Same display-picker pattern as the output window.
+/// All window work happens on the main thread via `run_on_main`.
 pub fn move_stage_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWindow, String> {
     let state = app.state::<AppState>();
-    let editor = editor_window(app)?;
-    let monitors = editor.available_monitors().map_err(|e| e.to_string())?;
-    let monitor = monitors.get(monitor_index).ok_or_else(|| {
-        let msg = format!("invalid display index {monitor_index} (only {} monitors)", monitors.len());
-        state
-            .logger
-            .log(crate::logging::Level::Error, &format!("windows: move_stage_to: {msg}"));
-        msg
-    })?;
-    let name = monitor.name().cloned().unwrap_or_else(|| "(unnamed)".to_string());
-    let target_pos = *monitor.position();
-    let target_size = monitor.size();
-    state.logger.log(
-        crate::logging::Level::Info,
-        &format!(
-            "windows: move_stage_to: monitor #{monitor_index} \"{name}\" is {}x{} at ({}, {})",
-            target_size.width, target_size.height, target_pos.x, target_pos.y
-        ),
-    );
+    let app_main = app.clone();
+    run_on_main(app, &state, "move_stage_to", move || {
+        let editor = editor_window(&app_main)?;
+        let monitors = editor.available_monitors().map_err(|e| e.to_string())?;
+        let monitor = monitors.get(monitor_index).ok_or_else(|| {
+            let msg = format!(
+                "invalid display index {monitor_index} (only {} monitors)",
+                monitors.len()
+            );
+            app_main.state::<AppState>().logger.log(
+                crate::logging::Level::Error,
+                &format!("windows: move_stage_to: {msg}"),
+            );
+            msg
+        })?;
+        let logger = &app_main.state::<AppState>().logger;
+        let name = monitor.name().cloned().unwrap_or_else(|| "(unnamed)".to_string());
+        let target_pos = *monitor.position();
+        let target_size = monitor.size();
+        logger.log(
+            crate::logging::Level::Info,
+            &format!(
+                "windows: move_stage_to: monitor #{monitor_index} \"{name}\" is {}x{} at ({}, {})",
+                target_size.width, target_size.height, target_pos.x, target_pos.y
+            ),
+        );
 
-    let window = ensure_stage(app)?;
-    let w = (target_size.width as f64 * 0.7).round() as u32;
-    let h = (target_size.height as f64 * 0.7).round() as u32;
-    let size_res = window.set_size(Size::Physical(PhysicalSize::new(w, h)));
-    let pos_res = window.set_position(Position::Physical(target_pos));
-    let show_res = window.show();
-    state.logger.log(
-        crate::logging::Level::Info,
-        &format!(
-            "windows: move_stage_to: set_size({w}x{h}) -> {:?}, set_position({}, {}) -> {:?}, show() -> {:?}; after: {}",
-            size_res,
-            target_pos.x,
-            target_pos.y,
-            pos_res,
-            show_res,
-            describe_window(&window)
-        ),
-    );
-    show_res.map_err(|e| e.to_string())?;
-    Ok(window)
+        let window = ensure_stage(&app_main)?;
+        let w = (target_size.width as f64 * 0.7).round() as u32;
+        let h = (target_size.height as f64 * 0.7).round() as u32;
+        let size_res = window.set_size(Size::Physical(PhysicalSize::new(w, h)));
+        let pos_res = window.set_position(Position::Physical(target_pos));
+        let show_res = window.show();
+        logger.log(
+            crate::logging::Level::Info,
+            &format!(
+                "windows: move_stage_to: set_size({w}x{h}) -> {:?}, set_position({}, {}) -> {:?}, show() -> {:?}; after: {}",
+                size_res,
+                target_pos.x,
+                target_pos.y,
+                pos_res,
+                show_res,
+                describe_window(&window)
+            ),
+        );
+        show_res.map_err(|e| e.to_string())?;
+        Ok(window)
+    })
 }
 
 fn same_monitor(a: &Monitor, b: &Monitor) -> bool {
@@ -250,50 +313,59 @@ pub fn default_output_display(app: &AppHandle) -> Result<usize, String> {
 
 /// Move (or create) the output window onto the given display. Always exits
 /// fullscreen first so the reposition is reliable on every platform.
+/// All window work happens on the main thread via `run_on_main`.
 pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWindow, String> {
     let state = app.state::<AppState>();
-    let editor = editor_window(app)?;
-    let monitors = editor.available_monitors().map_err(|e| e.to_string())?;
-    let monitor = monitors.get(monitor_index).ok_or_else(|| {
-        let msg = format!("invalid display index {monitor_index} (only {} monitors)", monitors.len());
-        state
-            .logger
-            .log(crate::logging::Level::Error, &format!("windows: move_output_to: {msg}"));
-        msg
-    })?;
-    let name = monitor.name().cloned().unwrap_or_else(|| "(unnamed)".to_string());
-    let target_pos = *monitor.position();
-    let target_size = monitor.size();
-    state.logger.log(
-        crate::logging::Level::Info,
-        &format!(
-            "windows: move_output_to: monitor #{monitor_index} \"{name}\" is {}x{} at ({}, {})",
-            target_size.width, target_size.height, target_pos.x, target_pos.y
-        ),
-    );
+    let app_main = app.clone();
+    run_on_main(app, &state, "move_output_to", move || {
+        let editor = editor_window(&app_main)?;
+        let monitors = editor.available_monitors().map_err(|e| e.to_string())?;
+        let monitor = monitors.get(monitor_index).ok_or_else(|| {
+            let msg = format!(
+                "invalid display index {monitor_index} (only {} monitors)",
+                monitors.len()
+            );
+            app_main.state::<AppState>().logger.log(
+                crate::logging::Level::Error,
+                &format!("windows: move_output_to: {msg}"),
+            );
+            msg
+        })?;
+        let logger = &app_main.state::<AppState>().logger;
+        let name = monitor.name().cloned().unwrap_or_else(|| "(unnamed)".to_string());
+        let target_pos = *monitor.position();
+        let target_size = monitor.size();
+        logger.log(
+            crate::logging::Level::Info,
+            &format!(
+                "windows: move_output_to: monitor #{monitor_index} \"{name}\" is {}x{} at ({}, {})",
+                target_size.width, target_size.height, target_pos.x, target_pos.y
+            ),
+        );
 
-    let window = ensure_output(app)?;
-    let exit_fs = if window.is_fullscreen().unwrap_or(false) {
-        Some(window.set_fullscreen(false))
-    } else {
-        None
-    };
-    let pos_res = window.set_position(Position::Physical(target_pos));
-    let show_res = window.show();
-    state.logger.log(
-        crate::logging::Level::Info,
-        &format!(
-            "windows: move_output_to: exit_fullscreen -> {:?}, set_position({}, {}) -> {:?}, show() -> {:?}; after: {}",
-            exit_fs,
-            target_pos.x,
-            target_pos.y,
-            pos_res,
-            show_res,
-            describe_window(&window)
-        ),
-    );
-    show_res.map_err(|e| e.to_string())?;
-    Ok(window)
+        let window = ensure_output(&app_main)?;
+        let exit_fs = if window.is_fullscreen().unwrap_or(false) {
+            Some(window.set_fullscreen(false))
+        } else {
+            None
+        };
+        let pos_res = window.set_position(Position::Physical(target_pos));
+        let show_res = window.show();
+        logger.log(
+            crate::logging::Level::Info,
+            &format!(
+                "windows: move_output_to: exit_fullscreen -> {:?}, set_position({}, {}) -> {:?}, show() -> {:?}; after: {}",
+                exit_fs,
+                target_pos.x,
+                target_pos.y,
+                pos_res,
+                show_res,
+                describe_window(&window)
+            ),
+        );
+        show_res.map_err(|e| e.to_string())?;
+        Ok(window)
+    })
 }
 
 /// Whether the on-demand output window currently exists and is showing.

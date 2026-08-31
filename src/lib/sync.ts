@@ -9,6 +9,7 @@ import type {
   ImportReport,
   Library,
   LogEntry,
+  LookPatch,
   MediaAsset,
   ScriptureMatch,
   Transition,
@@ -77,6 +78,18 @@ export const api = {
 
   setTransition: (transition: Transition) =>
     invoke<ClientState>("set_transition", { transition }),
+
+  upsertLook: (lookId: string | null, patch: LookPatch) =>
+    invoke<ClientState>("upsert_look", { lookId, patch }),
+
+  deleteLook: (lookId: string) =>
+    invoke<ClientState>("delete_look", { lookId }),
+
+  setOutputLook: (lookId: string | null) =>
+    invoke<ClientState>("set_output_look", { lookId }),
+
+  setStageLook: (lookId: string | null) =>
+    invoke<ClientState>("set_stage_look", { lookId }),
 
   importMedia: (path: string) => invoke<MediaAsset>("import_media", { path }),
 

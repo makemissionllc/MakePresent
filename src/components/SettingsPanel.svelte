@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { api } from "../lib/sync";
-  import type { ClientState, LogEntry } from "../lib/types";
+  import type { ClientState, LogEntry, Look, LookPatch, TextPosition } from "../lib/types";
 
   interface Props {
     app: ClientState | null;
@@ -10,10 +10,107 @@
 
   let { app: appState, onclose }: Props = $props();
 
-  let tab = $state<"general" | "logs">("general");
+  let tab = $state<"general" | "looks" | "logs">("general");
   let status = $state<{ kind: "ok" | "err"; text: string } | null>(null);
   let logs = $state<LogEntry[]>([]);
   let logsMsg = $state<string | null>(null);
+  let lookErr = $state<string | null>(null);
+
+  const looks = $derived(appState?.looks ?? []);
+  let activeLookId = $state<string | null>(null);
+  const activeLook = $derived.by(() => {
+    if (!activeLookId) return looks[0] ?? null;
+    return looks.find((l) => l.id === activeLookId) ?? looks[0] ?? null;
+  });
+
+  // Optimistic editing: local copy of the selected Look so every keystroke
+  // re-renders the output immediately, then fire-and-forget the IPC.
+  let draft: Look | null = $state(null);
+
+  $effect(() => {
+    if (tab !== "looks") return;
+    draft = activeLook ? { ...activeLook } : null;
+  });
+
+  function commit(): void {
+    if (!draft) return;
+    scheduleCommit(draft);
+  }
+
+  function selectLook(id: string): void {
+    activeLookId = id;
+    if (commitTimer) clearTimeout(commitTimer);
+  }
+
+  function setDraft(field: keyof Look, value: unknown): void {
+    lookErr = null;
+    if (!draft) return;
+    // Optimistic UI: update the shared appState.looks immediately so every
+    // window (Output/Stage) reflects the change with zero IPC latency.
+    const updated = { ...draft, [field]: value } as Look;
+    draft = updated;
+    if (appState) {
+      appState = {
+        ...appState,
+        looks: appState.looks.map((l) => (l.id === updated.id ? updated : l)),
+      };
+    }
+    // Only persist the really-committed patch, debounced per keystroke.
+    void scheduleCommit(updated);
+  }
+
+  let commitTimer: ReturnType<typeof setTimeout> | null = null;
+  function scheduleCommit(updated: Look): void {
+    const patch: LookPatch = {
+      name: updated.name,
+      titleSize: updated.titleSize,
+      bodySize: updated.bodySize,
+      textColor: updated.textColor,
+      showBackground: updated.showBackground,
+      textPosition: updated.textPosition,
+    };
+    if (commitTimer) clearTimeout(commitTimer);
+    commitTimer = setTimeout(() => {
+      void api.upsertLook(updated.id, patch).catch((e: unknown) => (lookErr = String(e)));
+    }, 200);
+  }
+
+  function addLook(): void {
+    lookErr = null;
+    void api
+      .upsertLook(null, {
+        name: `Look ${looks.length + 1}`,
+        titleSize: 60,
+        bodySize: 40,
+        textColor: "#ffffff",
+        showBackground: true,
+        textPosition: "center",
+      })
+      .then((s) => {
+        appState = s;
+        const created = s.looks.at(-1);
+        if (created) activeLookId = created.id;
+      })
+      .catch((e: unknown) => (lookErr = String(e)));
+  }
+
+  function deleteLook(): void {
+    if (!activeLook) return;
+    lookErr = null;
+    void api
+      .deleteLook(activeLook.id)
+      .then((s) => {
+        appState = s;
+        activeLookId = null;
+      })
+      .catch((e: unknown) => (lookErr = String(e)));
+  }
+
+  function assignTo(target: "output" | "stage", id: string | null): void {
+    lookErr = null;
+    const fn = target === "output" ? api.setOutputLook : api.setStageLook;
+    void fn(id).then((s) => (appState = s)).catch((e: unknown) => (lookErr = String(e)));
+  }
 
   const summary = $derived(
     appState
@@ -140,6 +237,9 @@
       <button class="tab" class:active={tab === "general"} onclick={() => (tab = "general")}>
         General
       </button>
+      <button class="tab" class:active={tab === "looks"} onclick={() => (tab = "looks")}>
+        Looks
+      </button>
       <button class="tab" class:active={tab === "logs"} onclick={() => (tab = "logs")}>
         Logs
       </button>
@@ -170,6 +270,153 @@
 
           {#if status}
             <p class="status" class:err={status.kind === "err"}>{status.text}</p>
+          {/if}
+        </div>
+      {:else if tab === "looks"}
+        <div class="panel-looks">
+          <p class="hint">
+            Looks are named style profiles — font size, text colour, text
+            position and whether the background is shown. Each output window
+            (Main, Stage, future Stream) renders the same live slide but applies
+            its assigned Look. They are stored with the project and update
+            instantly while live.
+          </p>
+
+          {#if looks.length === 0}
+            <p class="looks-empty">No Looks yet. Add one below.</p>
+          {:else}
+            <div class="looks-layout">
+              <div class="looks-list">
+                {#each looks as lk (lk.id)}
+                  <button
+                    class="look-pill"
+                    class:active={lk.id === activeLook?.id}
+                    onclick={() => selectLook(lk.id)}
+                  >
+                    <span
+                      class="look-swatch"
+                      style:background-color={lk.textColor}
+                    ></span>
+                    {lk.name}
+                    {#if appState?.outputLookId === lk.id}
+                      <span class="badge">Output</span>
+                    {/if}
+                    {#if appState?.stageLookId === lk.id}
+                      <span class="badge stage">Stage</span>
+                    {/if}
+                  </button>
+                {/each}
+                <button class="add-look" onclick={() => addLook()}>+ Add look</button>
+              </div>
+
+              <div class="look-editor">
+                {#if draft}
+                  <label>
+                    Name
+                    <input
+                      type="text"
+                      value={draft.name}
+                      oninput={(e) => setDraft("name", (e.target as HTMLInputElement).value)}
+                    />
+                  </label>
+                  <div class="field-row">
+                    <label>
+                      Title size
+                      <input
+                        type="number"
+                        min="16"
+                        max="300"
+                        value={draft.titleSize}
+                        oninput={(e) =>
+                          setDraft("titleSize", Number((e.target as HTMLInputElement).value))}
+                      />
+                    </label>
+                    <label>
+                      Body size
+                      <input
+                        type="number"
+                        min="16"
+                        max="300"
+                        value={draft.bodySize}
+                        oninput={(e) =>
+                          setDraft("bodySize", Number((e.target as HTMLInputElement).value))}
+                      />
+                    </label>
+                  </div>
+                  <label>
+                    Text colour
+                    <span class="color-line">
+                      <input
+                        type="color"
+                        value={draft.textColor}
+                        oninput={(e) =>
+                          setDraft("textColor", (e.target as HTMLInputElement).value)}
+                      />
+                      <code>{draft.textColor}</code>
+                    </span>
+                  </label>
+                  <label class="check">
+                    <input
+                      type="checkbox"
+                      checked={draft.showBackground}
+                      onchange={(e) =>
+                        setDraft("showBackground", (e.target as HTMLInputElement).checked)}
+                    />
+                    Show background
+                  </label>
+                  <label>
+                    Text position
+                    <select
+                      value={draft.textPosition}
+                      onchange={(e) =>
+                        setDraft("textPosition", (e.target as HTMLSelectElement).value as TextPosition)}
+                    >
+                      <option value="top">Top</option>
+                      <option value="center">Center</option>
+                      <option value="bottom">Bottom</option>
+                    </select>
+                  </label>
+
+                  <div class="assign-block">
+                    <span class="assign-title">Assign to</span>
+                    <label>
+                      Main Output
+                      <select
+                        value={appState?.outputLookId ?? ""}
+                        onchange={(e) =>
+                          assignTo("output", (e.target as HTMLSelectElement).value || null)}
+                      >
+                        <option value="">Auto (Main)</option>
+                        {#each looks as lk (lk.id)}
+                          <option value={lk.id}>{lk.name}</option>
+                        {/each}
+                      </select>
+                    </label>
+                    <label>
+                      Stage Display
+                      <select
+                        value={appState?.stageLookId ?? ""}
+                        onchange={(e) =>
+                          assignTo("stage", (e.target as HTMLSelectElement).value || null)}
+                      >
+                        <option value="">Auto (Stage)</option>
+                        {#each looks as lk (lk.id)}
+                          <option value={lk.id}>{lk.name}</option>
+                        {/each}
+                      </select>
+                    </label>
+                  </div>
+
+                  <button class="danger" onclick={() => deleteLook()}>Delete this look</button>
+                {:else}
+                  <p class="looks-empty">Select or create a Look to edit its style.</p>
+                {/if}
+              </div>
+            </div>
+          {/if}
+
+          {#if lookErr}
+            <p class="status err">{lookErr}</p>
           {/if}
         </div>
       {:else}
@@ -352,5 +599,173 @@
     word-break: break-word;
     display: flex;
     flex-direction: column;
+  }
+
+  .panel-looks {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .looks-empty {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin: 0;
+  }
+
+  .looks-layout {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 16px;
+  }
+
+  .looks-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .look-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-align: left;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  .look-pill.active {
+    border-color: var(--accent);
+    outline: 1px solid var(--accent);
+  }
+
+  .look-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    flex: none;
+  }
+
+  .badge {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1px 6px;
+  }
+
+  .badge.stage {
+    color: #9fd3ff;
+  }
+
+  .add-look {
+    background: transparent;
+  }
+
+  .look-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-2);
+  }
+
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .color-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .color-line input[type="color"] {
+    width: 34px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel-2);
+  }
+
+  .color-line code {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .check {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .assign-block {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .assign-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .danger {
+    border-color: var(--danger);
+    color: var(--danger);
+    background: transparent;
+  }
+
+  .panel-looks label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .panel-looks label.check {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+  }
+
+  .panel-looks input[type="text"],
+  .panel-looks input[type="number"],
+  .panel-looks select {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    color: var(--text);
+    width: 100%;
+  }
+
+  .panel-looks button {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    padding: 6px 12px;
   }
 </style>

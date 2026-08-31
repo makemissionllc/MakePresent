@@ -1,7 +1,7 @@
 use crate::logging::{Level, LogEntry};
 use crate::project::{
-    is_first_run, now_iso, Background, ClientState, Library, LibrarySlide, LibrarySong,
-    OutputView, Project, Settings, Slide, StageView, Transition, write_settings,
+    is_first_run, now_iso, Background, ClientState, Library, LibrarySlide, LibrarySong, Look,
+    OutputView, Project, Settings, Slide, StageView, TextPosition, Transition, write_settings,
 };
 use crate::scripture::ScriptureMatch;
 use crate::state::AppState;
@@ -26,6 +26,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
         .and_then(|id| project.next_slide(id))
         .cloned();
     let on_deck = project.on_deck().cloned();
+    let looks = project.looks.clone();
     drop(project);
 
     let snap = ClientState {
@@ -47,6 +48,9 @@ fn snapshot(app: &AppHandle) -> ClientState {
         current,
         next,
         on_deck,
+        looks,
+        output_look_id: settings.output_look_id,
+        stage_look_id: settings.stage_look_id,
     };
     snap
 }
@@ -236,6 +240,172 @@ fn transition_value(t: Transition) -> &'static str {
         Transition::Cut => "cut",
         Transition::Fade => "fade",
     }
+}
+
+/// A thin patch for editing one Look. All fields optional; only the provided
+/// ones are applied, matching how `update_slide` works for the editor's
+/// optimistic input handling.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LookPatch {
+    pub name: Option<String>,
+    pub title_size: Option<u32>,
+    pub body_size: Option<u32>,
+    pub text_color: Option<String>,
+    pub show_background: Option<bool>,
+    pub text_position: Option<TextPosition>,
+}
+
+/// Create a new Look (when `look_id` is None) or update an existing one with
+/// the given patch. Lives on the Project so it is saved with autosave.
+#[tauri::command]
+pub fn upsert_look(
+    app: AppHandle,
+    look_id: Option<String>,
+    patch: LookPatch,
+) -> Result<ClientState, String> {
+    mutate(&app, |project| {
+        let new_id = look_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
+        match project.looks.iter_mut().find(|l| l.id == new_id) {
+            Some(look) => {
+                apply_look_patch(look, patch);
+            }
+            None => {
+                if look_id.is_none() {
+                    let mut name = patch.name.clone().unwrap_or_else(|| "New Look".to_string());
+                    // Ensure unique, non-empty names so the dropdowns read well.
+                    if name.trim().is_empty() {
+                        name = "New Look".to_string();
+                    }
+                    let mut look = Look::main_default();
+                    look.id = new_id;
+                    look.name = name;
+                    apply_look_patch(&mut look, patch);
+                    project.looks.push(look);
+                } else {
+                    return Err(format!("look {new_id} not found"));
+                }
+            }
+        }
+        Ok(())
+    })
+    .map(|s| {
+        log(
+            &app,
+            Level::Info,
+            &format!("look: upserted look \"{}\"", look_id.unwrap_or_else(|| "new".to_string())),
+        );
+        s
+    })
+}
+
+fn apply_look_patch(look: &mut Look, patch: LookPatch) {
+    if let Some(name) = patch.name {
+        look.name = name;
+    }
+    if let Some(title_size) = patch.title_size {
+        look.title_size = title_size.clamp(16, 300);
+    }
+    if let Some(body_size) = patch.body_size {
+        look.body_size = body_size.clamp(16, 300);
+    }
+    if let Some(text_color) = patch.text_color {
+        if !text_color.trim().is_empty() {
+            look.text_color = text_color;
+        }
+    }
+    if let Some(show_background) = patch.show_background {
+        look.show_background = show_background;
+    }
+    if let Some(text_position) = patch.text_position {
+        look.text_position = text_position;
+    }
+}
+
+/// Delete a Look. Outputs still mapped to it fall back to the first remaining
+/// look rather than rendering un-styled.
+#[tauri::command]
+pub fn delete_look(app: AppHandle, look_id: String) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    {
+        let mut project = state.project.write().unwrap();
+        if !project.looks.iter().any(|l| l.id == look_id) {
+            return Err(format!("look {look_id} not found"));
+        }
+        project.looks.retain(|l| l.id != look_id);
+        project.ensure_default_looks();
+        project.modified_at = now_iso();
+    }
+    state.request_save();
+    // Point any output that referenced the deleted look at the default.
+    {
+        let settings = state.current_settings();
+        let looks = state.project.read().unwrap().looks.clone();
+        let first_id = looks.first().map(|l| l.id.clone());
+        let mut settings = settings;
+        if settings.output_look_id.as_deref() == Some(look_id.as_str()) {
+            settings.output_look_id = first_id.clone();
+        }
+        if settings.stage_look_id.as_deref() == Some(look_id.as_str()) {
+            settings.stage_look_id = first_id;
+        }
+        state.apply_settings(settings);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+    }
+    log(&app, Level::Info, &format!("look: deleted look \"{look_id}\""));
+    let snap = snapshot(&app);
+    let _ = app.emit("state", &snap);
+    Ok(snap)
+}
+
+/// Assign a Look to the main Output window. Stored in per-machine settings, so
+/// it is not part of the shared project file.
+#[tauri::command]
+pub fn set_output_look(app: AppHandle, look_id: Option<String>) -> Result<ClientState, String> {
+    set_look_mapping(&app, "output", look_id)
+}
+
+/// Assign a Look to the Stage Display window. Stored in per-machine settings.
+#[tauri::command]
+pub fn set_stage_look(app: AppHandle, look_id: Option<String>) -> Result<ClientState, String> {
+    set_look_mapping(&app, "stage", look_id)
+}
+
+fn set_look_mapping(
+    app: &AppHandle,
+    target: &str,
+    look_id: Option<String>,
+) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    if let Some(id) = &look_id {
+        let exists = state
+            .project
+            .read()
+            .unwrap()
+            .find_look(id)
+            .is_some();
+        if !exists {
+            return Err(format!("look {id} not found"));
+        }
+    }
+    {
+        let mut settings = state.current_settings();
+        if target == "output" {
+            settings.output_look_id = look_id.clone();
+        } else {
+            settings.stage_look_id = look_id.clone();
+        }
+        state.apply_settings(settings);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+    }
+    log(
+        app,
+        Level::Info,
+        &format!("look: {target} mapped to look {}", look_id.unwrap_or_else(|| "none".to_string())),
+    );
+    let snap = snapshot(app);
+    let _ = app.emit("state", &snap);
+    Ok(snap)
 }
 
 #[tauri::command]
@@ -558,6 +728,8 @@ enum SettingsField {
     StageDisplay,
     StageVisible,
     DefaultTransition,
+    OutputLook,
+    StageLook,
 }
 
 impl SettingsField {
@@ -568,17 +740,21 @@ impl SettingsField {
             SettingsField::StageDisplay => "Stage display",
             SettingsField::StageVisible => "Stage visibility",
             SettingsField::DefaultTransition => "Default transition",
+            SettingsField::OutputLook => "Output look",
+            SettingsField::StageLook => "Stage look",
         }
     }
 }
 
-fn settings_fields() -> [SettingsField; 5] {
+fn settings_fields() -> [SettingsField; 7] {
     [
         SettingsField::OutputDisplay,
         SettingsField::OutputFullscreen,
         SettingsField::StageDisplay,
         SettingsField::StageVisible,
         SettingsField::DefaultTransition,
+        SettingsField::OutputLook,
+        SettingsField::StageLook,
     ]
 }
 
@@ -595,6 +771,8 @@ fn changed_settings(old: &Settings, new: &Settings) -> Vec<String> {
             SettingsField::DefaultTransition => {
                 new.default_transition != old.default_transition
             }
+            SettingsField::OutputLook => new.output_look_id != old.output_look_id,
+            SettingsField::StageLook => new.stage_look_id != old.stage_look_id,
         };
         if differs {
             changed.push(field.label().to_string());
@@ -753,6 +931,8 @@ mod tests {
             stage_display_name: Some("B".to_string()),
             stage_visible: true,
             default_transition: Transition::Fade,
+            output_look_id: Some("look-1".to_string()),
+            stage_look_id: None,
         }
     }
 

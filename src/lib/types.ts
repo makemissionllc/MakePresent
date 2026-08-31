@@ -41,6 +41,18 @@ export interface Slide {
   background: Background;
 }
 
+export type TextPosition = "top" | "center" | "bottom";
+
+export interface Look {
+  id: string;
+  name: string;
+  titleSize: number;
+  bodySize: number;
+  textColor: string;
+  showBackground: boolean;
+  textPosition: TextPosition;
+}
+
 export type Transition = "cut" | "fade";
 
 export interface Project {
@@ -48,9 +60,19 @@ export interface Project {
   id: string;
   name: string;
   slides: Slide[];
+  looks: Look[];
   live: string | null;
   transition: Transition;
   modifiedAt: string;
+}
+
+export interface LookPatch {
+  name?: string;
+  titleSize?: number;
+  bodySize?: number;
+  textColor?: string;
+  showBackground?: boolean;
+  textPosition?: TextPosition;
 }
 
 export interface Notice {
@@ -82,6 +104,9 @@ export interface ClientState {
   current: Slide | null;
   next: Slide | null;
   onDeck: Slide | null;
+  looks: Look[];
+  outputLookId: string | null;
+  stageLookId: string | null;
 }
 
 export interface DisplayInfo {

@@ -2,8 +2,8 @@
   import { onMount } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api, subscribeState } from "../lib/sync";
-  import type { ClientState, Slide } from "../lib/types";
-  import { fitText } from "../lib/fitText";
+  import type { ClientState, Look, Slide } from "../lib/types";
+  import SlideRender from "./SlideRender.svelte";
 
   const FADE_MS = 400;
 
@@ -26,16 +26,17 @@
   );
   const transition = $derived(project?.transition ?? "cut");
 
-  function solidColor(slide: Slide | null): string {
-    return slide && slide.background.type === "solid"
-      ? slide.background.color
-      : "#000000";
-  }
+  // Resolve the Look assigned to this Output window (mapping lives in per-machine
+  // settings, not hardcoded). Falls back to the look named "Main", then the
+  // first look, when unmapped.
+  const look = $derived.by<Look | null>(() => {
+    const looks = appState?.looks ?? [];
+    if (looks.length === 0) return null;
+    const mapped = looks.find((l) => l.id === appState?.outputLookId);
+    if (mapped) return mapped;
+    return looks.find((l) => l.name === "Main") ?? looks[0]!;
+  });
 
-  // Full-bleed media layer for a slide's background. Videos play muted on loop
-  // and both image/video fill the frame via object-fit:cover. Audio playback
-  // is explicitly out of scope this phase.
-  //
   // The on-deck slide comes straight from state (the backend decides who is
   // "likely next"). Its media is preloaded here — in the window that will
   // actually play it — so a cut to it starts instantly instead of decoding
@@ -95,59 +96,23 @@
   });
 </script>
 
-{#snippet slideMarkup(slide: Slide)}
-  {#if slide.title}
-    <h1 class="title" data-role="title">{slide.title}</h1>
-  {/if}
-  {#if slide.body}
-    <p class="body" data-role="body">{slide.body}</p>
-  {/if}
-{/snippet}
-
-{#snippet mediaLayer(slide: Slide)}
-  {#if slide.background.type === "image"}
-    <img
-      class="media-layer"
-      src={convertFileSrc(slide.background.path)}
-      alt=""
-      draggable="false"
-      onerror={(e) => {
-        (e.currentTarget as HTMLImageElement).style.display = "none";
-      }}
-    />
-  {:else if slide.background.type === "video"}
-    <video
-      class="media-layer"
-      src={convertFileSrc(slide.background.path)}
-      autoplay
-      loop
-      muted
-      playsinline
-      preload="auto"
-    ></video>
-  {/if}
-{/snippet}
-
 <main class="stage">
   {#if shown}
-    <div class="slide" use:fitText class:in={dim} style:background-color={solidColor(shown)}>
-      {@render mediaLayer(shown)}
-      {@render slideMarkup(shown)}
-    </div>
+    {#if look}
+      <div class="frame" class:in={dim}>
+        <SlideRender slide={shown} {look} />
+      </div>
+    {/if}
   {:else if !leaving}
     <div class="offline"></div>
   {/if}
 
   {#if leaving}
-    <div
-      class="leaving"
-      use:fitText
-      class:out={out}
-      style:background-color={solidColor(leaving)}
-    >
-      {@render mediaLayer(leaving)}
-      {@render slideMarkup(leaving)}
-    </div>
+    {#if look}
+      <div class="frame" class:out={out}>
+        <SlideRender slide={leaving} {look} />
+      </div>
+    {/if}
   {/if}
 
   {#if onDeck && onDeck.background.type === "video"}
@@ -186,42 +151,15 @@
     background: #000;
   }
 
-  .slide,
-  .leaving,
+  .frame,
   .offline {
     position: absolute;
     inset: 0;
   }
 
-  .slide,
-  .leaving {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2.5vh;
-    padding: 8vh 10vw;
-    text-align: center;
-    color: #ffffff;
+  .frame {
     opacity: 1;
     transition: opacity 400ms ease;
-    overflow: hidden;
-  }
-
-  .media-layer {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  .slide > .title,
-  .slide > .body,
-  .leaving > .title,
-  .leaving > .body {
-    position: relative;
-    z-index: 1;
   }
 
   .preloader {
@@ -235,33 +173,11 @@
     /* keep it reachable by the layout engine so WebKit actually fetches it */
   }
 
-  .slide.in {
+  .frame.in {
     opacity: 0;
   }
 
-  .leaving.out {
+  .frame.out {
     opacity: 0;
-  }
-
-  .title {
-    font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell,
-      sans-serif;
-    font-size: clamp(2.5rem, 8vmin, 9rem);
-    font-weight: 700;
-    margin: 0;
-    line-height: 1.1;
-    text-shadow: 0 2px 24px rgba(0, 0, 0, 0.45);
-  }
-
-  .body {
-    font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell,
-      sans-serif;
-    font-size: clamp(1.25rem, 4.5vmin, 5rem);
-    font-weight: 400;
-    margin: 0;
-    max-width: 80%;
-    line-height: 1.4;
-    white-space: pre-wrap;
-    text-shadow: 0 2px 20px rgba(0, 0, 0, 0.4);
   }
 </style>

@@ -73,6 +73,64 @@ pub struct Slide {
     pub background: Background,
 }
 
+/// Where the slide text is placed within its frame.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TextPosition {
+    Top,
+    #[default]
+    Center,
+    Bottom,
+}
+
+/// A named style profile ("Look") that tells an output how to present the
+/// *same* underlying slide differently: main audience screen, stage display,
+/// or a future NDI/stream feed.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Look {
+    pub id: String,
+    pub name: String,
+    /// Base font size for the slide title (px). Serves as the fitText ceiling;
+    /// text still shrinks automatically when it would overflow.
+    pub title_size: u32,
+    /// Base font size for the slide body (px).
+    pub body_size: u32,
+    /// Override colour for the text.
+    pub text_color: String,
+    /// Whether the slide's background (solid colour or media) is drawn. When
+    /// off only the text is shown, e.g. transparent for stage/stream compositing.
+    pub show_background: bool,
+    /// Vertical placement of the text block within the frame.
+    pub text_position: TextPosition,
+}
+
+impl Look {
+    pub fn main_default() -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name: "Main".to_string(),
+            title_size: 72,
+            body_size: 40,
+            text_color: "#ffffff".to_string(),
+            show_background: true,
+            text_position: TextPosition::Center,
+        }
+    }
+
+    pub fn stage_default() -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name: "Stage".to_string(),
+            title_size: 60,
+            body_size: 56,
+            text_color: "#ffffff".to_string(),
+            show_background: false,
+            text_position: TextPosition::Center,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -80,6 +138,11 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub slides: Vec<Slide>,
+    /// Named style profiles (Looks) that outputs render against. Stored with
+    /// the project so they save/load with autosave. Defaults are seeded on new
+    /// (and legacy) projects.
+    #[serde(default)]
+    pub looks: Vec<Look>,
     pub live: Option<String>,
     /// The slide currently selected/being-armed in the editor (used to decide
     /// which media the Output preloads "on deck").
@@ -105,11 +168,25 @@ impl Project {
                 body: "This is the Phase 1 test slide.".to_string(),
                 background: Background::default(),
             }],
+            looks: vec![Look::main_default(), Look::stage_default()],
             live: None,
             selected: None,
             transition: Transition::Cut,
             modified_at: now_iso(),
         }
+    }
+
+    /// Guarantee at least the default Main/Stage looks exist. Called on legacy
+    /// projects loaded from disk that predate the Looks feature.
+    pub fn ensure_default_looks(&mut self) {
+        if self.looks.is_empty() {
+            self.looks.push(Look::main_default());
+            self.looks.push(Look::stage_default());
+        }
+    }
+
+    pub fn find_look(&self, id: &str) -> Option<&Look> {
+        self.looks.iter().find(|l| l.id == id)
     }
 
     pub fn test() -> Self {
@@ -188,6 +265,11 @@ pub struct ClientState {
     /// one, otherwise the slide after the live one. Its media is preloaded by
     /// the Output so a cut to it never decodes on demand.
     pub on_deck: Option<Slide>,
+    /// The project's named Looks, plus the ids each output is currently mapped
+    /// to. Outputs resolve their slice of this list by id.
+    pub looks: Vec<Look>,
+    pub output_look_id: Option<String>,
+    pub stage_look_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -248,6 +330,10 @@ pub struct Settings {
     pub stage_visible: bool,
     /// Default transition applied to newly created projects.
     pub default_transition: Transition,
+    /// Look id assigned to the main Output window (None -> first look).
+    pub output_look_id: Option<String>,
+    /// Look id assigned to the Stage Display window (None -> second/default).
+    pub stage_look_id: Option<String>,
 }
 
 impl Default for Settings {
@@ -260,6 +346,8 @@ impl Default for Settings {
             stage_display_name: None,
             stage_visible: false,
             default_transition: Transition::Cut,
+            output_look_id: None,
+            stage_look_id: None,
         }
     }
 }
@@ -484,10 +572,11 @@ pub fn recover_or_seed(data_dir: &Path) -> (Project, Option<Notice>) {
             loaded_from_snapshot = true;
         }
     }
-    let project = project.unwrap_or_else(|| {
+    let mut project = project.unwrap_or_else(|| {
         eprintln!("no usable project file found, seeding new project");
         Project::test()
     });
+    project.ensure_default_looks();
 
     let recovered = recovering || loaded_from_snapshot;
     let notice = if recovered {

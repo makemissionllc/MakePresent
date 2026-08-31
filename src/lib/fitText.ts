@@ -36,6 +36,12 @@ export interface FitTextOptions {
   minTitlePx?: number;
   /** Floor font size in px for [data-role="body"] before ellipsis truncation. */
   minBodyPx?: number;
+  /**
+   * An opaque token encoding the inputs that affect how text fits (font sizes,
+   * layout classes, …). When it changes between actions the measure re-runs,
+   * so e.g. swapping a slide's Look resizes the text to its new natural size.
+   */
+  deps?: string;
 }
 
 const TITLE_SEL = '[data-role="title"]';
@@ -182,6 +188,7 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
   const minTitlePx = opts?.minTitlePx ?? 24;
   const minBodyPx = opts?.minBodyPx ?? 16;
   let raf = 0;
+  let lastDeps: string | undefined;
 
   const run = (): void => {
     const title = node.querySelector<HTMLElement>(TITLE_SEL);
@@ -245,11 +252,19 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
   mo.observe(node, { childList: true, characterData: true, subtree: true });
 
   schedule();
+  lastDeps = opts?.deps;
   if (document.fonts?.ready) {
     void document.fonts.ready.then(schedule).catch(() => {});
   }
 
   return {
+    update(nextOpts) {
+      const nextDeps = nextOpts?.deps;
+      if (nextDeps !== lastDeps) {
+        lastDeps = nextDeps;
+        schedule();
+      }
+    },
     destroy(): void {
       ro.disconnect();
       mo.disconnect();

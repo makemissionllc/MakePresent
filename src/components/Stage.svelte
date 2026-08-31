@@ -1,14 +1,25 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, subscribeState } from "../lib/sync";
-  import type { ClientState } from "../lib/types";
+  import type { ClientState, Look } from "../lib/types";
   import { fitText } from "../lib/fitText";
+  import SlideRender from "./SlideRender.svelte";
 
   let appState = $state<ClientState | null>(null);
   let currentTime = $state("--:--:--");
 
   const current = $derived(appState?.current ?? null);
   const next = $derived(appState?.next ?? null);
+
+  // Resolve the Look assigned to this Stage window. Falls back to the look
+  // named "Stage", then the first look, when unmapped.
+  const look = $derived.by<Look | null>(() => {
+    const looks = appState?.looks ?? [];
+    if (looks.length === 0) return null;
+    const mapped = looks.find((l) => l.id === appState?.stageLookId);
+    if (mapped) return mapped;
+    return looks.find((l) => l.name === "Stage") ?? looks[0]!;
+  });
 
   onMount(() => {
     let un: () => void = () => {};
@@ -39,9 +50,11 @@
 </script>
 
 <div class="stage">
-  <section class="current" use:fitText>
-    {#if current}
-      <p class="current-body" data-role="body">{current.body || current.title}</p>
+  <section class="current">
+    {#if current && look}
+      <SlideRender {look} slide={current} />
+    {:else if current}
+      <p class="placeholder">{current.body || current.title}</p>
     {:else}
       <p class="placeholder">No live slide</p>
     {/if}
@@ -82,26 +95,16 @@
   }
 
   .current {
+    position: relative;
     flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6vh 6vw;
     min-width: 0;
-  }
-
-  .current-body {
-    font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell,
-      sans-serif;
-    font-size: clamp(1.5rem, 4.2vmin, 4rem);
-    font-weight: 500;
-    line-height: 1.45;
-    margin: 0;
-    max-width: 95%;
-    white-space: pre-wrap;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .side {
+    position: relative;
+    z-index: 2;
     width: 30%;
     min-width: 240px;
     display: flex;

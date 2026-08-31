@@ -278,6 +278,22 @@
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
+  function onOutputLookChange(e: Event): void {
+    const value = (e.target as HTMLSelectElement).value;
+    void api
+      .setOutputLook(value === "" ? null : value)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
+  function onStageLookChange(e: Event): void {
+    const value = (e.target as HTMLSelectElement).value;
+    void api
+      .setStageLook(value === "" ? null : value)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
   async function newProject(): Promise<void> {
     try {
       welcomeDismissed = true;
@@ -617,6 +633,19 @@
         </select>
       </label>
 
+      <label>
+        Output Look
+        <select
+          value={appState?.outputLookId ?? ""}
+          onchange={onOutputLookChange}
+        >
+          <option value="">Auto (Main)</option>
+          {#each appState?.looks ?? [] as lk (lk.id)}
+            <option value={lk.id}>{lk.name}</option>
+          {/each}
+        </select>
+      </label>
+
       <div class="output-status">
         {#if appState?.output.visible}
           {#if project?.live}
@@ -672,6 +701,19 @@
           Stage is hidden
         {/if}
       </div>
+
+      <label>
+        Stage Look
+        <select
+          value={appState?.stageLookId ?? ""}
+          onchange={onStageLookChange}
+        >
+          <option value="">Auto (Stage)</option>
+          {#each appState?.looks ?? [] as lk (lk.id)}
+            <option value={lk.id}>{lk.name}</option>
+          {/each}
+        </select>
+      </label>
     </aside>
   </div>
 </div>

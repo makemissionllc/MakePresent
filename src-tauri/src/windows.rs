@@ -549,6 +549,16 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
         let size_res = window.set_size(Size::Physical(PhysicalSize::new(place_w, place_h)));
         let pos_res = window.set_position(Position::Physical(place_pos));
         let show_res = window.show();
+        // Debug trace of the exact pixel coordinates we place the window at.
+        // Wayland window managers routinely ignore the generic hint, so this
+        // (x, y) lets us confirm what the compositor actually honoured.
+        logger.log(
+            crate::logging::Level::Debug,
+            &format!(
+                "windows: move_output_to: placing at physical ({}, {}) from monitor #{monitor_index} \"{name}\" at ({}, {})",
+                place_pos.x, place_pos.y, target_pos.x, target_pos.y
+            ),
+        );
         logger.log(
             crate::logging::Level::Info,
             &format!(

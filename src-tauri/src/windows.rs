@@ -162,6 +162,28 @@ where
     result
 }
 
+/// Fire-and-forget variant of `run_on_main`. Queues `f` on the main thread
+/// and returns immediately without waiting for a result. Used for
+/// `show_output` triggered by `set_live_slide` — the slide should go live
+/// and `snapshot` should be emitted without blocking the command worker on
+/// WebView2 creation, which on Windows can leave the message pump degraded
+/// for several hundred ms. Errors are logged inside the closure.
+fn run_on_main_async<F>(app: &AppHandle, op: &str, f: F) -> Result<(), String>
+where
+    F: FnOnce() + Send + 'static,
+{
+    if is_main_thread() {
+        // Already on main thread — run inline fire-and-forget.
+        f();
+        return Ok(());
+    }
+    app.run_on_main_thread(move || {
+        mark_as_main_thread();
+        f();
+    })
+    .map_err(|e| format!("{op}: run_on_main_thread dispatch failed: {e}"))
+}
+
 /// The output window is a dumb renderer. Create it once, keep it around.
 /// Creation runs on the main thread (see `run_on_main`); on Windows, building
 /// a WebView2 window from a command thread can wedge the event loop.
@@ -432,117 +454,181 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
 }
 
 /// Whether the on-demand output window currently exists and is showing.
+///
+/// On Windows (WebView2) `WebviewWindow::is_visible()` dispatches a message to
+/// the main thread and blocks the caller waiting for a reply. After the first
+/// WebView2 window is created the main thread's message pump can be degraded
+/// (known Tauri/wry issue on Windows), so a worker thread calling
+/// `is_visible()` would block forever and freeze every subsequent backend
+/// command that touches `snapshot()` (which is every `mutate`). Existence in the
+/// window manager (`get_webview_window`) is a HashMap lookup under a local lock
+/// and never touches the main thread, so we use that instead. The window is
+/// kept `visible(false)` until `show()` and never hidden again except via
+/// explicit hide, so existence is a reliable proxy for "should be visible".
 pub fn output_visible(app: &AppHandle) -> bool {
-    app.get_webview_window(OUTPUT_WINDOW)
-        .and_then(|w| w.is_visible().ok())
-        .unwrap_or(false)
+    app.get_webview_window(OUTPUT_WINDOW).is_some()
 }
 
 /// Show (and create if needed) the output window on the configured or
 /// auto-picked display. This is the "Show Output" action used both by the
 /// explicit button and by the first slide going live.
-pub fn show_output(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    // Diagnostic: full monitor topology as reported by Tauri/Windows right
-    // before placement, so an off-screen/invalid target shows up as nonsense
-    // coordinates here (per-monitor DPI virtualization) rather than a mystery.
-    match list_displays(app) {
-        Ok(displays) => {
-            state.logger.log(
-                crate::logging::Level::Info,
-                &format!("windows: show_output: {} monitor(s) via list_displays:", displays.len()),
-            );
-            for d in &displays {
-                state.logger.log(
+///
+/// On Windows, `move_output_to`/`ensure_output` must run on the main thread
+/// and WebView2 creation can temporarily degrade the event loop. To keep
+/// backend commands (`add_slide`, `set_live_slide`, etc.) responsive, this
+/// function queues all window work fire-and-forget on the main thread and
+/// returns immediately. The caller (`set_live_slide`) can then `snapshot` +
+/// `emit` without waiting for WebView2, so subsequent `invoke`s are not
+/// blocked behind window creation.
+pub fn show_output(app: &AppHandle, _state: &AppState) -> Result<(), String> {
+    // All window/monitor work must happen on the main thread. Queue it
+    // fire-and-forget so the command worker (set_live_slide) can snapshot +
+    // emit without waiting for WebView2 creation, which on Windows can
+    // temporarily degrade the event loop and would otherwise block every
+    // subsequent `invoke`.
+    let app_for_queue = app.clone();
+
+    run_on_main_async(app, "show_output", move || {
+        let st = app_for_queue.state::<AppState>();
+        st.logger.log(
+            crate::logging::Level::Info,
+            "windows: show_output: queued work starting on main thread",
+        );
+
+        // Diagnostic: full monitor topology as reported on the main thread.
+        match list_displays(&app_for_queue) {
+            Ok(displays) => {
+                st.logger.log(
                     crate::logging::Level::Info,
                     &format!(
-                        "windows: show_output:   #{} \"{}\" {}x{} at ({}, {}) primary={} current={}",
-                        d.index, d.name, d.width, d.height, d.x, d.y, d.primary, d.current
+                        "windows: show_output: {} monitor(s) via list_displays:",
+                        displays.len()
                     ),
                 );
-            }
-        }
-        Err(e) => state.logger.log(
-            crate::logging::Level::Error,
-            &format!("windows: show_output: list_displays failed: {e}"),
-        ),
-    }
-
-    let settings = state.current_settings();
-    let index = match settings.output_display_index {
-        Some(index) => index,
-        None => default_output_display(app)?,
-    };
-    let window = move_output_to(app, index)?;
-    let focus_res = window.set_focus();
-    state.logger.log(
-        crate::logging::Level::Info,
-        &format!("windows: show_output: set_focus result: {:?}", focus_res),
-    );
-
-    // On Linux/GTK, requesting fullscreen on the *same* synchronous main-thread
-    // pass that just created an unshown window (freshly-created default size,
-    // e.g. 800x600) can leave the window smaller than the monitor: the WM never
-    // gets a chance to realize the set_size/set_position/set_visible geometry
-    // before the fullscreen toggle lands, and set_fullscreen reports success
-    // even though it didn't take effect. Defer the fullscreen request to a
-    // later loop iteration so the GTK event loop processes the geometry first,
-    // then apply fullscreen and log the resulting size for comparison.
-    if settings.output_fullscreen {
-        let target = list_displays(app)
-            .ok()
-            .and_then(|d| d.into_iter().find(|d| d.index == index));
-        let (tw, th, tname) = match target {
-            Some(d) => (d.width, d.height, d.name),
-            None => (0, 0, "(unknown)".to_string()),
-        };
-        let app_clone = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(120));
-            let app_borrowed = app_clone.clone();
-            let st = app_borrowed.state::<AppState>();
-            let _ = run_on_main(&app_borrowed, &st, "show_output_deferred_fullscreen", move || {
-                let w = app_clone
-                    .get_webview_window(OUTPUT_WINDOW)
-                    .ok_or_else(|| "output window missing".to_string())?;
-                let fs_res = w.set_fullscreen(true);
-                let inner = w.inner_size().ok();
-                let outer = w.outer_size().ok();
-                let logger = &app_clone.state::<AppState>().logger;
-                logger.log(
-                    crate::logging::Level::Info,
-                    &format!(
-                        "windows: show_output: deferred set_fullscreen(true) -> {:?}, inner_size={inner:?} outer_size={outer:?}, monitor \"{tname}\" is {tw}x{th}; fullscreen={:?}; {}",
-                        fs_res,
-                        w.is_fullscreen().ok(),
-                        describe_window(&w)
-                    ),
-                );
-                let mismatch = inner
-                    .map(|s| (s.width != tw, s.height != th))
-                    .unwrap_or((false, false));
-                if mismatch.0 || mismatch.1 {
-                    logger.log(
-                        crate::logging::Level::Warn,
+                for d in &displays {
+                    st.logger.log(
+                        crate::logging::Level::Info,
                         &format!(
-                            "windows: show_output: SIZE MISMATCH — window inner is {:?} but monitor \"{tname}\" is {tw}x{th}; fullscreen did not fill the display",
-                            inner
+                            "windows: show_output:   #{} \"{}\" {}x{} at ({}, {}) primary={} current={}",
+                            d.index, d.name, d.width, d.height, d.x, d.y, d.primary, d.current
                         ),
                     );
                 }
-                Ok(())
-            });
-        });
-    }
+            }
+            Err(e) => st.logger.log(
+                crate::logging::Level::Error,
+                &format!("windows: show_output: list_displays failed: {e}"),
+            ),
+        }
 
-    // Persist the resolved assignment so restarts keep the same display.
-    let name = list_displays(app)
-        .ok()
-        .and_then(|displays| displays.into_iter().find(|d| d.index == index))
-        .and_then(|d| (!d.name.is_empty()).then_some(d.name));
-    let mut resolved = settings;
-    resolved.output_display_index = Some(index);
-    resolved.output_display_name = name;
-    state.apply_settings(resolved);
-    let _ = crate::project::write_settings(&state.app_data_dir(), &state.current_settings());
+        let settings = st.current_settings();
+        let index = match settings.output_display_index {
+            Some(idx) => idx,
+            None => match default_output_display(&app_for_queue) {
+                Ok(i) => i,
+                Err(e) => {
+                    st.logger.log(
+                        crate::logging::Level::Error,
+                        &format!("windows: show_output: default_output_display failed: {e}"),
+                    );
+                    return;
+                }
+            },
+        };
+
+        // All window work happens on the main thread — `move_output_to` will
+        // take the `already on main thread` inline path, no extra dispatch.
+        let window = match move_output_to(&app_for_queue, index) {
+            Ok(w) => w,
+            Err(e) => {
+                st.logger.log(
+                    crate::logging::Level::Error,
+                    &format!("windows: show_output: move_output_to failed: {e}"),
+                );
+                return;
+            }
+        };
+        let focus_res = window.set_focus();
+        st.logger.log(
+            crate::logging::Level::Info,
+            &format!("windows: show_output: set_focus result: {:?}", focus_res),
+        );
+
+        // On Linux/GTK, requesting fullscreen on the *same* synchronous
+        // main-thread pass that just created an unshown window can leave the
+        // window smaller than the monitor. Defer the fullscreen request so the
+        // GTK event loop processes the geometry first.
+        if settings.output_fullscreen {
+            let target = list_displays(&app_for_queue)
+                .ok()
+                .and_then(|d| d.into_iter().find(|d| d.index == index));
+            let (tw, th, tname) = match target {
+                Some(d) => (d.width, d.height, d.name),
+                None => (0, 0, "(unknown)".to_string()),
+            };
+            let app_clone2 = app_for_queue.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(120));
+                let app_borrowed = app_clone2.clone();
+                let st2 = app_borrowed.state::<AppState>();
+                let _ = run_on_main(
+                    &app_borrowed,
+                    &st2,
+                    "show_output_deferred_fullscreen",
+                    move || {
+                        let w = app_clone2
+                            .get_webview_window(OUTPUT_WINDOW)
+                            .ok_or_else(|| "output window missing".to_string())?;
+                        let fs_res = w.set_fullscreen(true);
+                        let inner = w.inner_size().ok();
+                        let outer = w.outer_size().ok();
+                        let logger = &app_clone2.state::<AppState>().logger;
+                        logger.log(
+                            crate::logging::Level::Info,
+                            &format!(
+                                "windows: show_output: deferred set_fullscreen(true) -> {:?}, inner_size={inner:?} outer_size={outer:?}, monitor \"{tname}\" is {tw}x{th}; fullscreen={:?}; {}",
+                                fs_res,
+                                w.is_fullscreen().ok(),
+                                describe_window(&w)
+                            ),
+                        );
+                        let mismatch = inner
+                            .map(|s| (s.width != tw, s.height != th))
+                            .unwrap_or((false, false));
+                        if mismatch.0 || mismatch.1 {
+                            logger.log(
+                                crate::logging::Level::Warn,
+                                &format!(
+                                    "windows: show_output: SIZE MISMATCH — window inner is {:?} but monitor \"{tname}\" is {tw}x{th}; fullscreen did not fill the display",
+                                    inner
+                                ),
+                            );
+                        }
+                        Ok(())
+                    },
+                );
+            });
+        }
+
+        // Persist the resolved assignment so restarts keep the same display.
+        let name = list_displays(&app_for_queue)
+            .ok()
+            .and_then(|displays| displays.into_iter().find(|d| d.index == index))
+            .and_then(|d| (!d.name.is_empty()).then_some(d.name));
+        let mut resolved = settings;
+        resolved.output_display_index = Some(index);
+        resolved.output_display_name = name;
+        st.apply_settings(resolved);
+        let _ = crate::project::write_settings(
+            &st.app_data_dir(),
+            &st.current_settings(),
+        );
+        st.logger.log(
+            crate::logging::Level::Info,
+            "windows: show_output: queued work completed on main thread",
+        );
+    })
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }

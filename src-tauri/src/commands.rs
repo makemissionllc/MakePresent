@@ -14,23 +14,29 @@ fn snapshot(app: &AppHandle) -> ClientState {
     let state = app.state::<AppState>();
     let settings = state.current_settings();
 
-    let project = state.project.read().unwrap();
-    let current = project
-        .live
-        .as_deref()
-        .and_then(|id| project.find(id))
-        .cloned();
-    let next = project
-        .live
-        .as_deref()
-        .and_then(|id| project.next_slide(id))
-        .cloned();
-    let on_deck = project.on_deck().cloned();
-    let looks = project.looks.clone();
-    drop(project);
+    // Single consistent read — cloning once avoids a torn view where `live`
+    // changes between the `current`/`next` lookups and the final `project`
+    // clone, and also halves lock acquisitions on the hot path (every mutate).
+    let (project_snapshot, current, next, on_deck, looks) = {
+        let project = state.project.read().unwrap();
+        let current = project
+            .live
+            .as_deref()
+            .and_then(|id| project.find(id))
+            .cloned();
+        let next = project
+            .live
+            .as_deref()
+            .and_then(|id| project.next_slide(id))
+            .cloned();
+        let on_deck = project.on_deck().cloned();
+        let looks = project.looks.clone();
+        let cloned = project.clone();
+        (cloned, current, next, on_deck, looks)
+    };
 
     let snap = ClientState {
-        project: state.project.read().unwrap().clone(),
+        project: project_snapshot,
         notice: state.notice.read().unwrap().clone(),
         output: OutputView {
             visible: windows::output_visible(app),

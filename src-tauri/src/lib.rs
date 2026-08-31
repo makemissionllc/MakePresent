@@ -48,12 +48,12 @@ fn finalize(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     let data_dir = state.app_data_dir();
     {
-        let project = state.project.read().unwrap();
-        let _ = persist(&project, &data_dir);
+        let snapshot = state.project.read().unwrap().clone();
+        let _ = persist(&snapshot, &data_dir);
     }
     {
-        let library = state.library.read().unwrap();
-        let _ = write_library(&data_dir, &library);
+        let snapshot = state.library.read().unwrap().clone();
+        let _ = write_library(&data_dir, &snapshot);
     }
     let mut session = read_session(&data_dir).unwrap_or_default();
     session.clean_shutdown = true;
@@ -126,18 +126,25 @@ pub fn run() {
                 .path()
                 .resolve("kjv.json", tauri::path::BaseDirectory::Resource);
             match kjv_path {
-                Ok(kjv_path) => {
-                    let scripture = scripture::load(&kjv_path);
-                    state.logger.log(
-                        Level::Info,
-                        &format!(
-                            "scripture: loaded {} books from {}",
-                            scripture.book_count(),
-                            kjv_path.display()
-                        ),
-                    );
-                    *state.scripture.write().unwrap() = Some(scripture);
-                }
+                Ok(kjv_path) => match scripture::try_load(&kjv_path) {
+                    Ok(scripture) => {
+                        state.logger.log(
+                            Level::Info,
+                            &format!(
+                                "scripture: loaded {} books from {}",
+                                scripture.book_count(),
+                                kjv_path.display()
+                            ),
+                        );
+                        *state.scripture.write().unwrap() = Some(scripture);
+                    }
+                    Err(e) => {
+                        state.logger.log(
+                            Level::Error,
+                            &format!("scripture: {e} — search disabled"),
+                        );
+                    }
+                },
                 Err(e) => {
                     state.logger.log(
                         Level::Error,

@@ -626,9 +626,17 @@ pub fn spawn_autosave(
         // Keep draining until the project has been quiet long enough.
         while rx.recv_timeout(Duration::from_millis(AUTOSAVE_DEBOUNCE_MS)).is_ok() {}
 
-        let project = project.read().unwrap();
-        let library = library.read().unwrap();
-        let result = persist(&project, &data_dir).and_then(|_| write_library(&data_dir, &library));
+        // Clone under lock, then release before doing any file I/O. Holding a
+        // RwLock across `persist`/`write_library` would block every `mutate`
+        // (which needs a write lock) for the entire disk write, freezing the
+        // editor on slow disks or large projects.
+        let (project_snapshot, library_snapshot) = {
+            let p = project.read().unwrap().clone();
+            let l = library.read().unwrap().clone();
+            (p, l)
+        };
+        let result =
+            persist(&project_snapshot, &data_dir).and_then(|_| write_library(&data_dir, &library_snapshot));
         match result {
             Ok(()) => {
                 app.state::<AppState>().logger.log(Level::Info, "autosave: saved");

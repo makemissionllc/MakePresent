@@ -439,18 +439,26 @@ impl ScriptureIndex {
 // Loading
 // ---------------------------------------------------------------------------
 
-/// Load the KJV index from the given kjv.json path.
+/// Load the KJV index from the given kjv.json path. Panics on failure — use
+/// `try_load` for graceful startup handling.
 pub fn load(kjv_path: &Path) -> ScriptureIndex {
+    try_load(kjv_path).unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// Graceful loader for startup — returns an error string instead of panicking
+/// so the app can continue with scripture search disabled if the resource is
+/// missing/corrupt (e.g. dev build without bundled resources).
+pub fn try_load(kjv_path: &Path) -> Result<ScriptureIndex, String> {
     let start = Instant::now();
     let raw = std::fs::read_to_string(kjv_path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", kjv_path.display()));
+        .map_err(|e| format!("failed to read {}: {e}", kjv_path.display()))?;
     let raw_books: Vec<RawBook> = serde_json::from_str(&raw)
-        .unwrap_or_else(|e| panic!("failed to parse kjv.json: {e}"));
+        .map_err(|e| format!("failed to parse kjv.json: {e}"))?;
     let count = raw_books.len();
     let index = ScriptureIndex::build(raw_books);
     let elapsed = start.elapsed();
     eprintln!("scripture: loaded {count} books in {elapsed:?}");
-    index
+    Ok(index)
 }
 
 #[cfg(test)]

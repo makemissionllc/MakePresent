@@ -72,7 +72,7 @@ never a dead end or a crash.
 
 ## Current Status
 
-### Built (Phases 1–4)
+### Built (Phases 1–5)
 
 Phase 1 — Foundation
 - Two-window Tauri app (Editor + Output), single Rust `AppState` source of
@@ -130,12 +130,40 @@ Phase 4 — Media (image/video) slide backgrounds
   live + leaving (during a 400 ms fade) + the single on-deck element exist at
   any time — no unbounded accumulation over a service.
 
+Phase 5 — NDI broadcast output (sending side)
+- **NDI sending infrastructure** (`broadcast.rs`): publishes the live slide
+  as an NDI source on the LAN so a video switcher can cut to it. It registers
+  a sender (`"MakePresent - Sunday Output"`), runs on its **own dedicated
+  thread** independent of the Output render loop, keeps the source alive by
+  re-sending the last frame on a cadence, and pushes BGRA+alpha frames through
+  a bounded, non-blocking channel (no render-loop stalls, no unbounded memory).
+- **Runtime-loaded SDK**: the NDI SDK (Vizrt) is **not** vendored and **not**
+  required to build. `broadcast.rs` hand-binds the C ABI with `libloading` and
+  loads `Processing.NDI.Lib.x64.dll` / `libndi.so.5` / `libndi.dylib` at
+  runtime. If the SDK is missing, enabling NDI logs a clear error and
+  everything else keeps working — the crate builds and `cargo check` passes in
+  CI without the SDK. (The other crates.io binding crates were rejected: they
+  need the SDK headers + libclang at build time, or are GPL-3.0.)
+- **NDI Look**: a per-machine `ndiLookId`, settable from Settings → Looks →
+  "NDI Feed", styles the broadcast feed independently of the on-screen Output
+  (see `set_ndi_look`). Settings export/import round-trip `ndi_enabled` +
+  `ndiLookId`, and NDI is started/stopped on import to match.
+- **Settings + IPC**: `set_ndi_enabled` / `set_ndi_look` commands; a
+  broadcast enable toggle (with source-name + ndi.video link) and Look
+  assignment in the settings UI; runtime `BroadcastView` in `ClientState`.
+- **Honest scope**: the webview → pixel **capture** (an offscreen render target
+  mirrored from Output) is a runtime concern that this phase does **not**
+  wire. `BroadcastCore::send_frame` is the clean seam a later capture step
+  feeds. So NDI *streaming* requires: install the NDI SDK, then hook the
+  render capture into `send_frame` and drive it in a live app — neither of
+  which can be exercised headless/CI.
+
 ### Date
-- 2026-08-30 — Phase 4 shipped.
+- 2026-08-31 — Phase 5 (NDI sending side) shipped; NDI capture + live
+  streaming remains a documented runtime follow-up.
 
 ### Explicitly Deferred
 
-- NDI output
 - Remote control (web/phone)
 - MIDI / OSC
 - Audio playback (video backgrounds are muted this phase)
@@ -182,7 +210,8 @@ src-tauri/src/
   project.rs    Domain model (Project/Slide/Settings/Library), persistence, autosave worker
   windows.rs    Window lifecycle: Output + Stage, display picking
   media.rs      Media import/cache: copy+hash, ffmpeg thumbnails, startup verification
-  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import
+  broadcast.rs  NDI sender: runtime-loaded SDK (libloading), dedicated send thread
+  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import, NDI
   logging.rs    Rolling, immediately-flushed event log (logs/app.log)
 src/
   editor.ts / Editor.svelte     Operator's window (playlist, edit, output/stage controls, settings)
@@ -191,6 +220,24 @@ src/
   lib/types.ts                  Shared client contract
   lib/sync.ts                   Tauri invoke + event subscriptions
 ```
+
+## NDI licensing & installation
+
+NDI® is a registered trademark of Vizrt. MakePresent's broadcast build loads
+the **free standard NDI SDK** at runtime and does **not** vendor it, so no NDI
+code or headers ship with the app and the app builds, tests, and CI-run without
+it. To actually broadcast:
+
+1. Download the free NDI SDK from <https://ndi.video> and install it (on
+   Windows place `Processing.NDI.Lib.x64.dll` alongside the app; on Linux/macOS
+   put `libndi.so.5` / `libndi.dylib` on the loader path).
+2. Keep the ndi.video link near any NDI usage and the trademark attribution
+   "NDI® is a registered trademark of Vizrt NDI AB".
+3. The NDI SDK is closed-source and royalty-free for the standard SDK; its own
+   license terms (in the SDK download) govern distribution of its DLLs.
+
+The `libloading` approach avoids the GPL-3.0 `ndi-sdk-sys` binding crate and
+the build-time SDK requirement of the other crates.io binding crates.
 
 Data lives under the app data dir (`~/.local/share/com.makesoftware.makepresent`):
 `project.json` (autosaved), `versions/` (snapshots), `session.json`

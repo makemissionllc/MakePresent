@@ -24,7 +24,7 @@ fees, no vendor-controlled roadmaps, and no service data leaving the building.
 - [Per-Output "Looks"](#per-output-looks)
 - [Technology Stack](#technology-stack)
 - [Project Structure](#project-structure)
-- [IPC Commands](#ipc-commands-28)
+- [IPC Commands](#ipc-commands-30)
 - [Getting Started (Development)](#getting-started-development)
 - [Testing & Verification](#testing--verification)
 - [CI / CD](#ci--cd)
@@ -101,7 +101,7 @@ native window.
 ┌─────────────────────────────────────────────────────────────────┐
 │                   Rust backend (single source of truth)          │
 │   lib.rs · state.rs · project.rs · windows.rs · media.rs         │
-│   commands.rs · logging.rs · scripture.rs                        │
+│   commands.rs · logging.rs · scripture.rs · broadcast.rs         │
 │                                                                   │
 │   AppState ──► broadcasts "state" event ──► every window          │
 └───────────────┬───────────────┬───────────────┬───────────────────┘
@@ -207,6 +207,19 @@ and shows a recovery notice when the prior exit was unclean.
 - Fullscreen with a Linux/GTK-aware deferred toggle and size-mismatch
   diagnostics.
 
+### NDI broadcast
+- Publishes the live slide as an **NDI source** (`MakePresent - Sunday Output`)
+  on the local network so a video switcher can cut to it.
+- Runs on its **own thread** — never blocks the Output render loop — with a
+  bounded, non-blocking frame channel and live-source keep-alive.
+- The **NDI SDK is loaded at runtime** (`libloading`), not linked, so the app
+  builds, tests, and CI-runs without it. Installing the free SDK (see below)
+  is only needed to actually stream.
+- Assign a **NDI Look** independently of the on-screen Output; enable/disable
+  the feed and pick the Look from **Settings**.
+- *Scope note:* the sender side is implemented; the webview→pixel **capture**
+  that feeds it is a runtime follow-up (not exercisable headless/CI).
+
 ---
 
 ## Per-Output "Looks"
@@ -225,9 +238,11 @@ A **Look** contains:
 - `textPosition` (`top` / `center` / `bottom`)
 
 **Mapping:** each output window is assigned a Look id. The mapping lives in
-per-machine **settings** (`outputLookId` / `stageLookId`), *not* hardcoded — so
-a future third output (Stream/NDI) can be assigned a Look too. Unmapped outputs
-fall back to the look named `Main` / `Stage` respectively (then the first).
+per-machine **settings** (`outputLookId` / `stageLookId` / `ndiLookId`), *not*
+hardcoded — so the main Output, the Stage Display, and the NDI broadcast feed
+each get their own Look. Unmapped outputs fall back to the look named
+`Main` / `Stage` respectively (then the first); the NDI feed falls back to the
+first look.
 
 **Storage:** Looks are stored on the **Project** (`project.looks`), so they save
 and load with autosave. New (and legacy) projects are seeded with default
@@ -290,16 +305,17 @@ src-tauri/                                 Rust backend
    ├─ lib.rs                               Lifecycle: setup, finalize, command registration
    ├─ state.rs                             AppState — the single source of truth
    ├─ project.rs                           Domain model, persistence, autosave worker
-   ├─ commands.rs                          28 Tauri IPC command handlers
+   ├─ commands.rs                          30 Tauri IPC command handlers
    ├─ windows.rs                           Output/Stage lifecycle + display picking
    ├─ media.rs                             Media import/cache + ffmpeg thumbnails
+   ├─ broadcast.rs                         NDI sender (runtime-loaded SDK, own thread)
    ├─ logging.rs                           Rolling, immediately-flushed event log
    └─ scripture.rs                         KJV scripture search index
 ```
 
 ---
 
-## IPC Commands (28)
+## IPC Commands (30)
 
 **State & project**
 | Command | Purpose |
@@ -315,7 +331,8 @@ src-tauri/                                 Rust backend
 |---|---|
 | `upsert_look` | Create or update a Look |
 | `delete_look` | Delete a Look (re-assigns mapped outputs) |
-| `set_output_look` / `set_stage_look` | Map a Look id to an output |
+| `set_output_look` / `set_stage_look` | Map a Look id to an output/stage |
+| `set_ndi_look` | Map a Look id to the NDI feed |
 
 **Output / Stage / displays**
 | Command | Purpose |
@@ -325,6 +342,12 @@ src-tauri/                                 Rust backend
 | `toggle_output_fullscreen` | Toggle output fullscreen |
 | `show_output` | Create + show the Output window |
 | `toggle_stage` | Show / hide the Stage window |
+
+**NDI broadcast**
+| Command | Purpose |
+|---|---|
+| `set_ndi_enabled` | Start/stop the runtime-loaded NDI sender |
+| `set_ndi_look` | Assign the Look for the NDI feed |
 
 **Library & media**
 | Command | Purpose |
@@ -348,6 +371,12 @@ src-tauri/                                 Rust backend
 dependencies for your platform. For Linux: `libwebkit2gtk-4.1-dev`,
 `build-essential`, `libssl-dev`, `libxdo-dev`, `libayatana-appindicator3-dev`,
 `librsvg2-dev`, etc. `ffmpeg`/`ffprobe` on `PATH` for media thumbnails.
+
+**NDI (optional):** broadcasting NDI does **not** affect building or testing —
+the NDI SDK is loaded at runtime, only when the feed is enabled. To actually
+stream, install the free NDI SDK from <https://ndi.video> (Windows: put
+`Processing.NDI.Lib.x64.dll` beside the app; Linux/macOS: put `libndi.so.5` /
+`libndi.dylib` on the loader path). NDI® is a registered trademark of Vizrt.
 
 ```bash
 # Install frontend dependencies
@@ -374,7 +403,7 @@ npm run check
 # Rust compile check
 cd src-tauri && cargo check
 
-# Rust unit / integration tests (19 tests: logging, media, scripture, settings)
+# Rust unit / integration tests (23 tests: logging, media, scripture, settings, broadcast)
 cd src-tauri && cargo test
 
 # Production frontend bundle
@@ -403,8 +432,8 @@ npm run build
 Explicitly out of scope (by design — none should influence current architecture
 decisions):
 
-- NDI / stream output (a future `Stream` Look slot is already anticipated by the
-  per-output Look mapping)
+- NDI *framepull capture* from an offscreen render target (the sending side is
+  implemented; capture is a runtime follow-up, not CI-testable)
 - Remote control (web / phone)
 - MIDI / OSC
 - Audio playback (video backgrounds are muted this phase)
@@ -432,7 +461,7 @@ largest remaining) rather than crash.
 ## Documentation
 
 - **`docs/PROJECT.md`** — the living project spec: what MakePresent is, design
-  intent, current status (Phases 1–4 shipped, plus the Looks work), anticipated
-  failure modes, onboarding flow, and the code layout. This is the source of
-  truth for *direction*; this README is the source of truth for the current
-  codebase.
+  intent, current status (Phases 1–5 shipped, including the NDI sender work),
+  anticipated failure modes, onboarding flow, and the code layout. This is the
+  source of truth for *direction*; this README is the source of truth for the
+  current codebase.

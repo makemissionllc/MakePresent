@@ -30,3 +30,11 @@ sha2 = "0.10"
 libloading = "0.8"
 midir = "0.11"
 rosc = "0.11"
+# Local-network Stage Display server. `axum` serves the stage web page and a
+# WebSocket the phones/tablets subscribe to; `tokio` (already a transitive dep
+# of Tauri) backs its async runtime and TCP listener.
+axum = { version = "0.7", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
+futures-util = "0.3"
+# Local IP enumeration for the Settings Network URL/QR display (no manual IP lookup).
+get_if_addrs = "0.5"

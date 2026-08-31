@@ -3,6 +3,7 @@ mod broadcast;
 mod logging;
 mod media;
 mod midi;
+mod network;
 mod osc;
 mod project;
 mod scripture;
@@ -59,6 +60,8 @@ fn finalize(app: &tauri::AppHandle) {
     // Stop external input listeners on a clean exit.
     state.midi.stop();
     state.osc.stop();
+    // Stop the local-network stage server (closes any connected phones).
+    state.network.stop();
 
     let data_dir = state.app_data_dir();
     {
@@ -215,6 +218,44 @@ pub fn run() {
                 state.logger.log(Level::Info, "osc: listener disabled");
             }
 
+            // Stage Network: restore the local WebSocket server if it was left
+            // enabled, and broadcast the current state once it is up so a phone
+            // that connects immediately has something to render.
+            let net_cfg = state.current_settings();
+            if net_cfg.stage_network_enabled {
+                let addr = format!(
+                    "0.0.0.0:{}",
+                    net_cfg.stage_network_port
+                );
+                match addr.parse() {
+                    Ok(socket_addr) => match state
+                        .network
+                        .start(app.handle().clone(), socket_addr, net_cfg.stage_network_pin.clone())
+                    {
+                        Ok(()) => state.logger.log(
+                            Level::Info,
+                            &format!(
+                                "stage-network: restored server on :{}",
+                                net_cfg.stage_network_port
+                            ),
+                        ),
+                        Err(e) => state.logger.log(
+                            Level::Warn,
+                            &format!("stage-network: restore failed: {e}"),
+                        ),
+                    },
+                    Err(e) => state.logger.log(
+                        Level::Warn,
+                        &format!("stage-network: bad bound address: {e}"),
+                    ),
+                }
+                // Push the current stage state so already-connected clients (if
+                // any survived) resync, and future connects get fresh data.
+                state.network.broadcast(&crate::network::stage_broadcast(app.handle()));
+            } else {
+                state.logger.log(Level::Info, "stage-network: server disabled");
+            }
+
             // Load the KJV scripture index once at startup for fast
             // autocomplete search. The ~6 MB JSON is read and parsed into a
             // HashMap-backed index in well under 500ms on any modern hardware.
@@ -339,6 +380,10 @@ pub fn run() {
             commands::add_trigger,
             commands::delete_trigger,
             commands::set_trigger_enabled,
+            commands::get_stage_network_info,
+            commands::set_stage_network_enabled,
+            commands::set_stage_network_port,
+            commands::set_stage_network_pin,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

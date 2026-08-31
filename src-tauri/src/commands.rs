@@ -9,6 +9,7 @@ use crate::state::AppState;
 use crate::triggers::TriggerAction;
 use crate::windows::{self, DisplayInfo};
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
@@ -69,7 +70,16 @@ fn snapshot(app: &AppHandle) -> ClientState {
         osc_enabled: settings.osc_enabled,
         osc_port: settings.osc_port,
         triggers: settings.triggers,
+        stage_network_enabled: settings.stage_network_enabled,
+        stage_network_port: settings.stage_network_port,
     };
+
+    // Keep connected phones/tablets in lock-step with the desktop windows: after
+    // every state rebuild (mutation, trigger advance, IPC snapshot), push the
+    // Stage Display snapshot to any local-network WebSocket clients. No-op when
+    // the server is off.
+    state.network.broadcast(&crate::network::stage_broadcast(app));
+
     snap
 }
 
@@ -911,6 +921,9 @@ enum SettingsField {
     OscEnabled,
     OscPort,
     Triggers,
+    StageNetworkEnabled,
+    StageNetworkPort,
+    StageNetworkPin,
 }
 
 impl SettingsField {
@@ -930,11 +943,14 @@ impl SettingsField {
             SettingsField::OscEnabled => "OSC listener",
             SettingsField::OscPort => "OSC port",
             SettingsField::Triggers => "Trigger mappings",
+            SettingsField::StageNetworkEnabled => "Stage display on network",
+            SettingsField::StageNetworkPort => "Stage display port",
+            SettingsField::StageNetworkPin => "Stage display PIN",
         }
     }
 }
 
-fn settings_fields() -> [SettingsField; 14] {
+fn settings_fields() -> [SettingsField; 17] {
     [
         SettingsField::OutputDisplay,
         SettingsField::OutputFullscreen,
@@ -950,6 +966,9 @@ fn settings_fields() -> [SettingsField; 14] {
         SettingsField::OscEnabled,
         SettingsField::OscPort,
         SettingsField::Triggers,
+        SettingsField::StageNetworkEnabled,
+        SettingsField::StageNetworkPort,
+        SettingsField::StageNetworkPin,
     ]
 }
 
@@ -983,6 +1002,15 @@ fn changed_settings(old: &Settings, new: &Settings) -> Vec<String> {
                             || a.enabled != b.enabled
                             || a.label != b.label
                     })
+            }
+            SettingsField::StageNetworkEnabled => {
+                new.stage_network_enabled != old.stage_network_enabled
+            }
+            SettingsField::StageNetworkPort => {
+                new.stage_network_port != old.stage_network_port
+            }
+            SettingsField::StageNetworkPin => {
+                new.stage_network_pin != old.stage_network_pin
             }
         };
         if differs {
@@ -1125,6 +1153,38 @@ pub async fn import_settings(app: AppHandle, path: String) -> Result<ImportRepor
             state.osc.stop();
             log(&app, Level::Info, "settings: OSC listener stopped on import");
         }
+    }
+
+    // Apply imported Stage Network enablement / port / PIN (start/stop the HTTP
+    // + WebSocket server).
+    let latest = state.current_settings();
+    if latest.stage_network_enabled != state.network.is_active() {
+        if latest.stage_network_enabled {
+            let addr: SocketAddr = format!("0.0.0.0:{}", latest.stage_network_port)
+                .parse()
+                .map_err(|e| format!("invalid stage network address: {e}"))?;
+            match state
+                .network
+                .start(app.clone(), addr, latest.stage_network_pin.clone())
+            {
+                Ok(()) => log(
+                    &app,
+                    Level::Info,
+                    &format!("settings: Stage Network started on :{}", latest.stage_network_port),
+                ),
+                Err(e) => log(
+                    &app,
+                    Level::Warn,
+                    &format!("settings: Stage Network start on import failed: {e}"),
+                ),
+            }
+        } else {
+            state.network.stop();
+            log(&app, Level::Info, "settings: Stage Network stopped on import");
+        }
+    } else if latest.stage_network_enabled {
+        // Already running — push the fresh PIN/state through live.
+        state.network.set_pin_live(&latest.stage_network_pin);
     }
 
     log(
@@ -1397,6 +1457,147 @@ pub fn set_trigger_enabled(
     Ok(snapshot_and_emit(&app))
 }
 
+// ---------------------------------------------------------------------------
+// Local-network Stage Display
+// ---------------------------------------------------------------------------
+
+/// The access point a phone uses to reach the stage display — its bind URL and
+/// each viable LAN IP so Settings can show a QR/URL without a manual IP lookup.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StageNetworkInfo {
+    /// The machine-level URL form, e.g. "0.0.0.0:1426" (bind form, not directly
+    /// reachable but the canonical server address).
+    pub bind_host: String,
+    /// Actual reachable URLs, one per non-loopback IPv4 address: the string a
+    /// phone should be pointed at.
+    pub urls: Vec<String>,
+    pub port: u16,
+    /// Whether the server is currently enabled/running.
+    pub enabled: bool,
+    /// The current PIN (shown in Settings so the operator can share it).
+    pub pin: String,
+}
+
+/// Runtime status + access details for the Stage Network server: the reachable
+/// LAN URL(s) a phone can be pointed at, plus the port. Enumerates non-loopback
+/// IPv4 addresses so Settings can show a QR/URL without a manual IP lookup.
+#[tauri::command]
+pub fn get_stage_network_info(app: AppHandle) -> Result<StageNetworkInfo, String> {
+    let state = app.state::<AppState>();
+    let settings = state.current_settings();
+    let port = settings.stage_network_port;
+    let mut urls = Vec::new();
+    if let Ok(ifaces) = get_if_addrs::get_if_addrs() {
+        for iface in ifaces.into_iter().filter(|i| !i.is_loopback()) {
+            if let get_if_addrs::IfAddr::V4(v4) = iface.addr {
+                urls.push(format!("http://{}:{}", v4.ip, port));
+            }
+        }
+    }
+    if urls.is_empty() {
+        urls.push(format!("http://127.0.0.1:{port}"));
+    }
+    Ok(StageNetworkInfo {
+        bind_host: format!("0.0.0.0:{port}"),
+        urls,
+        port,
+        enabled: settings.stage_network_enabled,
+        pin: settings.stage_network_pin.clone(),
+    })
+}
+
+/// Turn the local-network Stage Display server on or off.
+#[tauri::command]
+pub fn set_stage_network_enabled(app: AppHandle, enabled: bool) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    let settings = state.current_settings();
+    if enabled {
+        let addr: SocketAddr = format!("0.0.0.0:{}", settings.stage_network_port)
+            .parse()
+            .map_err(|e| format!("invalid stage network address: {e}"))?;
+        {
+            let mut s = state.current_settings();
+            s.stage_network_enabled = true;
+            state.apply_settings(s);
+            let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+        }
+        match state.network.start(app.clone(), addr, settings.stage_network_pin.clone()) {
+            Ok(()) => log(
+                &app,
+                Level::Info,
+                &format!("stage-network: enabled on :{}", settings.stage_network_port),
+            ),
+            Err(e) => {
+                log(&app, Level::Error, &format!("stage-network: could not enable: {e}"));
+                return Err(e);
+            }
+        }
+    } else {
+        state.network.stop();
+        {
+            let mut s = state.current_settings();
+            s.stage_network_enabled = false;
+            state.apply_settings(s);
+            let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+        }
+        log(&app, Level::Info, "stage-network: disabled");
+    }
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Change the Stage Network port. Restarts the server if it is running.
+#[tauri::command]
+pub fn set_stage_network_port(app: AppHandle, port: u16) -> Result<ClientState, String> {
+    if port == 0 {
+        return Err("Stage Network port must be between 1 and 65535".to_string());
+    }
+    let state = app.state::<AppState>();
+    let was_enabled = state.current_settings().stage_network_enabled;
+    {
+        let mut s = state.current_settings();
+        s.stage_network_port = port;
+        if !was_enabled {
+            s.stage_network_enabled = false;
+        }
+        state.apply_settings(s);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+    }
+    if was_enabled {
+        state.network.stop();
+        let pin = state.current_settings().stage_network_pin.clone();
+        let addr: SocketAddr = format!("0.0.0.0:{port}")
+            .parse()
+            .map_err(|e| format!("invalid address: {e}"))?;
+        match state.network.start(app.clone(), addr, pin) {
+            Ok(()) => log(&app, Level::Info, &format!("stage-network: restarted on :{port}")),
+            Err(e) => log(&app, Level::Error, &format!("stage-network: restart failed: {e}")),
+        }
+    }
+    log(&app, Level::Info, &format!("stage-network: port set to {port}"));
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Set (or clear) the PIN required to view the Stage Display page.
+#[tauri::command]
+pub fn set_stage_network_pin(app: AppHandle, pin: String) -> Result<ClientState, String> {
+    let trimmed = pin.trim().to_string();
+    if trimmed.len() > 12 {
+        return Err("PIN must be 12 characters or fewer".to_string());
+    }
+    let state = app.state::<AppState>();
+    {
+        let mut s = state.current_settings();
+        s.stage_network_pin = trimmed.clone();
+        state.apply_settings(s);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+    }
+    // Update the running server's PIN live (no need to restart).
+    state.network.set_pin_live(&trimmed);
+    log(&app, Level::Info, "stage-network: PIN updated");
+    Ok(snapshot_and_emit(&app))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1419,6 +1620,9 @@ mod tests {
             osc_enabled: false,
             osc_port: 9000,
             triggers: Vec::new(),
+            stage_network_enabled: false,
+            stage_network_port: 1426,
+            stage_network_pin: String::new(),
         }
     }
 

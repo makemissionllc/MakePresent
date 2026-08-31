@@ -1,6 +1,7 @@
 use crate::broadcast::Broadcaster;
 use crate::logging::Logger;
 use crate::midi::MidiListener;
+use crate::network::NetworkServer;
 use crate::osc::OscListener;
 use crate::project::{Library, Notice, Project, Settings};
 use crate::scripture::ScriptureIndex;
@@ -27,6 +28,9 @@ pub struct AppState {
     pub midi: MidiListener,
     /// UDP OSC listener (inactive unless OSC is enabled).
     pub osc: OscListener,
+    /// Local-network Stage Display server (HTTP+WebSocket; inactive unless
+    /// Stage Network is enabled).
+    pub network: NetworkServer,
 }
 
 impl Default for AppState {
@@ -43,6 +47,7 @@ impl Default for AppState {
             broadcaster: Broadcaster::default(),
             midi: MidiListener::default(),
             osc: OscListener::default(),
+            network: NetworkServer::default(),
         }
     }
 }

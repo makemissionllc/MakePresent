@@ -8,6 +8,7 @@
     LookPatch,
     MidiDeviceInfo,
     MidiMessageView,
+    StageNetworkInfo,
     TextPosition,
     Trigger,
     TriggerAction,
@@ -20,7 +21,7 @@
 
   let { app: appState, onclose }: Props = $props();
 
-  let tab = $state<"general" | "looks" | "triggers" | "logs">("general");
+  let tab = $state<"general" | "looks" | "triggers" | "network" | "logs">("general");
   let status = $state<{ kind: "ok" | "err"; text: string } | null>(null);
   let logs = $state<LogEntry[]>([]);
   let logsMsg = $state<string | null>(null);
@@ -420,6 +421,84 @@
       .then((s) => (appState = s))
       .catch((e: unknown) => (draftErr = String(e)));
   }
+
+  // --- Network (stage over LAN) panel state ---
+
+  let networkInfo = $state<StageNetworkInfo | null>(null);
+  let networkErr = $state<string | null>(null);
+  let networkMsg = $state<string | null>(null);
+  let networkPortDraft = $state<number>(1426);
+  let networkPinDraft = $state<string>("");
+
+  $effect(() => {
+    if (tab !== "network") return;
+    void refreshNetworkInfo();
+  });
+
+  async function refreshNetworkInfo(): Promise<void> {
+    networkErr = null;
+    try {
+      networkInfo = await api.getStageNetworkInfo();
+      networkPortDraft = networkInfo.port;
+      networkPinDraft = networkInfo.pin;
+    } catch (e) {
+      networkErr = String(e);
+    }
+  }
+
+  function setNetworkEnabled(enabled: boolean): void {
+    networkErr = null;
+    networkMsg = null;
+    void api
+      .setStageNetworkEnabled(enabled)
+      .then((s) => {
+        appState = s;
+        void refreshNetworkInfo();
+      })
+      .catch((e: unknown) => (networkErr = String(e)));
+  }
+
+  function setNetworkPort(): void {
+    const port = Math.round(networkPortDraft) || 0;
+    if (port <= 0 || port > 65535) {
+      networkErr = "Port must be between 1 and 65535.";
+      return;
+    }
+    networkErr = null;
+    networkMsg = null;
+    void api
+      .setStageNetworkPort(port)
+      .then((s) => {
+        appState = s;
+        networkMsg = "Port updated. The server restarts to apply it.";
+        void refreshNetworkInfo();
+      })
+      .catch((e: unknown) => (networkErr = String(e)));
+  }
+
+  function setNetworkPin(): void {
+    networkErr = null;
+    networkMsg = null;
+    void api
+      .setStageNetworkPin(networkPinDraft)
+      .then((s) => {
+        appState = s;
+        networkMsg = "PIN updated and applied to the live server.";
+      })
+      .catch((e: unknown) => (networkErr = String(e)));
+  }
+
+  async function copyStageUrl(): Promise<void> {
+    const url = networkInfo?.urls[0];
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      networkMsg = "Copied the Stage URL to the clipboard.";
+    } catch (_) {
+      networkMsg = "Clipboard not available here — copy the URL manually.";
+    }
+  }
+
 </script>
 
 <div class="overlay">
@@ -439,6 +518,9 @@
       </button>
       <button class="tab" class:active={tab === "triggers"} onclick={() => (tab = "triggers")}>
         Triggers
+      </button>
+      <button class="tab" class:active={tab === "network"} onclick={() => (tab = "network")}>
+        Network
       </button>
       <button class="tab" class:active={tab === "logs"} onclick={() => (tab = "logs")}>
         Logs
@@ -863,6 +945,90 @@
                 </li>
               {/each}
             </ul>
+          </section>
+        </div>
+      {:else if tab === "network"}
+        <div class="panel-network">
+          <p class="hint">
+            Broadcast the live Stage Display over your local network so
+            performers can view it on a phone, tablet or laptop. Open the URL
+            on any device on the same Wi-Fi, then enter the PIN. Slides update
+            live and reconnect automatically.
+          </p>
+
+          {#if networkErr}
+            <p class="status err">{networkErr}</p>
+          {/if}
+          {#if networkMsg}
+            <p class="status">{networkMsg}</p>
+          {/if}
+
+          <section class="net-section">
+            <div class="section-head">
+              <h3>Stage server</h3>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  checked={networkInfo?.enabled ?? false}
+                  onchange={(e) => setNetworkEnabled(e.currentTarget.checked)}
+                />
+                <span>{networkInfo?.enabled ? "On" : "Off"}</span>
+              </label>
+            </div>
+
+            {#if networkInfo?.enabled}
+              <div class="net-urls">
+                {#each networkInfo.urls as url (url)}
+                  <code class="net-url">{url}/stage</code>
+                {/each}
+                {#if !networkInfo.urls.length}
+                  <p class="hint">No network interface found — check your connection.</p>
+                {/if}
+              </div>
+              <div class="row">
+                <button onclick={() => void copyStageUrl()}>
+                  Copy URL
+                </button>
+                <button onclick={() => void refreshNetworkInfo()}>Refresh addresses</button>
+              </div>
+            {/if}
+          </section>
+
+          <section class="net-section">
+            <h3>Port</h3>
+            <p class="hint">
+              The TCP port the server listens on. If the app sets the network
+              source it is already using, change this to a free port.
+            </p>
+            <div class="row">
+              <label>
+                Port
+                <input
+                  type="number"
+                  min="1"
+                  max="65535"
+                  bind:value={networkPortDraft}
+                />
+              </label>
+              <button onclick={setNetworkPort}>Apply port</button>
+            </div>
+          </section>
+
+          <section class="net-section">
+            <h3>PIN</h3>
+            <p class="hint">
+              Devices must enter this PIN to view the Stage. Leave it blank to
+              allow any viewer on the network.
+            </p>
+            <div class="row">
+              <input
+                type="text"
+                bind:value={networkPinDraft}
+                placeholder="e.g. 2471"
+                class="pin-input"
+              />
+              <button onclick={setNetworkPin}>Apply PIN</button>
+            </div>
           </section>
         </div>
       {/if}
@@ -1424,5 +1590,114 @@
   .panel-triggers button.danger {
     border-color: rgba(200, 60, 60, 0.5);
     color: #e07a7a;
+  }
+
+  .panel-network {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 4px;
+    overflow-y: auto;
+  }
+
+  .panel-network .net-section {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .panel-network .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .panel-network .section-head h3,
+  .panel-network .net-section h3 {
+    margin: 0;
+    font-size: 14px;
+  }
+
+  .net-urls {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .net-url {
+    display: inline-block;
+    padding: 8px 10px;
+    background: #101218;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: monospace;
+    font-size: 13px;
+    color: var(--text);
+    word-break: break-all;
+  }
+
+  .panel-network button {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    padding: 6px 12px;
+  }
+
+  .panel-network .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .panel-network .row label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .panel-network .row input[type="number"] {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    color: var(--text);
+    width: 90px;
+  }
+
+  .panel-network .pin-input {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    color: var(--text);
+    flex: 1;
+    min-width: 120px;
+    font-family: monospace;
+    font-size: 15px;
+    letter-spacing: 0.2em;
+  }
+
+  .panel-network .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .panel-network .hint {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin: 0;
   }
 </style>

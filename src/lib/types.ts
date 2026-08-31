@@ -119,6 +119,16 @@ export interface ClientState {
   oscEnabled: boolean;
   oscPort: number;
   triggers: TriggerMapping[];
+  stageNetworkEnabled: boolean;
+  stageNetworkPort: number;
+}
+
+export interface StageNetworkInfo {
+  bindHost: string;
+  urls: string[];
+  port: number;
+  enabled: boolean;
+  pin: string;
 }
 
 export interface DisplayInfo {

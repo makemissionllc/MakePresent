@@ -14,6 +14,7 @@ import type {
   MidiDeviceInfo,
   MidiMessageView,
   ScriptureMatch,
+  StageNetworkInfo,
   Transition,
   Trigger,
   TriggerAction,
@@ -144,4 +145,15 @@ export const api = {
 
   setTriggerEnabled: (triggerId: string, enabled: boolean) =>
     invoke<ClientState>("set_trigger_enabled", { triggerId, enabled }),
+
+  getStageNetworkInfo: () => invoke<StageNetworkInfo>("get_stage_network_info"),
+
+  setStageNetworkEnabled: (enabled: boolean) =>
+    invoke<ClientState>("set_stage_network_enabled", { enabled }),
+
+  setStageNetworkPort: (port: number) =>
+    invoke<ClientState>("set_stage_network_port", { port }),
+
+  setStageNetworkPin: (pin: string) =>
+    invoke<ClientState>("set_stage_network_pin", { pin }),
 };

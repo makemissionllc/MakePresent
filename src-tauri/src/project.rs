@@ -294,6 +294,10 @@ pub struct ClientState {
     pub osc_port: u16,
     /// Trigger-to-action mappings (MIDI + OSC), persisted in settings.
     pub triggers: Vec<crate::triggers::TriggerMapping>,
+    /// Whether the local-network Stage Display server is enabled.
+    pub stage_network_enabled: bool,
+    /// Port the Stage Display web/WebSocket server binds to.
+    pub stage_network_port: u16,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -379,10 +383,27 @@ pub struct Settings {
     /// Persisted trigger-to-action mappings (MIDI + OSC).
     #[serde(default)]
     pub triggers: Vec<crate::triggers::TriggerMapping>,
+    /// Whether the local-network Stage Display server is enabled. When on, a
+    /// phone/tablet on the same Wi-Fi can view the live Stage Display at
+    /// `http://<local-ip>:<port>/stage` after entering the PIN.
+    #[serde(default)]
+    pub stage_network_enabled: bool,
+    /// TCP port the Stage Display web server binds to.
+    #[serde(default = "default_stage_port")]
+    pub stage_network_port: u16,
+    /// PIN required to view the Stage Display feed. Persisted plaintext is
+    /// acceptable here (local LAN, low-stakes); an empty value means "any PIN
+    /// accepted" (used by tests/automation only).
+    #[serde(default)]
+    pub stage_network_pin: String,
 }
 
 fn default_osc_port() -> u16 {
     crate::osc::DEFAULT_OSC_PORT
+}
+
+fn default_stage_port() -> u16 {
+    crate::network::DEFAULT_STAGE_PORT
 }
 
 impl Default for Settings {
@@ -404,6 +425,9 @@ impl Default for Settings {
             osc_enabled: false,
             osc_port: 9000,
             triggers: Vec::new(),
+            stage_network_enabled: false,
+            stage_network_port: crate::network::DEFAULT_STAGE_PORT,
+            stage_network_pin: String::new(),
         }
     }
 }

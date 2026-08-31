@@ -1,3 +1,4 @@
+use crate::broadcast::Broadcaster;
 use crate::logging::Logger;
 use crate::project::{Library, Notice, Project, Settings};
 use crate::scripture::ScriptureIndex;
@@ -18,6 +19,8 @@ pub struct AppState {
     pub save_tx: Mutex<Option<Sender<()>>>,
     /// Scripture search index, loaded once at startup from vendored KJV data.
     pub scripture: RwLock<Option<ScriptureIndex>>,
+    /// NDI broadcaster (runtime-loaded SDK; inactive unless NDI is enabled).
+    pub broadcaster: Broadcaster,
 }
 
 impl Default for AppState {
@@ -31,6 +34,7 @@ impl Default for AppState {
             logger: Logger::default(),
             save_tx: Mutex::new(None),
             scripture: RwLock::new(None),
+            broadcaster: Broadcaster::default(),
         }
     }
 }

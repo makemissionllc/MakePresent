@@ -1,7 +1,8 @@
 use crate::logging::{Level, LogEntry};
 use crate::project::{
-    is_first_run, now_iso, Background, ClientState, Library, LibrarySlide, LibrarySong, Look,
-    OutputView, Project, Settings, Slide, StageView, TextPosition, Transition, write_settings,
+    is_first_run, now_iso, Background, BroadcastView, ClientState, Library, LibrarySlide,
+    LibrarySong, Look, OutputView, Project, Settings, Slide, StageView, TextPosition, Transition,
+    write_settings,
 };
 use crate::scripture::ScriptureMatch;
 use crate::state::AppState;
@@ -49,6 +50,10 @@ fn snapshot(app: &AppHandle) -> ClientState {
             monitor_index: settings.stage_display_index,
             monitor_name: settings.stage_display_name,
         },
+        broadcast: BroadcastView {
+            enabled: settings.ndi_enabled,
+            source_name: crate::broadcast::NDI_SOURCE_NAME.to_string(),
+        },
         first_run: is_first_run(&state.app_data_dir()),
         default_transition: settings.default_transition,
         current,
@@ -57,6 +62,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
         looks,
         output_look_id: settings.output_look_id,
         stage_look_id: settings.stage_look_id,
+        ndi_look_id: settings.ndi_look_id,
     };
     snap
 }
@@ -362,7 +368,10 @@ pub fn delete_look(app: AppHandle, look_id: String) -> Result<ClientState, Strin
             settings.output_look_id = first_id.clone();
         }
         if settings.stage_look_id.as_deref() == Some(look_id.as_str()) {
-            settings.stage_look_id = first_id;
+            settings.stage_look_id = first_id.clone();
+        }
+        if settings.ndi_look_id.as_deref() == Some(look_id.as_str()) {
+            settings.ndi_look_id = first_id;
         }
         state.apply_settings(settings);
         let _ = write_settings(&state.app_data_dir(), &state.current_settings());
@@ -386,6 +395,12 @@ pub fn set_stage_look(app: AppHandle, look_id: Option<String>) -> Result<ClientS
     set_look_mapping(&app, "stage", look_id)
 }
 
+/// Assign a Look to the NDI broadcast feed. Stored in per-machine settings.
+#[tauri::command]
+pub fn set_ndi_look(app: AppHandle, look_id: Option<String>) -> Result<ClientState, String> {
+    set_look_mapping(&app, "ndi", look_id)
+}
+
 fn set_look_mapping(
     app: &AppHandle,
     target: &str,
@@ -405,10 +420,11 @@ fn set_look_mapping(
     }
     {
         let mut settings = state.current_settings();
-        if target == "output" {
-            settings.output_look_id = look_id.clone();
-        } else {
-            settings.stage_look_id = look_id.clone();
+        match target {
+            "output" => settings.output_look_id = look_id.clone(),
+            "stage" => settings.stage_look_id = look_id.clone(),
+            "ndi" => settings.ndi_look_id = look_id.clone(),
+            _ => unreachable!("unknown look target"),
         }
         state.apply_settings(settings);
         let _ = write_settings(&state.app_data_dir(), &state.current_settings());
@@ -419,6 +435,40 @@ fn set_look_mapping(
         &format!("look: {target} mapped to look {}", look_id.unwrap_or_else(|| "none".to_string())),
     );
     let snap = snapshot(app);
+    let _ = app.emit("state", &snap);
+    Ok(snap)
+}
+
+/// Turn NDI broadcast on or off. Enabling starts the runtime-loaded NDI sender
+/// on its own thread (never the render loop); disabling tears it down.
+#[tauri::command]
+pub fn set_ndi_enabled(app: AppHandle, enabled: bool) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.current_settings();
+        settings.ndi_enabled = enabled;
+        state.apply_settings(settings);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+    }
+
+    if enabled {
+        match state.broadcaster.start(crate::broadcast::NDI_SOURCE_NAME) {
+            Ok(()) => log(
+                &app,
+                Level::Info,
+                &format!("ndi: broadcast enabled — source \"{}\"", crate::broadcast::NDI_SOURCE_NAME),
+            ),
+            Err(e) => {
+                log(&app, Level::Error, &format!("ndi: could not enable broadcast: {e}"));
+                return Err(format!("could not enable NDI broadcast: {e}"));
+            }
+        }
+    } else {
+        state.broadcaster.stop();
+        log(&app, Level::Info, "ndi: broadcast disabled");
+    }
+
+    let snap = snapshot(&app);
     let _ = app.emit("state", &snap);
     Ok(snap)
 }
@@ -754,6 +804,8 @@ enum SettingsField {
     DefaultTransition,
     OutputLook,
     StageLook,
+    NdiLook,
+    NdiEnabled,
 }
 
 impl SettingsField {
@@ -766,11 +818,13 @@ impl SettingsField {
             SettingsField::DefaultTransition => "Default transition",
             SettingsField::OutputLook => "Output look",
             SettingsField::StageLook => "Stage look",
+            SettingsField::NdiLook => "NDI look",
+            SettingsField::NdiEnabled => "NDI broadcast",
         }
     }
 }
 
-fn settings_fields() -> [SettingsField; 7] {
+fn settings_fields() -> [SettingsField; 9] {
     [
         SettingsField::OutputDisplay,
         SettingsField::OutputFullscreen,
@@ -779,6 +833,8 @@ fn settings_fields() -> [SettingsField; 7] {
         SettingsField::DefaultTransition,
         SettingsField::OutputLook,
         SettingsField::StageLook,
+        SettingsField::NdiLook,
+        SettingsField::NdiEnabled,
     ]
 }
 
@@ -797,6 +853,8 @@ fn changed_settings(old: &Settings, new: &Settings) -> Vec<String> {
             }
             SettingsField::OutputLook => new.output_look_id != old.output_look_id,
             SettingsField::StageLook => new.stage_look_id != old.stage_look_id,
+            SettingsField::NdiLook => new.ndi_look_id != old.ndi_look_id,
+            SettingsField::NdiEnabled => new.ndi_enabled != old.ndi_enabled,
         };
         if differs {
             changed.push(field.label().to_string());
@@ -894,6 +952,20 @@ pub async fn import_settings(app: AppHandle, path: String) -> Result<ImportRepor
         }
     }
 
+    // Apply the imported NDI enablement (start/stop the runtime broadcaster).
+    let latest = state.current_settings();
+    if latest.ndi_enabled != state.broadcaster.is_active() {
+        if latest.ndi_enabled {
+            match state.broadcaster.start(crate::broadcast::NDI_SOURCE_NAME) {
+                Ok(()) => log(&app, Level::Info, "settings: NDI broadcast started on import"),
+                Err(e) => log(&app, Level::Warn, &format!("settings: NDI start on import failed: {e}")),
+            }
+        } else {
+            state.broadcaster.stop();
+            log(&app, Level::Info, "settings: NDI broadcast stopped on import");
+        }
+    }
+
     log(
         &app,
         Level::Info,
@@ -978,6 +1050,8 @@ mod tests {
             default_transition: Transition::Fade,
             output_look_id: Some("look-1".to_string()),
             stage_look_id: None,
+            ndi_enabled: false,
+            ndi_look_id: None,
         }
     }
 

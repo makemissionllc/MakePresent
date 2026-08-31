@@ -23,3 +23,8 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
+# Runtime loading of the NDI SDK (Processing.NDI.Lib) so the app builds and
+# runs cleanly WITHOUT the NDI SDK installed at compile time. The NDI SDK itself
+# (Vizrt/NewTek) is royalty-free but must be downloaded separately; it is loaded
+# dynamically at runtime, never linked. See broadcast.rs and README.
+libloading = "0.8"

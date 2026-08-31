@@ -246,6 +246,16 @@ pub struct StageView {
     pub monitor_name: Option<String>,
 }
 
+/// Runtime status of the NDI broadcast feed (not persisted; derived live).
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastView {
+    /// Whether NDI is enabled in settings and currently broadcasting.
+    pub enabled: bool,
+    /// The NDI source name receivers see on the network.
+    pub source_name: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientState {
@@ -253,6 +263,8 @@ pub struct ClientState {
     pub notice: Option<Notice>,
     pub output: OutputView,
     pub stage: StageView,
+    /// Runtime NDI broadcast status.
+    pub broadcast: BroadcastView,
     /// true on the very first launch (no saved project or settings yet).
     pub first_run: bool,
     /// Per-machine default transition used for new projects.
@@ -270,6 +282,8 @@ pub struct ClientState {
     pub looks: Vec<Look>,
     pub output_look_id: Option<String>,
     pub stage_look_id: Option<String>,
+    /// Look id assigned to the NDI feed (None -> first look).
+    pub ndi_look_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -334,6 +348,12 @@ pub struct Settings {
     pub output_look_id: Option<String>,
     /// Look id assigned to the Stage Display window (None -> second/default).
     pub stage_look_id: Option<String>,
+    /// Whether NDI broadcast is enabled (publishes the live slide on the LAN).
+    #[serde(default)]
+    pub ndi_enabled: bool,
+    /// Look id assigned to the NDI feed (None -> first look).
+    #[serde(default)]
+    pub ndi_look_id: Option<String>,
 }
 
 impl Default for Settings {
@@ -348,6 +368,8 @@ impl Default for Settings {
             default_transition: Transition::Cut,
             output_look_id: None,
             stage_look_id: None,
+            ndi_enabled: false,
+            ndi_look_id: None,
         }
     }
 }

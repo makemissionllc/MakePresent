@@ -1,4 +1,5 @@
 mod commands;
+mod broadcast;
 mod logging;
 mod media;
 mod project;
@@ -50,6 +51,9 @@ fn finalize(app: &tauri::AppHandle) {
     crate::windows::set_shutting_down();
 
     let state = app.state::<AppState>();
+    // Tear down NDI before the SDK lib could be unloaded / windows close.
+    state.broadcaster.stop();
+
     let data_dir = state.app_data_dir();
     {
         let snapshot = state.project.read().unwrap().clone();
@@ -142,6 +146,30 @@ pub fn run() {
                     );
                 }
                 state.apply_settings(settings);
+            }
+
+            // NDI: restore the broadcast if it was left enabled (the sender
+            // runs on its own thread; only the NDI-installed machine starts it).
+            let ndi_on = state.current_settings().ndi_enabled;
+            if ndi_on {
+                match state.broadcaster.start(crate::broadcast::NDI_SOURCE_NAME) {
+                    Ok(()) => state.logger.log(
+                        Level::Info,
+                        &format!(
+                            "ndi: restored broadcast — source \"{}\"",
+                            crate::broadcast::NDI_SOURCE_NAME
+                        ),
+                    ),
+                    Err(e) => state.logger.log(
+                        Level::Warn,
+                        &format!("ndi: restored state was enabled but could not start: {e}"),
+                    ),
+                }
+            }
+            if !state.broadcaster.is_active() {
+                state
+                    .logger
+                    .log(Level::Info, &format!("ndi: broadcast off (looks for {})", crate::broadcast::lib_filename()));
             }
 
             // Load the KJV scripture index once at startup for fast
@@ -240,6 +268,8 @@ pub fn run() {
             commands::delete_look,
             commands::set_output_look,
             commands::set_stage_look,
+            commands::set_ndi_look,
+            commands::set_ndi_enabled,
             commands::clear_output,
             commands::new_project,
             commands::add_slide,

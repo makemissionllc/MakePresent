@@ -144,6 +144,10 @@ Phase 4 — Media (image/video) slide backgrounds
 
 None of these should influence the current architecture decisions.
 
+## Known Issues
+
+- **Windows build — post-Output-creation backend freeze (deferred).** After the first successful command that creates the Output window (confirmed via logs: `move_output_to` and `ensure_output` both complete correctly, inline on main thread, autosave succeeds), **all subsequent backend commands become unresponsive** — not a startup deadlock, it occurs after a proven-successful window creation. Simple frontend-only interactions (search, dropdown selection) continue to work. Suspected: WebView2 leaves the main thread/event loop in a degraded state after creating a second webview window on Windows specifically. **Deferred — Ubuntu is the active development platform; revisit before any Windows deployment.**
+
 ## Onboarding Flow
 
 Startup creates **only the Editor window**.

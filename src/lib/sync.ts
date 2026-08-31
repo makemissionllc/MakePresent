@@ -91,6 +91,12 @@ export const api = {
   setStageLook: (lookId: string | null) =>
     invoke<ClientState>("set_stage_look", { lookId }),
 
+  setNdiLook: (lookId: string | null) =>
+    invoke<ClientState>("set_ndi_look", { lookId }),
+
+  setNdiEnabled: (enabled: boolean) =>
+    invoke<ClientState>("set_ndi_enabled", { enabled }),
+
   importMedia: (path: string) => invoke<MediaAsset>("import_media", { path }),
 
   exportSettings: (path: string) =>

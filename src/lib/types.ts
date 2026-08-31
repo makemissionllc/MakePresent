@@ -94,11 +94,17 @@ export interface StageView {
   monitorName: string | null;
 }
 
+export interface BroadcastView {
+  enabled: boolean;
+  sourceName: string;
+}
+
 export interface ClientState {
   project: Project;
   notice: Notice | null;
   output: OutputView;
   stage: StageView;
+  broadcast: BroadcastView;
   firstRun: boolean;
   defaultTransition: Transition;
   current: Slide | null;
@@ -107,6 +113,7 @@ export interface ClientState {
   looks: Look[];
   outputLookId: string | null;
   stageLookId: string | null;
+  ndiLookId: string | null;
 }
 
 export interface DisplayInfo {

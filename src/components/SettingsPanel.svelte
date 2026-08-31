@@ -106,10 +106,23 @@
       .catch((e: unknown) => (lookErr = String(e)));
   }
 
-  function assignTo(target: "output" | "stage", id: string | null): void {
+  function assignTo(target: "output" | "stage" | "ndi", id: string | null): void {
     lookErr = null;
-    const fn = target === "output" ? api.setOutputLook : api.setStageLook;
+    const fn =
+      target === "output"
+        ? api.setOutputLook
+        : target === "stage"
+          ? api.setStageLook
+          : api.setNdiLook;
     void fn(id).then((s) => (appState = s)).catch((e: unknown) => (lookErr = String(e)));
+  }
+
+  function setNdiEnabled(enabled: boolean): void {
+    lookErr = null;
+    void api
+      .setNdiEnabled(enabled)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (lookErr = String(e)));
   }
 
   const summary = $derived(
@@ -142,6 +155,10 @@
           {
             label: "Default transition",
             value: appState.defaultTransition === "fade" ? "Fade" : "Cut",
+          },
+          {
+            label: "NDI broadcast",
+            value: appState.broadcast.enabled ? `On (${appState.broadcast.sourceName})` : "Off",
           },
         ]
       : [],
@@ -263,6 +280,31 @@
             {/each}
           </ul>
 
+          <div class="bcast-block">
+            <div class="bcast-title">
+              <span class="assign-title">NDI broadcast</span>
+              <label class="check">
+                <input
+                  type="checkbox"
+                  checked={appState?.broadcast.enabled ?? false}
+                  onchange={(e) => setNdiEnabled((e.target as HTMLInputElement).checked)}
+                />
+                Enabled
+              </label>
+            </div>
+            <p class="hint">
+              Publishes the live slide as an NDI source
+              (<code>{appState?.broadcast.sourceName}</code>) on your local
+              network so a video switcher can cut to it. Requires the free
+              <a href="https://ndi.video" target="_blank" rel="noopener noreferrer">
+                NDI® SDK
+              </a>
+              installed on this machine; it is loaded at runtime and the app
+              keeps working normally if it is absent. Assign a Look to the NDI
+              feed under <em>Looks</em>.
+            </p>
+          </div>
+
           <div class="actions">
             <button onclick={() => exportSettings()}>Export settings…</button>
             <button onclick={() => importSettings()}>Import settings…</button>
@@ -277,7 +319,7 @@
           <p class="hint">
             Looks are named style profiles — font size, text colour, text
             position and whether the background is shown. Each output window
-            (Main, Stage, future Stream) renders the same live slide but applies
+            (Main, Stage, NDI feed) renders the same live slide but applies
             its assigned Look. They are stored with the project and update
             instantly while live.
           </p>
@@ -303,6 +345,9 @@
                     {/if}
                     {#if appState?.stageLookId === lk.id}
                       <span class="badge stage">Stage</span>
+                    {/if}
+                    {#if appState?.ndiLookId === lk.id}
+                      <span class="badge ndi">NDI</span>
                     {/if}
                   </button>
                 {/each}
@@ -400,6 +445,19 @@
                           assignTo("stage", (e.target as HTMLSelectElement).value || null)}
                       >
                         <option value="">Auto (Stage)</option>
+                        {#each looks as lk (lk.id)}
+                          <option value={lk.id}>{lk.name}</option>
+                        {/each}
+                      </select>
+                    </label>
+                    <label>
+                      NDI Feed
+                      <select
+                        value={appState?.ndiLookId ?? ""}
+                        onchange={(e) =>
+                          assignTo("ndi", (e.target as HTMLSelectElement).value || null)}
+                      >
+                        <option value="">Auto (first Look)</option>
                         {#each looks as lk (lk.id)}
                           <option value={lk.id}>{lk.name}</option>
                         {/each}
@@ -572,6 +630,47 @@
     flex-wrap: wrap;
   }
 
+  .bcast-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-2);
+  }
+
+  .bcast-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .bcast-title .assign-title {
+    margin: 0;
+  }
+
+  .bcast-title label.check {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+  }
+
+  .bcast-block .hint {
+    margin: 0;
+  }
+
+  .bcast-block code {
+    color: var(--text);
+  }
+
+  .bcast-block a {
+    color: var(--accent);
+  }
+
   .status {
     font-size: 13px;
     margin: 12px 0 0;
@@ -668,6 +767,10 @@
 
   .badge.stage {
     color: var(--accent);
+  }
+
+  .badge.ndi {
+    color: var(--warn);
   }
 
   .add-look {

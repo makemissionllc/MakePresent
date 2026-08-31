@@ -1,5 +1,6 @@
 use crate::logging::Logger;
 use crate::project::{Library, Notice, Project, Settings};
+use crate::scripture::ScriptureIndex;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
@@ -15,6 +16,8 @@ pub struct AppState {
     pub logger: Logger,
     /// Wake channel for the autosave worker thread.
     pub save_tx: Mutex<Option<Sender<()>>>,
+    /// Scripture search index, loaded once at startup from vendored KJV data.
+    pub scripture: RwLock<Option<ScriptureIndex>>,
 }
 
 impl Default for AppState {
@@ -27,6 +30,7 @@ impl Default for AppState {
             data_dir: RwLock::new(PathBuf::new()),
             logger: Logger::default(),
             save_tx: Mutex::new(None),
+            scripture: RwLock::new(None),
         }
     }
 }

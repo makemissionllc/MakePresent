@@ -134,3 +134,11 @@ export interface LogEntry {
   level: string;
   message: string;
 }
+
+export interface ScriptureMatch {
+  book: string;
+  chapter: number;
+  verse: number;
+  reference: string;
+  text: string;
+}

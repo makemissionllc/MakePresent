@@ -3,7 +3,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { api, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { ClientState, DisplayInfo, Library, LibrarySong, Slide } from "../lib/types";
+  import type { ClientState, DisplayInfo, Library, LibrarySong, ScriptureMatch, Slide } from "../lib/types";
   import { isMedia } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
 
@@ -40,6 +40,12 @@
   let settingsOpen = $state(false);
   let welcomeDismissed = $state(false);
   let importingMedia = $state(false);
+  let scriptureQuery = $state("");
+  let scriptureResults = $state<ScriptureMatch[]>([]);
+  let scriptureOpen = $state(false);
+  let scriptureIdx = $state(-1);
+  let scriptureLoading = $state(false);
+  let scriptureTimer: ReturnType<typeof setTimeout> | null = null;
 
   const project = $derived(appState?.project ?? null);
   const notice = $derived(
@@ -94,6 +100,71 @@
       }
     } catch (e) {
       errorMsg = String(e);
+    }
+  }
+
+  async function doScriptureSearch(q: string): Promise<void> {
+    if (!q.trim()) {
+      scriptureResults = [];
+      scriptureOpen = false;
+      scriptureIdx = -1;
+      return;
+    }
+    try {
+      const matches = await api.searchScripture(q.trim());
+      scriptureResults = matches;
+      scriptureOpen = matches.length > 0;
+      scriptureIdx = -1;
+    } catch (e) {
+      scriptureResults = [];
+      scriptureOpen = false;
+      errorMsg = String(e);
+    } finally {
+      scriptureLoading = false;
+    }
+  }
+
+  function onScriptureInput(e: Event): void {
+    const value = (e.target as HTMLInputElement).value;
+    scriptureQuery = value;
+    scriptureIdx = -1;
+    if (scriptureTimer) clearTimeout(scriptureTimer);
+    if (!value.trim()) {
+      scriptureResults = [];
+      scriptureOpen = false;
+      return;
+    }
+    scriptureLoading = true;
+    scriptureTimer = setTimeout(() => {
+      void doScriptureSearch(value);
+    }, 150);
+  }
+
+  function selectScripture(match: ScriptureMatch): void {
+    scriptureQuery = "";
+    scriptureResults = [];
+    scriptureOpen = false;
+    scriptureIdx = -1;
+    void run(() => api.addSlide(match.reference, match.text));
+  }
+
+  function onScriptureKeydown(e: KeyboardEvent): void {
+    if (!scriptureOpen || scriptureResults.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      scriptureIdx = (scriptureIdx + 1) % scriptureResults.length;
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      scriptureIdx =
+        scriptureIdx <= 0 ? scriptureResults.length - 1 : scriptureIdx - 1;
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (scriptureIdx >= 0 && scriptureIdx < scriptureResults.length) {
+        selectScripture(scriptureResults[scriptureIdx]);
+      }
+    } else if (e.key === "Escape") {
+      scriptureOpen = false;
+      scriptureIdx = -1;
     }
   }
 
@@ -249,6 +320,7 @@
       unSub();
       unAuto();
       unLib();
+      if (scriptureTimer) clearTimeout(scriptureTimer);
     };
   });
 </script>
@@ -343,6 +415,50 @@
         {/each}
       </ul>
       <button class="add" onclick={() => addSlide()}>+ Add slide</button>
+
+      <div class="section-title scripture-title">Add Scripture</div>
+      <div class="scripture-wrap">
+        <input
+          type="text"
+          class="search"
+          placeholder="e.g. John 3:16, psalm 23, jn 1"
+          value={scriptureQuery}
+          oninput={onScriptureInput}
+          onkeydown={onScriptureKeydown}
+          onfocus={() => {
+            if (scriptureResults.length > 0) scriptureOpen = true;
+          }}
+          onblur={() => {
+            setTimeout(() => {
+              scriptureOpen = false;
+            }, 150);
+          }}
+        />
+        {#if scriptureLoading}
+          <span class="scripture-loading" aria-hidden="true">
+            <span class="media-spinner"></span>
+          </span>
+        {/if}
+        {#if scriptureOpen}
+          <ul class="scripture-list">
+            {#each scriptureResults as match, i (match.reference)}
+              <li>
+                <button
+                  class:active={i === scriptureIdx}
+                  class="scripture-entry"
+                  onmousedown={(e) => {
+                    e.preventDefault();
+                    selectScripture(match);
+                  }}
+                >
+                  <span class="scripture-ref">{match.reference}</span>
+                  <span class="scripture-preview">{match.text}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
 
       <div class="section-title library-title">Library</div>
       <input
@@ -849,6 +965,68 @@
   .search {
     width: 100%;
     margin-bottom: 10px;
+  }
+
+  .scripture-title {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+  }
+
+  .scripture-wrap {
+    position: relative;
+  }
+
+  .scripture-loading {
+    position: absolute;
+    right: 10px;
+    top: 9px;
+  }
+
+  .scripture-list {
+    list-style: none;
+    margin: 0 0 10px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .scripture-entry {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 6px 10px;
+  }
+
+  .scripture-entry:hover,
+  .scripture-entry.active {
+    background: var(--panel);
+  }
+
+  .scripture-ref {
+    font-weight: 600;
+    color: var(--accent);
+    font-size: 12px;
+  }
+
+  .scripture-preview {
+    font-size: 12px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: block;
   }
 
   .song-list {

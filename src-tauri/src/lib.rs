@@ -2,6 +2,7 @@ mod commands;
 mod logging;
 mod media;
 mod project;
+mod scripture;
 mod state;
 mod windows;
 
@@ -117,6 +118,34 @@ pub fn run() {
             *state.data_dir.write().unwrap() = data_dir.clone();
             state.apply_settings(project::read_settings(&data_dir));
 
+            // Load the KJV scripture index once at startup for fast
+            // autocomplete search. The ~6 MB JSON is read and parsed into a
+            // HashMap-backed index in well under 500ms on any modern hardware.
+            // bundle.resources maps resources/kjv.json → $RESOURCE/kjv.json.
+            let kjv_path = app
+                .path()
+                .resolve("kjv.json", tauri::path::BaseDirectory::Resource);
+            match kjv_path {
+                Ok(kjv_path) => {
+                    let scripture = scripture::load(&kjv_path);
+                    state.logger.log(
+                        Level::Info,
+                        &format!(
+                            "scripture: loaded {} books from {}",
+                            scripture.book_count(),
+                            kjv_path.display()
+                        ),
+                    );
+                    *state.scripture.write().unwrap() = Some(scripture);
+                }
+                Err(e) => {
+                    state.logger.log(
+                        Level::Error,
+                        &format!("scripture: failed to resolve kjv.json resource: {e}"),
+                    );
+                }
+            }
+
             let tx = project::spawn_autosave(
                 state.project.clone(),
                 state.library.clone(),
@@ -184,6 +213,7 @@ pub fn run() {
             commands::import_settings,
             commands::get_logs,
             commands::export_logs_to,
+            commands::search_scripture,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

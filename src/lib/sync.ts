@@ -10,6 +10,7 @@ import type {
   Library,
   LogEntry,
   MediaAsset,
+  ScriptureMatch,
   Transition,
 } from "./types";
 
@@ -89,4 +90,7 @@ export const api = {
 
   exportLogs: (path: string) =>
     invoke<string>("export_logs_to", { path }),
+
+  searchScripture: (query: string) =>
+    invoke<ScriptureMatch[]>("search_scripture", { query }),
 };

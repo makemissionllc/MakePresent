@@ -3,6 +3,7 @@ use crate::project::{
     is_first_run, now_iso, Background, ClientState, Library, LibrarySlide, LibrarySong,
     OutputView, Project, Settings, Slide, StageView, Transition, write_settings,
 };
+use crate::scripture::ScriptureMatch;
 use crate::state::AppState;
 use crate::windows::{self, DisplayInfo};
 use serde::{Deserialize, Serialize};
@@ -722,6 +723,21 @@ pub fn export_logs_to(app: AppHandle, path: String) -> Result<String, String> {
         .map_err(|e| format!("could not export log file: {e}"))?;
     log(&app, Level::Info, &format!("logs: exported to {path}"));
     Ok(path)
+}
+
+/// Search the in-memory KJV scripture index as the user types a reference,
+/// returning up to 10 matches with the verse text for autocomplete.
+#[tauri::command]
+pub fn search_scripture(
+    app: AppHandle,
+    query: String,
+) -> Result<Vec<ScriptureMatch>, String> {
+    let state = app.state::<AppState>();
+    let scripture = state.scripture.read().unwrap();
+    let index = scripture
+        .as_ref()
+        .ok_or_else(|| "scripture index not loaded".to_string())?;
+    Ok(index.search(&query, 10))
 }
 
 #[cfg(test)]

@@ -100,18 +100,16 @@
   }
 
   .look-title {
-    font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell,
-      sans-serif;
+    font-family: var(--font-display);
     font-size: var(--look-title-size, clamp(2.5rem, 8vmin, 9rem));
-    font-weight: 700;
+    font-weight: 400;
     margin: 0;
     line-height: 1.1;
     text-shadow: 0 2px 24px rgba(0, 0, 0, 0.45);
   }
 
   .look-body {
-    font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell,
-      sans-serif;
+    font-family: var(--font-body);
     font-size: var(--look-body-size, clamp(1.25rem, 4.5vmin, 5rem));
     font-weight: 400;
     margin: 0;

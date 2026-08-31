@@ -482,8 +482,11 @@
 
   .dialog-head h2 {
     margin: 0;
-    font-size: 15px;
+    font-family: var(--font-display);
+    font-size: clamp(13px, 1.1vw, 16px);
     font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
   }
 
   .close {
@@ -574,13 +577,13 @@
     margin: 12px 0 0;
     padding: 8px 10px;
     border-radius: 6px;
-    background: #12351f;
+    background: var(--live-bg);
     color: #c9f4d8;
   }
 
   .status.err {
-    background: #4a1f1f;
-    color: #ffd9d9;
+    background: var(--danger-bg);
+    color: var(--danger-text);
   }
 
   .log-view {
@@ -591,7 +594,7 @@
     border-radius: 8px;
     max-height: 46vh;
     overflow-y: auto;
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.55;
     color: var(--text);
@@ -664,7 +667,7 @@
   }
 
   .badge.stage {
-    color: #9fd3ff;
+    color: var(--accent);
   }
 
   .add-look {

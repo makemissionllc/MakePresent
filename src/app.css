@@ -1,5 +1,24 @@
+/* ==========================================================================
+   MakePresent — Design Tokens
+   Single source of truth for color + typography. Change a palette here and
+   it propagates app-wide; edit once, not per-component.
+
+   Palette (locked in for the "premium feel" pass):
+     --color-burgundy  #780116  destructive actions (delete, remove, clear)
+     --color-green     #004F39  active / live states ("currently live")
+     --color-xanthous  #F7B538  warnings + highlighted metadata
+   ========================================================================== */
 :root {
   color-scheme: dark;
+
+  /* Brand / semantic palette */
+  --color-burgundy: #780116;
+  --color-burgundy-hover: #8c0418;
+  --color-green: #004f39;
+  --color-green-bright: #1f9d6a;
+  --color-xanthous: #f7b538;
+
+  /* Surfaces (dark theme neutral scale) */
   --bg: #16181d;
   --panel: #1e2129;
   --panel-2: #262a34;
@@ -7,8 +26,16 @@
   --text: #e6e8ee;
   --text-dim: #9aa2b1;
   --accent: #4f8cff;
-  --live: #2ec27e;
-  --danger: #e5534b;
+
+  /* Semantic aliases — components reference these, not raw hex. */
+  --danger: var(--color-burgundy);
+  --danger-text: #ffd9d9;
+  --danger-bg: #4a2020;
+  --live: var(--color-green-bright);
+  --live-bg: var(--color-green);
+  --warn: var(--color-xanthous);
+  --warn-text: #3a2e10;
+  --warn-bg: #4a3b17;
 }
 
 * {
@@ -33,11 +60,80 @@ body {
   overflow: hidden;
 }
 
+/* ==========================================================================
+   Bundled fonts.
+   Druk Wide and Helvetica Neue are both commercial fonts (Commercial Type /
+   Monotype) that require a PAID redistribution license — NOT safe to bundle.
+   We ship open-license (SIL OFL) stand-ins instead:
+     Archivo Black  -> primary display / headings (wide, bold, impactful)
+     Inter          -> dense body / UI text (Helvetica-like neutral sans)
+   Both are bundled in the Tauri asset payload at src/assets/fonts/ along with
+   their OFL license files, so there is zero cross-platform font drift — the
+   exact same files render on Windows and Ubuntu.
+   ========================================================================== */
+@font-face {
+  font-family: "Archivo Black";
+  src: url("./assets/fonts/ArchivoBlack-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./assets/fonts/Inter-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./assets/fonts/Inter-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("./assets/fonts/Inter-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Typography scale — viewport-relative so text scales with the window.
+   --font-display : titles / headers (Druk Wide role -> Archivo Black)
+   --font-body    : dense UI / body  (Helvetica Neue role -> Inter)        */
+:root {
+  --font-display: "Archivo Black", "Inter", system-ui, -apple-system,
+    "Segoe UI", Ubuntu, Cantarell, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", Ubuntu,
+    Cantarell, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Base UI body text size (vw-based so it scales across resolutions) */
+  --ui-size: clamp(13px, 1.1vw, 15px);
+}
+
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell, sans-serif;
-  font-size: 14px;
+  font-family: var(--font-body);
+  font-size: var(--ui-size);
   background: var(--bg);
   color: var(--text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-display);
 }
 
 button,

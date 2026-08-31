@@ -420,7 +420,9 @@
   <header class="topbar">
     <h1>MakePresent</h1>
     <span class="project-name">{project?.name ?? "No project"}</span>
-    <span class="live-indicator"> {#if project?.live}LIVE{:else}OFFLINE{/if} </span>
+    <span class="live-indicator" class:live={!!project?.live}>
+      {#if project?.live}LIVE{:else}OFFLINE{/if}
+    </span>
     <span class="spacer"></span>
     <span class="saved-label">{savedLabel}</span>
     <button class="ghost" onclick={() => newProject()}>New project</button>
@@ -827,8 +829,11 @@
   }
 
   .topbar h1 {
-    font-size: 15px;
+    font-family: var(--font-display);
+    font-size: clamp(13px, 1.1vw, 16px);
     font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
     margin: 0;
   }
 
@@ -868,6 +873,12 @@
     color: var(--text-dim);
   }
 
+  /* When live, the indicator lights up in the locked-in live green. */
+  .live-indicator.live {
+    background: var(--live-bg);
+    color: #eafff5;
+  }
+
   .notice,
   .error {
     padding: 8px 14px;
@@ -875,7 +886,7 @@
   }
 
   .notice {
-    background: #4a3b17;
+    background: var(--warn-bg);
     border-bottom: 1px solid var(--border);
     display: flex;
     gap: 8px;
@@ -887,8 +898,8 @@
   }
 
   .error {
-    background: #4a1f1f;
-    color: #ffd9d9;
+    background: var(--danger-bg);
+    color: var(--danger-text);
   }
 
   /* Windows 11 DPI/snap guard: avoid hardcoded 280px sidebars which clip at 125%/150%
@@ -1283,8 +1294,8 @@
     align-items: flex-start;
     padding: 12px;
     margin-bottom: 14px;
-    background: #17233d;
-    border: 1px solid #2c4a7a;
+    background: var(--live-bg);
+    border: 1px solid var(--color-green);
     border-radius: 8px;
     font-size: 13px;
     line-height: 1.5;

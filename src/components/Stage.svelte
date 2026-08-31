@@ -121,7 +121,8 @@
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.18em;
-    color: #7f8494;
+    text-transform: uppercase;
+    color: var(--text-dim);
   }
 
   .next-body-wrap {
@@ -133,8 +134,7 @@
   }
 
   .next-body {
-    font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell,
-      sans-serif;
+    font-family: var(--font-body);
     font-size: clamp(1rem, 2.2vmin, 2rem);
     line-height: 1.4;
     color: #d6d9e2;
@@ -148,8 +148,7 @@
   }
 
   .clock {
-    font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell,
-      sans-serif;
+    font-family: var(--font-display);
     font-size: clamp(2rem, 6vmin, 5rem);
     font-weight: 700;
     font-variant-numeric: tabular-nums;

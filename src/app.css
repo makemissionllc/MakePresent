@@ -15,14 +15,25 @@
   box-sizing: border-box;
 }
 
+/* WebView2 on Windows 11 initializes with a 0x0 canvas if root elements
+   don't explicitly claim container dimensions. Explicit viewport units keep
+   the container stable across DPI scaling and snap events. */
 html,
-body,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
 #app {
-  height: 100%;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
 }
 
 body {
-  margin: 0;
   font-family: system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell, sans-serif;
   font-size: 14px;
   background: var(--bg);
@@ -39,4 +50,15 @@ textarea {
 
 button {
   cursor: pointer;
+}
+
+/* Windows 11 drag-zone guard: interactive controls must stay out of any
+   data-tauri-drag-region so Windows 11 doesn't intercept clicks as drags. */
+button,
+a,
+input,
+textarea,
+select,
+[role="button"] {
+  -webkit-app-region: no-drag;
 }

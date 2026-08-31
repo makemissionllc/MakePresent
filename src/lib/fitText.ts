@@ -46,7 +46,10 @@ export interface FitTextOptions {
 
 const TITLE_SEL = '[data-role="title"]';
 const BODY_SEL = '[data-role="body"]';
-const EPS = 1;
+// Windows 11 fractional scaling (125%/150%) introduces sub-pixel rounding.
+// Use a DPR-aware epsilon so `fits` doesn't oscillate at fractional boundaries.
+const getEps = () =>
+  typeof window !== "undefined" ? Math.max(1, Math.ceil(window.devicePixelRatio || 1)) : 1;
 
 interface Metrics {
   basePx: number;
@@ -98,8 +101,9 @@ function readMetrics(el: HTMLElement): Metrics {
 }
 
 function fits(el: HTMLElement, allowedW: number, allowedH: number): boolean {
+  const eps = getEps();
   return (
-    el.scrollWidth <= allowedW + EPS && el.scrollHeight <= allowedH + EPS
+    el.scrollWidth <= allowedW + eps && el.scrollHeight <= allowedH + eps
   );
 }
 

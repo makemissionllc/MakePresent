@@ -82,15 +82,23 @@ pub fn run() {
             // Diagnostic logging for startup windows:
             log_window_state(app.handle(), &state, "windows: startup");
 
-            if media::ffmpeg_available() {
-                state.logger.log(Level::Info, "media: ffmpeg available for thumbnails");
-            } else {
-                // Never silently skip thumbnails: the operator must know before
-                // importing that image/video backgrounds cannot be thumbnailed.
-                state.logger.log(
-                    Level::Error,
-                    "media: ffmpeg NOT available — media import thumbnails disabled",
-                );
+            // Offload ffmpeg probe (spawns ffmpeg -version) off the main thread so the
+            // WebView2 message pump stays responsive at startup on Windows 11.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    if media::ffmpeg_available() {
+                        handle
+                            .state::<AppState>()
+                            .logger
+                            .log(Level::Info, "media: ffmpeg available for thumbnails");
+                    } else {
+                        handle.state::<AppState>().logger.log(
+                            Level::Error,
+                            "media: ffmpeg NOT available — media import thumbnails disabled",
+                        );
+                    }
+                });
             }
 
             // Single source of truth: load the last autosaved project (with
@@ -136,35 +144,41 @@ pub fn run() {
             // autocomplete search. The ~6 MB JSON is read and parsed into a
             // HashMap-backed index in well under 500ms on any modern hardware.
             // bundle.resources maps resources/kjv.json → $RESOURCE/kjv.json.
-            let kjv_path = app
-                .path()
-                .resolve("kjv.json", tauri::path::BaseDirectory::Resource);
-            match kjv_path {
-                Ok(kjv_path) => match scripture::try_load(&kjv_path) {
-                    Ok(scripture) => {
-                        state.logger.log(
-                            Level::Info,
-                            &format!(
-                                "scripture: loaded {} books from {}",
-                                scripture.book_count(),
-                                kjv_path.display()
-                            ),
-                        );
-                        *state.scripture.write().unwrap() = Some(scripture);
+            // Offloaded to a background thread so heavy JSON parse doesn't block the
+            // main thread / WebView2 pump on Windows 11.
+            {
+                let handle = app.handle().clone();
+                let kjv_resolved = app.path().resolve("kjv.json", tauri::path::BaseDirectory::Resource);
+                std::thread::spawn(move || {
+                    let st = handle.state::<AppState>();
+                    match kjv_resolved {
+                        Ok(kjv_path) => match scripture::try_load(&kjv_path) {
+                            Ok(scripture) => {
+                                st.logger.log(
+                                    Level::Info,
+                                    &format!(
+                                        "scripture: loaded {} books from {}",
+                                        scripture.book_count(),
+                                        kjv_path.display()
+                                    ),
+                                );
+                                *st.scripture.write().unwrap() = Some(scripture);
+                            }
+                            Err(e) => {
+                                st.logger.log(
+                                    Level::Error,
+                                    &format!("scripture: {e} — search disabled"),
+                                );
+                            }
+                        },
+                        Err(e) => {
+                            st.logger.log(
+                                Level::Error,
+                                &format!("scripture: failed to resolve kjv.json resource: {e}"),
+                            );
+                        }
                     }
-                    Err(e) => {
-                        state.logger.log(
-                            Level::Error,
-                            &format!("scripture: {e} — search disabled"),
-                        );
-                    }
-                },
-                Err(e) => {
-                    state.logger.log(
-                        Level::Error,
-                        &format!("scripture: failed to resolve kjv.json resource: {e}"),
-                    );
-                }
+                });
             }
 
             let tx = project::spawn_autosave(

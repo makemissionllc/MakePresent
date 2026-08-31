@@ -817,6 +817,13 @@
     padding: 8px 14px;
     background: var(--panel);
     border-bottom: 1px solid var(--border);
+    /* Guard: don't make the whole header a drag zone — only the empty spacer is draggable
+       when frameless. This prevents Windows 11 from intercepting clicks on the buttons inside. */
+    -webkit-app-region: no-drag;
+  }
+
+  .topbar .spacer {
+    -webkit-app-region: drag;
   }
 
   .topbar h1 {
@@ -884,11 +891,26 @@
     color: #ffd9d9;
   }
 
+  /* Windows 11 DPI/snap guard: avoid hardcoded 280px sidebars which clip at 125%/150%
+     scaling and during snap. Use viewport-relative clamp + flex so the center editor always
+     has room and sidebars shrink proportionally. */
   .body {
     flex: 1;
     display: grid;
-    grid-template-columns: 280px 1fr 280px;
+    grid-template-columns: clamp(220px, 18vw, 300px) minmax(320px, 1fr) clamp(220px, 18vw, 300px);
     min-height: 0;
+  }
+
+  @media (max-width: 1180px) {
+    .body {
+      grid-template-columns: clamp(200px, 20vw, 260px) minmax(280px, 1fr) clamp(200px, 20vw, 260px);
+    }
+  }
+
+  @media (max-width: 960px) {
+    .body {
+      grid-template-columns: 220px 1fr 220px;
+    }
   }
 
   .sidebar {

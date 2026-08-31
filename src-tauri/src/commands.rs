@@ -789,8 +789,11 @@ fn changed_settings(old: &Settings, new: &Settings) -> Vec<String> {
 
 /// Write the current settings (not the project or library) to the given JSON
 /// path so they can be moved between machines.
+///
+/// Async + spawn_blocking so the write never blocks the Tauri main thread or
+/// the command worker that the WebView2 message pump depends on (Windows 11 freeze guard).
 #[tauri::command]
-pub fn export_settings(app: AppHandle, path: String) -> Result<ExportReport, String> {
+pub async fn export_settings(app: AppHandle, path: String) -> Result<ExportReport, String> {
     let state = app.state::<AppState>();
     let snapshot = SettingsSnapshot {
         app: "makepresent".to_string(),
@@ -800,7 +803,11 @@ pub fn export_settings(app: AppHandle, path: String) -> Result<ExportReport, Str
     };
     let json = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| format!("could not serialize settings: {e}"))?;
-    std::fs::write(&path, json).map_err(|e| format!("could not write settings file: {e}"))?;
+    let path_for_write = path.clone();
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(&path_for_write, json))
+        .await
+        .map_err(|e| format!("export task failed: {e}"))?
+        .map_err(|e| format!("could not write settings file: {e}"))?;
     log(&app, Level::Info, &format!("settings: exported to {path}"));
     Ok(ExportReport {
         path: path.clone(),
@@ -814,11 +821,17 @@ pub fn export_settings(app: AppHandle, path: String) -> Result<ExportReport, Str
 /// Read a previously exported settings JSON file, validate it, apply it, and
 /// report exactly what changed. Rejects mismatched versions and corrupt files
 /// with a clear error instead of failing silently.
+///
+/// Async file read via spawn_blocking keeps the main thread / WebView2 pump responsive on Windows 11.
 #[tauri::command]
-pub fn import_settings(app: AppHandle, path: String) -> Result<ImportReport, String> {
-    let state = app.state::<AppState>();
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|e| format!("could not read settings file: {e}"))?;
+pub async fn import_settings(app: AppHandle, path: String) -> Result<ImportReport, String> {
+    let raw = {
+        let p = path.clone();
+        tauri::async_runtime::spawn_blocking(move || std::fs::read_to_string(&p))
+            .await
+            .map_err(|e| format!("import task failed: {e}"))?
+            .map_err(|e| format!("could not read settings file: {e}"))?
+    };
     let file_data: SettingsSnapshot = serde_json::from_str(&raw)
         .map_err(|e| format!("not a valid MakePresent settings file: {e}"))?;
 
@@ -835,6 +848,7 @@ pub fn import_settings(app: AppHandle, path: String) -> Result<ImportReport, Str
         ));
     }
 
+    let state = app.state::<AppState>();
     let old = state.current_settings();
     let new = file_data.settings;
     let changed = changed_settings(&old, &new);
@@ -891,19 +905,26 @@ pub fn import_settings(app: AppHandle, path: String) -> Result<ImportReport, Str
 // ---------------------------------------------------------------------------
 
 /// The most recent log lines, newest first, for the Settings > Logs panel.
+/// Async offload avoids blocking the WebView2 pump when the log is large (8000 lines, rotation).
 #[tauri::command]
-pub fn get_logs(app: AppHandle, limit: Option<usize>) -> Vec<LogEntry> {
-    app.state::<AppState>().logger.recent(limit.unwrap_or(300))
+pub async fn get_logs(app: AppHandle, limit: Option<usize>) -> Vec<LogEntry> {
+    let app_clone = app.clone();
+    let lim = limit.unwrap_or(300);
+    tauri::async_runtime::spawn_blocking(move || app_clone.state::<AppState>().logger.recent(lim))
+        .await
+        .unwrap_or_default()
 }
 
 /// Copy the current log file to the chosen path so it can be shared without
-/// digging through the filesystem.
+/// digging through the filesystem. Offloaded to blocking pool to keep UI responsive.
 #[tauri::command]
-pub fn export_logs_to(app: AppHandle, path: String) -> Result<String, String> {
-    let state = app.state::<AppState>();
-    state
-        .logger
-        .export_to(std::path::Path::new(&path))
+pub async fn export_logs_to(app: AppHandle, path: String) -> Result<String, String> {
+    let dest = std::path::PathBuf::from(path.clone());
+    let app_for_log = app.clone();
+    let p = dest.clone();
+    tauri::async_runtime::spawn_blocking(move || app_for_log.state::<AppState>().logger.export_to(&p))
+        .await
+        .map_err(|e| format!("export task failed: {e}"))?
         .map_err(|e| format!("could not export log file: {e}"))?;
     log(&app, Level::Info, &format!("logs: exported to {path}"));
     Ok(path)

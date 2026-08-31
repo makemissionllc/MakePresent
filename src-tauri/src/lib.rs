@@ -45,6 +45,10 @@ fn log_window_state(app: &tauri::AppHandle, state: &AppState, prefix: &str) {
 /// Called once at exit (clean path): flush the last state and confirm the
 /// shutdown was clean, so startup knows it is NOT recovering from a crash.
 fn finalize(app: &tauri::AppHandle) {
+    // Signal the self-healing handler to stop so window destruction during
+    // shutdown does not trigger auto-recreation.
+    crate::windows::set_shutting_down();
+
     let state = app.state::<AppState>();
     let data_dir = state.app_data_dir();
     {
@@ -245,6 +249,7 @@ pub fn run() {
             commands::set_output_display,
             commands::toggle_output_fullscreen,
             commands::show_output,
+            commands::log_output_intentionally_closed,
             commands::set_stage_display,
             commands::toggle_stage,
             commands::import_media,

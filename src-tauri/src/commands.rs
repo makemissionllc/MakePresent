@@ -65,6 +65,15 @@ fn log(app: &AppHandle, level: Level, message: &str) {
     app.state::<AppState>().logger.log(level, message);
 }
 
+/// Snapshot the current state and broadcast it to every window.
+/// Used by the self-healing handler after recreating the Output window so the
+/// frontend immediately renders the live slide.
+pub fn snapshot_and_emit(app: &AppHandle) -> ClientState {
+    let snap = snapshot(app);
+    let _ = app.emit("state", &snap);
+    snap
+}
+
 /// Apply a mutation to the single source of truth, schedule an autosave,
 /// then broadcast the resulting state to every window.
 fn mutate<R>(
@@ -664,6 +673,15 @@ pub fn show_output(app: AppHandle) -> Result<ClientState, String> {
     let snap = snapshot(&app);
     let _ = app.emit("state", &snap);
     Ok(snap)
+}
+
+/// Log an intentional output window close so the self-healing handler skips
+/// auto-recreation. Called by the frontend when the user deliberately hides
+/// the output window (e.g. end of service).
+#[tauri::command]
+pub fn log_output_intentionally_closed(app: AppHandle) {
+    log(&app, Level::Info, "output: intentionally closed by user — self-healing disabled");
+    let _ = app.emit("output-intentionally-closed", ());
 }
 
 // ---------------------------------------------------------------------------

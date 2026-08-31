@@ -1,9 +1,12 @@
 use crate::state::AppState;
+use crate::logging::Level;
 use serde::Serialize;
 use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::{
     AppHandle, Manager, Monitor, PhysicalSize, Position, Size, WebviewUrl, WebviewWindow,
+    WindowEvent,
 };
 
 thread_local! {
@@ -18,6 +21,15 @@ pub fn mark_as_main_thread() {
 
 fn is_main_thread() -> bool {
     IS_MAIN_THREAD.with(|c| c.get())
+}
+
+/// Set to `true` during `finalize()` so the Output window's `Destroyed` event
+/// handler skips self-healing — the window was closed intentionally as part of
+/// a clean app exit, not a crash.
+static APP_SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+pub fn set_shutting_down() {
+    APP_SHUTTING_DOWN.store(true, Ordering::SeqCst);
 }
 
 pub const EDITOR_WINDOW: &str = "main";
@@ -195,30 +207,106 @@ pub fn ensure_output(app: &AppHandle) -> Result<WebviewWindow, String> {
     state.logger.log(crate::logging::Level::Info, "windows: creating output window");
     let app_main = app.clone();
     run_on_main(app, &state, "ensure_output", move || {
-        match WebviewWindow::builder(&app_main, OUTPUT_WINDOW, output_url())
-            .title("MakePresent - Output")
-            .decorations(false)
-            .resizable(false)
-            .fullscreen(false)
-            .visible(false)
-            .build()
-        {
-            Ok(window) => {
+        let build_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            WebviewWindow::builder(&app_main, OUTPUT_WINDOW, output_url())
+                .title("MakePresent - Output")
+                .decorations(false)
+                .resizable(false)
+                .fullscreen(false)
+                .visible(false)
+                .build()
+        }));
+
+        match build_result {
+            Err(panic) => {
+                let msg = if let Some(s) = panic.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
                 app_main.state::<AppState>().logger.log(
-                    crate::logging::Level::Info,
+                    Level::Error,
+                    &format!("windows: output window creation PANICKED: {msg}"),
+                );
+                Err(format!("output window creation panicked: {msg}"))
+            }
+            Ok(Err(e)) => {
+                app_main.state::<AppState>().logger.log(
+                    Level::Error,
+                    &format!("windows: FAILED to create output window: {e}"),
+                );
+                Err(format!("failed to create output window: {e}"))
+            }
+            Ok(Ok(window)) => {
+                let logger = &app_main.state::<AppState>().logger;
+                logger.log(
+                    Level::Info,
                     &format!(
                         "windows: output window created successfully ({})",
                         describe_window(&window)
                     ),
                 );
+
+                // Self-healing: watch for unexpected window destruction and
+                // auto-recreate so the screen never stays black after a crash.
+                let app_for_handler = app_main.clone();
+                window.on_window_event(move |event| {
+                    if !matches!(event, WindowEvent::Destroyed) {
+                        return;
+                    }
+                    if APP_SHUTTING_DOWN.load(Ordering::SeqCst) {
+                        let st = app_for_handler.state::<AppState>();
+                        st.logger.log(
+                            Level::Info,
+                            "windows: output window destroyed during app shutdown — skipping self-healing",
+                        );
+                        return;
+                    }
+                    let st = app_for_handler.state::<AppState>();
+                    let settings = st.current_settings();
+                    let monitor_index =
+                        settings.output_display_index.unwrap_or(0);
+                    let fullscreen = settings.output_fullscreen;
+                    let start = std::time::Instant::now();
+                    st.logger.log(
+                        Level::Warn,
+                        "windows: output window destroyed unexpectedly — starting self-healing",
+                    );
+
+                    let app_heal = app_for_handler.clone();
+                    std::thread::spawn(move || {
+                        match move_output_to(&app_heal, monitor_index) {
+                            Ok(window) => {
+                                if fullscreen {
+                                    let _ = window.set_fullscreen(true);
+                                }
+                                let elapsed = start.elapsed().as_millis();
+                                let st = app_heal.state::<AppState>();
+                                st.logger.log(
+                                    Level::Warn,
+                                    &format!(
+                                        "windows: self-healing complete — output window recreated on monitor #{monitor_index} in {elapsed}ms"
+                                    ),
+                                );
+                                let _ = crate::commands::snapshot_and_emit(&app_heal);
+                            }
+                            Err(e) => {
+                                let elapsed = start.elapsed().as_millis();
+                                let st = app_heal.state::<AppState>();
+                                st.logger.log(
+                                    Level::Error,
+                                    &format!(
+                                        "windows: self-healing FAILED after {elapsed}ms — could not recreate output window: {e}"
+                                    ),
+                                );
+                            }
+                        }
+                    });
+                });
+
                 Ok(window)
-            }
-            Err(e) => {
-                app_main.state::<AppState>().logger.log(
-                    crate::logging::Level::Error,
-                    &format!("windows: FAILED to create output window: {e}"),
-                );
-                Err(format!("failed to create output window: {e}"))
             }
         }
     })

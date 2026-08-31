@@ -11,10 +11,12 @@
   let shown = $state<Slide | null>(null);
   // A copy of the outgoing slide that fades away to reveal the incoming one.
   let leaving = $state<Slide | null>(null);
-  // "in" hides the incoming slide (opacity 0) until the crossfade ends.
-  let dim = $state(false);
-  // "out" fades the outgoing slide from opaque to transparent.
-  let out = $state(false);
+  // Opacity of the incoming (shown) slide during crossfade.
+  let inOpacity = $state(1);
+  // Opacity of the outgoing (leaving) slide during crossfade.
+  let outOpacity = $state(1);
+  // True while a crossfade is active — drives GPU layer hints.
+  let crossfading = $state(false);
   let appState = $state<ClientState | null>(null);
   let timer: number | undefined;
 
@@ -46,6 +48,13 @@
   // The Output is a dumb renderer: it only choreographs the fade. The backend
   // decides which slide is live; here we layer the old slide on top of the new
   // one and crossfade between them when the project's transition is "fade".
+  //
+  // GPU compositing: during the crossfade both .frame elements are promoted to
+  // their own GPU layers via `will-change: transform, opacity` and a
+  // `translate3d(0,0,0)` transform. This avoids full-window repaints on every
+  // frame and keeps the crossfade buttery-smooth even with video backgrounds.
+  // The hints are added at the start of the transition and removed on cleanup
+  // so idle frames never waste GPU memory.
   $effect(() => {
     const next = live;
     const prev = shown;
@@ -53,26 +62,29 @@
 
     if (transition === "fade") {
       leaving = prev;
-      out = false;
+      outOpacity = 1;
       shown = next;
-      dim = true;
+      inOpacity = 0;
+      crossfading = true;
       // Force style recompute so both transitions start from a clean state.
       void document.body.offsetWidth;
       requestAnimationFrame(() => {
-        out = true;
-        dim = false;
+        outOpacity = 0;
+        inOpacity = 1;
       });
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         leaving = null;
-        out = false;
-        dim = false;
+        outOpacity = 1;
+        inOpacity = 1;
+        crossfading = false;
       }, FADE_MS + 40);
     } else {
       leaving = null;
-      out = false;
+      outOpacity = 1;
       shown = next;
-      dim = false;
+      inOpacity = 1;
+      crossfading = false;
       window.clearTimeout(timer);
     }
   });
@@ -92,6 +104,10 @@
     return () => {
       un();
       window.clearTimeout(timer);
+      leaving = null;
+      inOpacity = 1;
+      outOpacity = 1;
+      crossfading = false;
     };
   });
 </script>
@@ -99,7 +115,11 @@
 <main class="stage">
   {#if shown}
     {#if look}
-      <div class="frame" class:in={dim}>
+      <div
+        class="frame"
+        class:gpu={crossfading}
+        style:opacity={inOpacity}
+      >
         <SlideRender slide={shown} {look} />
       </div>
     {/if}
@@ -109,7 +129,11 @@
 
   {#if leaving}
     {#if look}
-      <div class="frame" class:out={out}>
+      <div
+        class="frame"
+        class:gpu={crossfading}
+        style:opacity={outOpacity}
+      >
         <SlideRender slide={leaving} {look} />
       </div>
     {/if}
@@ -162,6 +186,17 @@
   .frame {
     opacity: 1;
     transition: opacity 400ms ease;
+    contain: size layout style paint;
+  }
+
+  /* GPU compositing hints: applied only during a crossfade so idle frames
+     never waste GPU memory. translate3d forces the browser to promote the
+     element to its own composited layer; will-change tells the compositor
+     to expect transform+opacity changes so it can prepare the layer up
+     front instead of discovering the animation on the first frame. */
+  .frame.gpu {
+    will-change: transform, opacity;
+    transform: translate3d(0, 0, 0);
   }
 
   .preloader {
@@ -173,13 +208,5 @@
     opacity: 0.01;
     pointer-events: none;
     /* keep it reachable by the layout engine so WebKit actually fetches it */
-  }
-
-  .frame.in {
-    opacity: 0;
-  }
-
-  .frame.out {
-    opacity: 0;
   }
 </style>

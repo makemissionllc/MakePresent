@@ -155,17 +155,52 @@ Phase 5 — NDI broadcast output (sending side)
   mirrored from Output) is a runtime concern that this phase does **not**
   wire. `BroadcastCore::send_frame` is the clean seam a later capture step
   feeds. So NDI *streaming* requires: install the NDI SDK, then hook the
-  render capture into `send_frame` and drive it in a live app — neither of
-  which can be exercised headless/CI.
+   render capture into `send_frame` and drive it in a live app — neither of
+   which can be exercised headless/CI.
 
-### Date
+Phase 6 — Native MIDI + OSC slide triggering
+- **Hardware cueing** so an operator can drive the service from a dedicated
+  controller (foot pedal, launchpad, touch OSC tablet, etc.) without touching
+  the app. Two listeners, both owned by `AppState` and restored/stopped with
+  the app life-cycle:
+  - `midi.rs` — midir `MidiInputConnection<AppHandle>` (ALSA/WinMM per OS),
+    live `ports()` enumeration for a configurable input device, and a
+    per-message callback that emits a `midi-message` event (for the settings
+    live monitor) **and** routes the parsed message into the trigger system.
+    Parsing handles running-status, ignores active-sense, and is length-guarded
+    (no panics on malformed bytes).
+  - `osc.rs` — a dedicated thread with a UDP socket (default port **9000**) and
+    a 1 s read timeout so the loop can shut down cleanly. Decodes OSC via `rosc`,
+    flattens bundles, and routes single-float/int messages. A bare
+    `/makepresent/goto` address also matches `/makepresent/goto/N` (jump to
+    slide N, 1-based) via `triggers::osc_goto_match`.
+- **Trigger model** (`triggers.rs`): a `Trigger` (MIDI Note / CC / Program
+  Change, or OSC address) maps to a `TriggerAction` (next slide, previous
+  slide, jump to index, clear output). Mappings are persisted in `settings.json`
+  as `triggers`, each with an `enabled` flag and a human label.
+- **Shared command path**: `triggers::run_action` resolves an action to the
+  same helpers the UI uses (`commands::make_live`, `commands::do_clear_output`),
+  so a foot-pedal "next" is identical to clicking Next — no duplicated advance
+  logic.
+- **Settings UI**: a new "Triggers" tab in Settings → device dropdown
+  (enumerated live), MIDI enable toggle + live message monitor with
+  "Use as trigger" capture, OSC enable toggle + port + address capture, an
+  action picker (next / previous / jump / clear), and a list of saved mappings
+  with enable/delete. `MidiMessageView` carries structured note/CC/program
+  numbers so the UI can rebuild a trigger from a captured message; it emits to
+  the app's normal `settings` event so all other windows stay in sync.
+- **Scope note**: MIDI/OSC triggering drives *slide action* (next/prev/jump/
+  clear). It does **not** drive all UI state (e.g. no playlist navigation via
+  hardware this phase).
+
+
+- 2026-08-31 — Phase 6 (native MIDI + OSC slide triggering) shipped; NDI
 - 2026-08-31 — Phase 5 (NDI sending side) shipped; NDI capture + live
   streaming remains a documented runtime follow-up.
 
 ### Explicitly Deferred
 
 - Remote control (web/phone)
-- MIDI / OSC
 - Audio playback (video backgrounds are muted this phase)
 - Custom GPU playback pipeline (native `<video>`/`<img>` in the webview for now)
 - GStreamer (ffmpeg/ffprobe CLI for thumbnails and probing instead)
@@ -211,14 +246,17 @@ src-tauri/src/
   windows.rs    Window lifecycle: Output + Stage, display picking
   media.rs      Media import/cache: copy+hash, ffmpeg thumbnails, startup verification
   broadcast.rs  NDI sender: runtime-loaded SDK (libloading), dedicated send thread
-  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import, NDI
+  midi.rs       MIDI input: midir listener, device enumeration, message parsing
+  osc.rs        OSC listener: dedicated UDP thread, rosc decode, bundle flattening
+  triggers.rs   Trigger/action model, routing, action→command dispatch
+  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import, NDI, MIDI/OSC/triggers
   logging.rs    Rolling, immediately-flushed event log (logs/app.log)
 src/
   editor.ts / Editor.svelte     Operator's window (playlist, edit, output/stage controls, settings)
   output.ts / Output.svelte     Dumb projection renderer (cut/fade crossfade)
   stage.ts / Stage.svelte       Dumb performer-facing renderer (current + next)
-  lib/types.ts                  Shared client contract
-  lib/sync.ts                   Tauri invoke + event subscriptions
+  lib/types.ts                  Shared client contract (incl. Trigger/TriggerAction/MidiDeviceInfo)
+  lib/sync.ts                   Tauri invoke + event subscriptions (incl. midi-message)
 ```
 
 ## NDI licensing & installation

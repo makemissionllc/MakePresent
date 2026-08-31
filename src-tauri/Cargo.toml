@@ -28,3 +28,5 @@ sha2 = "0.10"
 # (Vizrt/NewTek) is royalty-free but must be downloaded separately; it is loaded
 # dynamically at runtime, never linked. See broadcast.rs and README.
 libloading = "0.8"
+midir = "0.11"
+rosc = "0.11"

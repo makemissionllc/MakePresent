@@ -24,7 +24,7 @@ fees, no vendor-controlled roadmaps, and no service data leaving the building.
 - [Per-Output "Looks"](#per-output-looks)
 - [Technology Stack](#technology-stack)
 - [Project Structure](#project-structure)
-- [IPC Commands](#ipc-commands-30)
+- [IPC Commands](#ipc-commands-38)
 - [Getting Started (Development)](#getting-started-development)
 - [Testing & Verification](#testing--verification)
 - [CI / CD](#ci--cd)
@@ -220,6 +220,21 @@ and shows a recovery notice when the prior exit was unclean.
 - *Scope note:* the sender side is implemented; the webview→pixel **capture**
   that feeds it is a runtime follow-up (not exercisable headless/CI).
 
+### MIDI & OSC slide triggering
+- Drive the service from hardware: map a MIDI **Note / CC / Program Change**
+  (or an **OSC address**) to **next / previous / jump / clear output**.
+- Two always-ready listeners owned by the backend: a **midir** MIDI input
+  (configurable device) and a **UDP OSC** socket (default port **9000**), both
+  restored on launch and shut down cleanly on exit.
+- A trigger maps to the **same slide-advance path the UI uses**, so a foot
+  pedal "next" is identical to clicking Next.
+- Configure it all in **Settings → Triggers**: pick the MIDI device, watch a
+  live message monitor and capture a note as a trigger, or type an OSC address
+  (bare `/makepresent/goto` also matches `/makepresent/goto/N` for jumps),
+  choose the action, and enable/delete saved mappings.
+- *Scope note:* triggers drive slide *actions*; they don't navigate the whole
+  UI (e.g. no playlist navigation via hardware yet).
+
 ---
 
 ## Per-Output "Looks"
@@ -290,7 +305,7 @@ MakePresent/
    ├─ stage.ts / Stage.svelte              Dumb performer renderer (current + next)
    ├─ components/
    │  ├─ SlideRender.svelte                Shared slide+Look renderer
-   │  └─ SettingsPanel.svelte              Settings modal (General / Looks / Logs)
+   │  └─ SettingsPanel.svelte              Settings modal (General / Looks / Triggers / Logs)
    ├─ lib/
    │  ├─ types.ts                          Shared client contract
    │  ├─ sync.ts                           Tauri invoke + event subscriptions
@@ -305,17 +320,20 @@ src-tauri/                                 Rust backend
    ├─ lib.rs                               Lifecycle: setup, finalize, command registration
    ├─ state.rs                             AppState — the single source of truth
    ├─ project.rs                           Domain model, persistence, autosave worker
-   ├─ commands.rs                          30 Tauri IPC command handlers
+   ├─ commands.rs                          38 Tauri IPC command handlers
    ├─ windows.rs                           Output/Stage lifecycle + display picking
    ├─ media.rs                             Media import/cache + ffmpeg thumbnails
    ├─ broadcast.rs                         NDI sender (runtime-loaded SDK, own thread)
+   ├─ midi.rs                              MIDI input (midir) + device enumeration + parsing
+   ├─ osc.rs                               OSC listener (rosc, dedicated UDP thread)
+   ├─ triggers.rs                          Trigger/action model + routing + dispatch
    ├─ logging.rs                           Rolling, immediately-flushed event log
    └─ scripture.rs                         KJV scripture search index
 ```
 
 ---
 
-## IPC Commands (30)
+## IPC Commands (38)
 
 **State & project**
 | Command | Purpose |
@@ -349,6 +367,18 @@ src-tauri/                                 Rust backend
 | `set_ndi_enabled` | Start/stop the runtime-loaded NDI sender |
 | `set_ndi_look` | Assign the Look for the NDI feed |
 
+**MIDI / OSC triggers**
+| Command | Purpose |
+|---|---|
+| `list_midi_devices` | Enumerate available MIDI input devices |
+| `set_midi_enabled` | Toggle the MIDI input listener |
+| `set_midi_device` | Choose the MIDI input device |
+| `set_osc_enabled` | Toggle the OSC listener |
+| `set_osc_port` | Set the OSC UDP listen port |
+| `add_trigger` | Add a trigger→action mapping |
+| `delete_trigger` | Remove a mapping |
+| `set_trigger_enabled` | Enable/disable a mapping |
+
 **Library & media**
 | Command | Purpose |
 |---|---|
@@ -370,7 +400,10 @@ src-tauri/                                 Rust backend
 **Prerequisites:** Node.js 22+, Rust (stable), and the Tauri system
 dependencies for your platform. For Linux: `libwebkit2gtk-4.1-dev`,
 `build-essential`, `libssl-dev`, `libxdo-dev`, `libayatana-appindicator3-dev`,
-`librsvg2-dev`, etc. `ffmpeg`/`ffprobe` on `PATH` for media thumbnails.
+`librsvg2-dev`, etc. MIDI input also requires the **ALSA development**
+headers on Linux (`libasound2-dev`; Windows/macOS use their built-in MIDI
+APIs and need no extra steps). `ffmpeg`/`ffprobe` on `PATH` for media
+thumbnails.
 
 **NDI (optional):** broadcasting NDI does **not** affect building or testing —
 the NDI SDK is loaded at runtime, only when the feed is enabled. To actually
@@ -403,7 +436,7 @@ npm run check
 # Rust compile check
 cd src-tauri && cargo check
 
-# Rust unit / integration tests (23 tests: logging, media, scripture, settings, broadcast)
+# Rust unit / integration tests (37 tests: logging, media, scripture, settings, broadcast, midi, osc, triggers)
 cd src-tauri && cargo test
 
 # Production frontend bundle
@@ -435,7 +468,6 @@ decisions):
 - NDI *framepull capture* from an offscreen render target (the sending side is
   implemented; capture is a runtime follow-up, not CI-testable)
 - Remote control (web / phone)
-- MIDI / OSC
 - Audio playback (video backgrounds are muted this phase)
 - Custom GPU playback pipeline (native `<video>` / `<img>` in the webview for now)
 - GStreamer (using `ffmpeg`/`ffprobe` CLI for thumbnails and probing instead)

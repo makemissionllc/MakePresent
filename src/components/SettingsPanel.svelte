@@ -1,7 +1,17 @@
 <script lang="ts">
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-  import { api } from "../lib/sync";
-  import type { ClientState, LogEntry, Look, LookPatch, TextPosition } from "../lib/types";
+  import { api, subscribeMidiMessage } from "../lib/sync";
+  import type {
+    ClientState,
+    LogEntry,
+    Look,
+    LookPatch,
+    MidiDeviceInfo,
+    MidiMessageView,
+    TextPosition,
+    Trigger,
+    TriggerAction,
+  } from "../lib/types";
 
   interface Props {
     app: ClientState | null;
@@ -10,11 +20,25 @@
 
   let { app: appState, onclose }: Props = $props();
 
-  let tab = $state<"general" | "looks" | "logs">("general");
+  let tab = $state<"general" | "looks" | "triggers" | "logs">("general");
   let status = $state<{ kind: "ok" | "err"; text: string } | null>(null);
   let logs = $state<LogEntry[]>([]);
   let logsMsg = $state<string | null>(null);
   let lookErr = $state<string | null>(null);
+
+  // Trigger (MIDI/OSC) panel state.
+  let midiDevices = $state<MidiDeviceInfo[]>([]);
+  let midiDevicesMsg = $state<string | null>(null);
+  let midiMsgs = $state<MidiMessageView[]>([]);
+  let midiMsgsMsg = $state<string | null>(null);
+  let oscPortDraft = $state<number>(9000);
+  let oscAddressDraft = $state<string>("/makepresent/goto");
+  let draftTrigger: Trigger | null = $state(null);
+  let draftActionKind = $state<"next_slide" | "prev_slide" | "jump_to" | "clear_output">(
+    "next_slide",
+  );
+  let draftJumpIndex = $state(2);
+  let draftErr = $state<string | null>(null);
 
   const looks = $derived(appState?.looks ?? []);
   let activeLookId = $state<string | null>(null);
@@ -240,6 +264,162 @@
   $effect(() => {
     if (tab === "logs") void loadLogs();
   });
+
+  // --- Triggers (MIDI + OSC) panel logic ---
+
+  let unSubscribeMidi: (() => void) | null = null;
+
+  $effect(() => {
+    if (tab !== "triggers") return;
+    void refreshMidiDevices();
+    oscPortDraft = appState?.oscPort ?? 9000;
+  });
+
+  $effect(() => {
+    void subscribeMidiMessage((msg) => {
+      midiMsgs = [...midiMsgs.slice(-19), msg];
+    }).then((un) => {
+      unSubscribeMidi = un;
+    });
+    return () => {
+      unSubscribeMidi?.();
+      unSubscribeMidi = null;
+    };
+  });
+
+  async function refreshMidiDevices(): Promise<void> {
+    midiDevicesMsg = null;
+    try {
+      midiDevices = await api.listMidiDevices();
+    } catch (e) {
+      midiDevicesMsg = String(e);
+    }
+  }
+
+  function setMidiEnabled(enabled: boolean): void {
+    void api
+      .setMidiEnabled(enabled)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (draftErr = String(e)));
+  }
+
+  function setMidiDevice(e: Event): void {
+    const id = (e.target as HTMLSelectElement).value;
+    if (!id) return;
+    void api
+      .setMidiDevice(id)
+      .then((s) => (appState = s))
+      .catch((err: unknown) => (draftErr = String(err)));
+  }
+
+  function setOscEnabled(enabled: boolean): void {
+    void api
+      .setOscEnabled(enabled)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (draftErr = String(e)));
+  }
+
+  function setOscPortValue(): void {
+    const port = Math.round(oscPortDraft) || 0;
+    if (port <= 0 || port > 65535) {
+      draftErr = "OSC port must be between 1 and 65535.";
+      return;
+    }
+    void api
+      .setOscPort(port)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (draftErr = String(e)));
+  }
+
+  function triggerFromMessage(msg: MidiMessageView): Trigger | null {
+    if (msg.data1 == null) return null;
+    if (msg.kind === "note_on" || msg.kind === "note_off") {
+      return { kind: "midi_note", channel: msg.channel, note: msg.data1 };
+    }
+    if (msg.kind === "cc") {
+      return {
+        kind: "midi_control",
+        channel: msg.channel,
+        controller: msg.data1,
+        value: msg.data2 ?? null,
+      };
+    }
+    if (msg.kind === "program") {
+      return { kind: "midi_program", channel: msg.channel, program: msg.data1 };
+    }
+    return null;
+  }
+
+  function captureMessageDraft(msg: MidiMessageView): void {
+    const trigger = triggerFromMessage(msg);
+    if (!trigger) {
+      draftErr = "This message can't be used as a trigger.";
+      return;
+    }
+    draftErr = null;
+    draftTrigger = trigger;
+  }
+
+  function captureOscDraft(address: string): void {
+    const trimmed = address.trim();
+    if (!trimmed.startsWith("/") || trimmed.length < 2) {
+      draftErr = "Enter an OSC address that starts with '/'.";
+      return;
+    }
+    draftErr = null;
+    draftTrigger = { kind: "osc_address", address: trimmed };
+  }
+
+  function buildAction(): TriggerAction {
+    if (draftActionKind === "jump_to") {
+      const index = Math.max(1, Math.round(draftJumpIndex) || 1);
+      return { kind: "jump_to", index };
+    }
+    return { kind: draftActionKind };
+  }
+
+  function addDraftMapping(): void {
+    if (!draftTrigger) {
+      draftErr = "Capture a MIDI message or enter an OSC address first.";
+      return;
+    }
+    const action = buildAction();
+    const label = describeTrigger(draftTrigger);
+    void api
+      .addTrigger(draftTrigger, action, label)
+      .then((s) => {
+        appState = s;
+        draftTrigger = null;
+        draftErr = null;
+      })
+      .catch((e: unknown) => (draftErr = String(e)));
+  }
+
+  function describeTrigger(t: Trigger): string {
+    if (t.kind === "midi_note") return `Note ${t.note} (ch ${t.channel})`;
+    if (t.kind === "midi_control")
+      return `CC ${t.controller}${t.value != null ? ` = ${t.value}` : ""} (ch ${t.channel})`;
+    if (t.kind === "midi_program") return `Program ${t.program} (ch ${t.channel})`;
+    return t.address;
+  }
+
+  function describeDraft(): string {
+    return draftTrigger ? describeTrigger(draftTrigger) : "no trigger selected";
+  }
+
+  function deleteMapping(id: string): void {
+    void api
+      .deleteTrigger(id)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (draftErr = String(e)));
+  }
+
+  function toggleMapping(id: string, enabled: boolean): void {
+    void api
+      .setTriggerEnabled(id, enabled)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (draftErr = String(e)));
+  }
 </script>
 
 <div class="overlay">
@@ -256,6 +436,9 @@
       </button>
       <button class="tab" class:active={tab === "looks"} onclick={() => (tab = "looks")}>
         Looks
+      </button>
+      <button class="tab" class:active={tab === "triggers"} onclick={() => (tab = "triggers")}>
+        Triggers
       </button>
       <button class="tab" class:active={tab === "logs"} onclick={() => (tab = "logs")}>
         Logs
@@ -477,7 +660,7 @@
             <p class="status err">{lookErr}</p>
           {/if}
         </div>
-      {:else}
+      {:else if tab === "logs"}
         <div class="panel-logs">
           <div class="log-actions">
             <button onclick={() => loadLogs()}>Refresh</button>
@@ -492,6 +675,195 @@
   <span>{entry.at} {entry.level} {entry.message}</span>
 {/each}
           </pre>
+        </div>
+      {:else if tab === "triggers"}
+        <div class="panel-triggers">
+          {#if draftErr}
+            <p class="status err">{draftErr}</p>
+          {/if}
+
+          <section class="trigger-section">
+            <div class="section-head">
+              <h3>MIDI input</h3>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  checked={appState?.midiEnabled ?? false}
+                  onchange={(e) => setMidiEnabled(e.currentTarget.checked)}
+                />
+                <span>{appState?.midiEnabled ? "On" : "Off"}</span>
+              </label>
+            </div>
+            {#if appState?.midiEnabled}
+              <div class="row">
+                <select
+                  class="device-select"
+                  value={appState?.midiDeviceId ?? ""}
+                  onchange={setMidiDevice}
+                >
+                  <option value="" disabled>— choose a device —</option>
+                  {#each midiDevices as dev (dev.id)}
+                    <option value={dev.id}>{dev.name}</option>
+                  {/each}
+                </select>
+                <button onclick={() => void refreshMidiDevices()}>Refresh</button>
+              </div>
+              {#if midiDevicesMsg}
+                <p class="status err">{midiDevicesMsg}</p>
+              {/if}
+              {#if !midiDevices.length}
+                <p class="hint">No MIDI input devices detected.</p>
+              {/if}
+
+              <div class="monitor">
+                <h4>Live monitor</h4>
+                <p class="hint">
+                  Press a button / key on your controller to see its message, then
+                  “Use as trigger”.
+                </p>
+                <ul class="midi-list">
+                  {#each midiMsgs as msg (msg.data + msg.channel)}
+                    <li>
+                      <span class="midi-desc">{msg.describe}</span>
+                      <button onclick={() => captureMessageDraft(msg)}>Use as trigger</button>
+                    </li>
+                  {/each}
+                  {#if !midiMsgs.length}
+                    <li class="empty">No messages yet…</li>
+                  {/if}
+                </ul>
+              </div>
+            {/if}
+          </section>
+
+          <section class="trigger-section">
+            <div class="section-head">
+              <h3>OSC</h3>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  checked={appState?.oscEnabled ?? false}
+                  onchange={(e) => setOscEnabled(e.currentTarget.checked)}
+                />
+                <span>{appState?.oscEnabled ? "On" : "Off"}</span>
+              </label>
+            </div>
+            {#if appState?.oscEnabled}
+              <div class="row">
+                <label>
+                  Port
+                  <input
+                    type="number"
+                    min="1"
+                    max="65535"
+                    bind:value={oscPortDraft}
+                    onchange={setOscPortValue}
+                  />
+                </label>
+                <button onclick={setOscPortValue}>Apply port</button>
+              </div>
+              <div class="row">
+                <input
+                  type="text"
+                  bind:value={oscAddressDraft}
+                  placeholder="/makepresent/next"
+                  class="osc-address"
+                />
+                <button onclick={() => captureOscDraft(oscAddressDraft)}>
+                  Use as trigger
+                </button>
+              </div>
+              <p class="hint">
+                Bare address maps to next; append a number for jump, e.g.
+                “/makepresent/goto/5”.
+              </p>
+            {/if}
+          </section>
+
+          <section class="trigger-section">
+            <h3>New mapping</h3>
+            <p class="hint">Now choose what this trigger should do.</p>
+            <div class="action-picker">
+              <label>
+                <input
+                  type="radio"
+                  name="draftAction"
+                  value="next_slide"
+                  checked={draftActionKind === "next_slide"}
+                  onchange={() => (draftActionKind = "next_slide")}
+                />
+                Next slide
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="draftAction"
+                  value="prev_slide"
+                  checked={draftActionKind === "prev_slide"}
+                  onchange={() => (draftActionKind = "prev_slide")}
+                />
+                Previous slide
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="draftAction"
+                  value="jump_to"
+                  checked={draftActionKind === "jump_to"}
+                  onchange={() => (draftActionKind = "jump_to")}
+                />
+                Jump to
+                {#if draftActionKind === "jump_to"}
+                  <input
+                    type="number"
+                    min="1"
+                    bind:value={draftJumpIndex}
+                    class="jump"
+                  />
+                {/if}
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="draftAction"
+                  value="clear_output"
+                  checked={draftActionKind === "clear_output"}
+                  onchange={() => (draftActionKind = "clear_output")}
+                />
+                Clear output
+              </label>
+            </div>
+            <div class="row draft-row">
+              <span>Trigger: <strong>{describeDraft()}</strong></span>
+              <button onclick={addDraftMapping} disabled={!draftTrigger}>
+                Add mapping
+              </button>
+            </div>
+          </section>
+
+          <section class="trigger-section">
+            <h3>Mappings</h3>
+            {#if !(appState?.triggers.length ?? 0)}
+              <p class="empty">No mappings yet.</p>
+            {/if}
+            <ul class="mapping-list">
+              {#each appState?.triggers ?? [] as map (map.id)}
+                <li>
+                  <label class="switch">
+                    <input
+                      type="checkbox"
+                      checked={map.enabled}
+                      onchange={(e) => toggleMapping(map.id, e.currentTarget.checked)}
+                    />
+                    <span>{map.label ?? "mapping"}</span>
+                  </label>
+                  <button class="danger" onclick={() => deleteMapping(map.id)}>
+                    Delete
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </section>
         </div>
       {/if}
     </div>
@@ -873,5 +1245,184 @@
     background: var(--panel);
     color: var(--text);
     padding: 6px 12px;
+  }
+
+  .panel-triggers {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding: 4px;
+    overflow-y: auto;
+  }
+
+  .trigger-section {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .section-head h3 {
+    margin: 0;
+    font-size: 14px;
+  }
+
+  .trigger-section h4 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .hint {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin: 0;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .device-select {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    color: var(--text);
+    min-width: 220px;
+    flex: 1;
+  }
+
+  .osc-address {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    color: var(--text);
+    flex: 1;
+    min-width: 200px;
+    font-family: monospace;
+  }
+
+  .row input[type="number"] {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    color: var(--text);
+    width: 90px;
+  }
+
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .monitor {
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+
+  .midi-list,
+  .mapping-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .midi-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+  }
+
+  .midi-desc {
+    font-family: monospace;
+    color: var(--text);
+  }
+
+  .midi-list li.empty,
+  .empty {
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .action-picker {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .action-picker label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .action-picker input.jump {
+    width: 70px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 6px;
+    color: var(--text);
+  }
+
+  .draft-row {
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  .mapping-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .panel-triggers button {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+
+  .panel-triggers button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .panel-triggers button.danger {
+    border-color: rgba(200, 60, 60, 0.5);
+    color: #e07a7a;
   }
 </style>

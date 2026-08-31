@@ -284,6 +284,16 @@ pub struct ClientState {
     pub stage_look_id: Option<String>,
     /// Look id assigned to the NDI feed (None -> first look).
     pub ndi_look_id: Option<String>,
+    /// Whether the native MIDI input listener is enabled.
+    pub midi_enabled: bool,
+    /// Stable id of the selected MIDI input device (None when unset).
+    pub midi_device_id: Option<String>,
+    /// Whether the OSC UDP listener is enabled.
+    pub osc_enabled: bool,
+    /// UDP port the OSC listener binds to.
+    pub osc_port: u16,
+    /// Trigger-to-action mappings (MIDI + OSC), persisted in settings.
+    pub triggers: Vec<crate::triggers::TriggerMapping>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -354,6 +364,25 @@ pub struct Settings {
     /// Look id assigned to the NDI feed (None -> first look).
     #[serde(default)]
     pub ndi_look_id: Option<String>,
+    /// Whether the MIDI input listener is enabled.
+    #[serde(default)]
+    pub midi_enabled: bool,
+    /// Stable port id of the selected MIDI input device (midir `MidiInputPort::id()`).
+    #[serde(default)]
+    pub midi_device_id: Option<String>,
+    /// Whether the OSC listener is enabled.
+    #[serde(default)]
+    pub osc_enabled: bool,
+    /// UDP port the OSC listener binds to.
+    #[serde(default = "default_osc_port")]
+    pub osc_port: u16,
+    /// Persisted trigger-to-action mappings (MIDI + OSC).
+    #[serde(default)]
+    pub triggers: Vec<crate::triggers::TriggerMapping>,
+}
+
+fn default_osc_port() -> u16 {
+    crate::osc::DEFAULT_OSC_PORT
 }
 
 impl Default for Settings {
@@ -370,6 +399,11 @@ impl Default for Settings {
             stage_look_id: None,
             ndi_enabled: false,
             ndi_look_id: None,
+            midi_enabled: false,
+            midi_device_id: None,
+            osc_enabled: false,
+            osc_port: 9000,
+            triggers: Vec::new(),
         }
     }
 }

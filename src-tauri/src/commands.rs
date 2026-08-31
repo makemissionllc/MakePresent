@@ -6,6 +6,7 @@ use crate::project::{
 };
 use crate::scripture::ScriptureMatch;
 use crate::state::AppState;
+use crate::triggers::TriggerAction;
 use crate::windows::{self, DisplayInfo};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -63,6 +64,11 @@ fn snapshot(app: &AppHandle) -> ClientState {
         output_look_id: settings.output_look_id,
         stage_look_id: settings.stage_look_id,
         ndi_look_id: settings.ndi_look_id,
+        midi_enabled: settings.midi_enabled,
+        midi_device_id: settings.midi_device_id,
+        osc_enabled: settings.osc_enabled,
+        osc_port: settings.osc_port,
+        triggers: settings.triggers,
     };
     snap
 }
@@ -194,35 +200,48 @@ pub fn add_song_to_playlist(app: AppHandle, song_id: String) -> Result<ClientSta
 
 #[tauri::command]
 pub fn set_live_slide(app: AppHandle, slide_id: String) -> Result<ClientState, String> {
+    make_live(&app, &slide_id)
+}
+
+/// Shared "put slide N live" path. This is *the* single slide-advance routine:
+/// the UI commands (`set_live_slide`) and the external trigger system
+/// (`execute_action`) both funnel through it so one piece of logic owns
+/// mutation + window reveal + state broadcast.
+fn make_live(app: &AppHandle, slide_id: &str) -> Result<ClientState, String> {
     let state = app.state::<AppState>();
     let live_title = {
         let mut project = state.project.write().unwrap();
         let slide = project
-            .find(&slide_id)
+            .find(slide_id)
             .cloned()
             .ok_or_else(|| format!("slide {slide_id} not found"))?;
-        project.live = Some(slide_id.clone());
-        project.selected = Some(slide_id);
+        project.live = Some(slide_id.to_string());
+        project.selected = Some(slide_id.to_string());
         project.modified_at = now_iso();
         slide.title
     };
     state.request_save();
 
-    log(&app, Level::Info, &format!("output: live slide \"{live_title}\""));
+    log(app, Level::Info, &format!("output: live slide \"{live_title}\""));
 
     // The output window appears on demand: the first slide going live is
     // what creates and shows it (never at startup).
-    if let Err(e) = windows::show_output(&app, &state) {
-        log(&app, Level::Error, &format!("output: could not show window: {e}"));
+    if let Err(e) = windows::show_output(app, &state) {
+        log(app, Level::Error, &format!("output: could not show window: {e}"));
     }
 
-    let snap = snapshot(&app);
+    let snap = snapshot(app);
     let _ = app.emit("state", &snap);
     Ok(snap)
 }
 
 #[tauri::command]
 pub fn clear_output(app: AppHandle) -> Result<ClientState, String> {
+    do_clear_output(&app)
+}
+
+/// Shared "blank the output" path used by the UI and by trigger actions.
+fn do_clear_output(app: &AppHandle) -> Result<ClientState, String> {
     let state = app.state::<AppState>();
     {
         let mut project = state.project.write().unwrap();
@@ -230,10 +249,91 @@ pub fn clear_output(app: AppHandle) -> Result<ClientState, String> {
         project.modified_at = now_iso();
     }
     state.request_save();
-    log(&app, Level::Info, "output: cleared (black)");
-    let snap = snapshot(&app);
+    log(app, Level::Info, "output: cleared (black)");
+    let snap = snapshot(app);
     let _ = app.emit("state", &snap);
     Ok(snap)
+}
+
+/// Resolve and run a trigger action through the shared command path.
+/// This is what the MIDI and OSC listeners call so that hardware triggers
+/// advance/clear slides identically to a manual click.
+pub fn execute_action(app: &AppHandle, action: &TriggerAction) -> Result<ClientState, String> {
+    match action {
+        TriggerAction::NextSlide => advance(app, 1),
+        TriggerAction::PrevSlide => advance(app, -1),
+        TriggerAction::JumpTo { index } => {
+            let state = app.state::<AppState>();
+            let project = state.project.read().unwrap();
+            let id = project
+                .slides
+                .get(*index as usize)
+                .map(|s| s.id.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "trigger: jump to slide {} — only {} slides in the playlist",
+                        index + 1,
+                        project.slides.len()
+                    )
+                })?;
+            drop(project);
+            make_live(app, &id)
+        }
+        TriggerAction::ClearOutput => do_clear_output(app),
+    }
+}
+
+/// Move the live slide forward (`+1`) or backward (`-1`) within the playlist,
+/// reusing the exact same `make_live` path as clicking a slide. At the start
+/// (nothing live) it cues the first slide in the requested direction. Stays
+/// clamped at the ends and logs rather than erroring on a boundary.
+fn advance(app: &AppHandle, delta: isize) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    let live_slide_id = state.project.read().unwrap().live.clone();
+    let slides = state.project.read().unwrap().slides.clone();
+    if slides.is_empty() {
+        log(
+            app,
+            Level::Warn,
+            "trigger: no slides in the playlist — nothing to advance to",
+        );
+        return Ok(snapshot(app));
+    }
+
+    let target_id = match live_slide_id.as_deref() {
+        None => {
+            // Nothing live yet: go to the first (delta >= 0) or last (delta < 0).
+            if delta >= 0 {
+                slides.first().map(|s| s.id.clone())
+            } else {
+                slides.last().map(|s| s.id.clone())
+            }
+        }
+        Some(live_id) => {
+            let idx = slides.iter().position(|s| s.id == live_id).unwrap_or(0);
+            let next = idx as isize + delta;
+            if next < 0 || next >= slides.len() as isize {
+                log(
+                    app,
+                    Level::Info,
+                    &format!(
+                        "trigger: already at the {} edge of the playlist — staying put",
+                        if delta > 0 { "end" } else { "start" }
+                    ),
+                );
+                return Ok(snapshot(app));
+            }
+            slides.get(next as usize).map(|s| s.id.clone())
+        }
+    };
+
+    match target_id {
+        Some(id) => make_live(app, &id),
+        None => {
+            log(app, Level::Warn, "trigger: could not resolve a slide to advance to");
+            Ok(snapshot(app))
+        }
+    }
 }
 
 /// Per-project Output transition: "cut" (default) or "fade".
@@ -806,6 +906,11 @@ enum SettingsField {
     StageLook,
     NdiLook,
     NdiEnabled,
+    MidiEnabled,
+    MidiDevice,
+    OscEnabled,
+    OscPort,
+    Triggers,
 }
 
 impl SettingsField {
@@ -820,11 +925,16 @@ impl SettingsField {
             SettingsField::StageLook => "Stage look",
             SettingsField::NdiLook => "NDI look",
             SettingsField::NdiEnabled => "NDI broadcast",
+            SettingsField::MidiEnabled => "MIDI input",
+            SettingsField::MidiDevice => "MIDI device",
+            SettingsField::OscEnabled => "OSC listener",
+            SettingsField::OscPort => "OSC port",
+            SettingsField::Triggers => "Trigger mappings",
         }
     }
 }
 
-fn settings_fields() -> [SettingsField; 9] {
+fn settings_fields() -> [SettingsField; 14] {
     [
         SettingsField::OutputDisplay,
         SettingsField::OutputFullscreen,
@@ -835,6 +945,11 @@ fn settings_fields() -> [SettingsField; 9] {
         SettingsField::StageLook,
         SettingsField::NdiLook,
         SettingsField::NdiEnabled,
+        SettingsField::MidiEnabled,
+        SettingsField::MidiDevice,
+        SettingsField::OscEnabled,
+        SettingsField::OscPort,
+        SettingsField::Triggers,
     ]
 }
 
@@ -855,6 +970,20 @@ fn changed_settings(old: &Settings, new: &Settings) -> Vec<String> {
             SettingsField::StageLook => new.stage_look_id != old.stage_look_id,
             SettingsField::NdiLook => new.ndi_look_id != old.ndi_look_id,
             SettingsField::NdiEnabled => new.ndi_enabled != old.ndi_enabled,
+            SettingsField::MidiEnabled => new.midi_enabled != old.midi_enabled,
+            SettingsField::MidiDevice => new.midi_device_id != old.midi_device_id,
+            SettingsField::OscEnabled => new.osc_enabled != old.osc_enabled,
+            SettingsField::OscPort => new.osc_port != old.osc_port,
+            SettingsField::Triggers => {
+                new.triggers.len() != old.triggers.len()
+                    || new.triggers.iter().zip(old.triggers.iter()).any(|(a, b)| {
+                        a.id != b.id
+                            || a.trigger != b.trigger
+                            || a.action != b.action
+                            || a.enabled != b.enabled
+                            || a.label != b.label
+                    })
+            }
         };
         if differs {
             changed.push(field.label().to_string());
@@ -966,6 +1095,38 @@ pub async fn import_settings(app: AppHandle, path: String) -> Result<ImportRepor
         }
     }
 
+    // Apply imported MIDI listener enablement (start/stop the connection).
+    let latest = state.current_settings();
+    if latest.midi_enabled != state.midi.is_active() {
+        if latest.midi_enabled {
+            if let Some(device_id) = latest.midi_device_id.clone() {
+                match state.midi.start(app.clone(), &device_id) {
+                    Ok(()) => log(&app, Level::Info, "settings: MIDI input started on import"),
+                    Err(e) => log(&app, Level::Warn, &format!("settings: MIDI start on import failed: {e}")),
+                }
+            } else {
+                log(&app, Level::Warn, "settings: MIDI enabled on import but no device selected");
+            }
+        } else {
+            state.midi.stop();
+            log(&app, Level::Info, "settings: MIDI input stopped on import");
+        }
+    }
+
+    // Apply imported OSC enablement / port (start/stop the UDP listener).
+    let latest = state.current_settings();
+    if latest.osc_enabled != state.osc.is_active() || (latest.osc_enabled && latest.osc_port != 0) {
+        if latest.osc_enabled {
+            match state.osc.start(app.clone(), latest.osc_port) {
+                Ok(()) => log(&app, Level::Info, &format!("settings: OSC listener started on UDP :{}", latest.osc_port)),
+                Err(e) => log(&app, Level::Warn, &format!("settings: OSC start on import failed: {e}")),
+            }
+        } else {
+            state.osc.stop();
+            log(&app, Level::Info, "settings: OSC listener stopped on import");
+        }
+    }
+
     log(
         &app,
         Level::Info,
@@ -1035,6 +1196,207 @@ pub fn search_scripture(
     Ok(index.search(&query, 10))
 }
 
+// ---------------------------------------------------------------------------
+// External triggers (MIDI + OSC)
+// ---------------------------------------------------------------------------
+
+/// Enumerate every MIDI input device currently available. The visible set
+/// differs by OS (WinMM on Windows, ALSA on Ubuntu/Linux, CoreMIDI on macOS).
+#[tauri::command]
+pub fn list_midi_devices() -> Result<Vec<crate::midi::MidiDeviceInfo>, String> {
+    crate::midi::list_devices()
+}
+
+/// Set whether the MIDI input listener is enabled. Start/stop the native
+/// connection (using the saved device) rather than faking the state.
+#[tauri::command]
+pub fn set_midi_enabled(app: AppHandle, enabled: bool) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    if enabled {
+        let device_id = state
+            .current_settings()
+            .midi_device_id
+            .clone()
+            .ok_or_else(|| "select a MIDI device first".to_string())?;
+        {
+            let mut settings = state.current_settings();
+            settings.midi_enabled = true;
+            state.apply_settings(settings);
+            let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+        }
+        match state.midi.start(app.clone(), &device_id) {
+            Ok(()) => log(&app, Level::Info, "midi: input enabled"),
+            Err(e) => {
+                log(&app, Level::Error, &format!("midi: could not enable input: {e}"));
+                return Err(e);
+            }
+        }
+    } else {
+        state.midi.stop();
+        {
+            let mut settings = state.current_settings();
+            settings.midi_enabled = false;
+            state.apply_settings(settings);
+            let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+        }
+        log(&app, Level::Info, "midi: input disabled");
+    }
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Choose the MIDI input device and start listening on it immediately.
+#[tauri::command]
+pub fn set_midi_device(app: AppHandle, device_id: String) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.current_settings();
+        settings.midi_device_id = Some(device_id.clone());
+        settings.midi_enabled = true;
+        state.apply_settings(settings);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+    }
+    match state.midi.start(app.clone(), &device_id) {
+        Ok(()) => log(&app, Level::Info, &format!("midi: device set + listening ({device_id})")),
+        Err(e) => log(&app, Level::Error, &format!("midi: device set but could not open: {e}")),
+    }
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Set whether the OSC UDP listener is enabled (on the saved port).
+#[tauri::command]
+pub fn set_osc_enabled(app: AppHandle, enabled: bool) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    if enabled {
+        let port = state.current_settings().osc_port;
+        {
+            let mut settings = state.current_settings();
+            settings.osc_enabled = true;
+            state.apply_settings(settings);
+            let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+        }
+        match state.osc.start(app.clone(), port) {
+            Ok(()) => log(&app, Level::Info, &format!("osc: listener enabled on UDP :{port}")),
+            Err(e) => {
+                log(&app, Level::Error, &format!("osc: could not enable listener: {e}"));
+                return Err(e);
+            }
+        }
+    } else {
+        state.osc.stop();
+        {
+            let mut settings = state.current_settings();
+            settings.osc_enabled = false;
+            state.apply_settings(settings);
+            let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+        }
+        log(&app, Level::Info, "osc: listener disabled");
+    }
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Change the OSC UDP port. Restarts the listener if it is currently enabled.
+#[tauri::command]
+pub fn set_osc_port(app: AppHandle, port: u16) -> Result<ClientState, String> {
+    if port == 0 {
+        return Err("OSC port must be between 1 and 65535".to_string());
+    }
+    let state = app.state::<AppState>();
+    let was_enabled = state.current_settings().osc_enabled;
+    {
+        let mut settings = state.current_settings();
+        settings.osc_port = port;
+        if !was_enabled {
+            settings.osc_enabled = false;
+        }
+        state.apply_settings(settings);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+    }
+    if was_enabled {
+        state.osc.stop();
+        match state.osc.start(app.clone(), port) {
+            Ok(()) => log(&app, Level::Info, &format!("osc: restarted on UDP :{port}")),
+            Err(e) => log(&app, Level::Error, &format!("osc: restart failed: {e}")),
+        }
+    }
+    log(&app, Level::Info, &format!("osc: port set to {port}"));
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Add a trigger-to-action mapping and persist it.
+#[tauri::command]
+pub fn add_trigger(
+    app: AppHandle,
+    trigger: crate::triggers::Trigger,
+    action: crate::triggers::TriggerAction,
+    label: Option<String>,
+) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.current_settings();
+        settings.triggers.push(crate::triggers::TriggerMapping::new(
+            trigger.clone(),
+            action.clone(),
+        ));
+        if let Some(last) = settings.triggers.last_mut() {
+            last.label = label;
+        }
+        state.apply_settings(settings);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+    }
+    log(
+        &app,
+        Level::Info,
+        &format!("trigger: added {} → {}", trigger.describe(), action.label()),
+    );
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Remove a mapping by id and persist.
+#[tauri::command]
+pub fn delete_trigger(app: AppHandle, trigger_id: String) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.current_settings();
+        if !settings.triggers.iter().any(|m| m.id == trigger_id) {
+            return Err(format!("trigger {trigger_id} not found"));
+        }
+        settings.triggers.retain(|m| m.id != trigger_id);
+        state.apply_settings(settings);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+    }
+    log(&app, Level::Info, &format!("trigger: deleted {trigger_id}"));
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Enable/disable a mapping without deleting it.
+#[tauri::command]
+pub fn set_trigger_enabled(
+    app: AppHandle,
+    trigger_id: String,
+    enabled: bool,
+) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    {
+        let mut settings = state.current_settings();
+        let mapping = settings
+            .triggers
+            .iter_mut()
+            .find(|m| m.id == trigger_id)
+            .ok_or_else(|| format!("trigger {trigger_id} not found"))?;
+        mapping.enabled = enabled;
+        state.apply_settings(settings);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+    }
+    log(
+        &app,
+        Level::Info,
+        &format!("trigger: {} {}",
+            if enabled { "enabled" } else { "disabled" },
+            trigger_id),
+    );
+    Ok(snapshot_and_emit(&app))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1052,6 +1414,11 @@ mod tests {
             stage_look_id: None,
             ndi_enabled: false,
             ndi_look_id: None,
+            midi_enabled: false,
+            midi_device_id: None,
+            osc_enabled: false,
+            osc_port: 9000,
+            triggers: Vec::new(),
         }
     }
 

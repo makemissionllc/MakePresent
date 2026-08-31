@@ -11,8 +11,12 @@ import type {
   LogEntry,
   LookPatch,
   MediaAsset,
+  MidiDeviceInfo,
+  MidiMessageView,
   ScriptureMatch,
   Transition,
+  Trigger,
+  TriggerAction,
 } from "./types";
 
 export function subscribeState(cb: (state: ClientState) => void): Promise<UnlistenFn> {
@@ -27,6 +31,12 @@ export function subscribeAutosave(
   cb: (event: AutosaveEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<AutosaveEvent>("autosave", (event) => cb(event.payload));
+}
+
+export function subscribeMidiMessage(
+  cb: (msg: MidiMessageView) => void,
+): Promise<UnlistenFn> {
+  return listen<MidiMessageView>("midi-message", (event) => cb(event.payload));
 }
 
 export const api = {
@@ -112,4 +122,26 @@ export const api = {
 
   searchScripture: (query: string) =>
     invoke<ScriptureMatch[]>("search_scripture", { query }),
+
+  listMidiDevices: () => invoke<MidiDeviceInfo[]>("list_midi_devices"),
+
+  setMidiEnabled: (enabled: boolean) =>
+    invoke<ClientState>("set_midi_enabled", { enabled }),
+
+  setMidiDevice: (deviceId: string) =>
+    invoke<ClientState>("set_midi_device", { deviceId }),
+
+  setOscEnabled: (enabled: boolean) =>
+    invoke<ClientState>("set_osc_enabled", { enabled }),
+
+  setOscPort: (port: number) => invoke<ClientState>("set_osc_port", { port }),
+
+  addTrigger: (trigger: Trigger, action: TriggerAction, label?: string) =>
+    invoke<ClientState>("add_trigger", { trigger, action, label }),
+
+  deleteTrigger: (triggerId: string) =>
+    invoke<ClientState>("delete_trigger", { triggerId }),
+
+  setTriggerEnabled: (triggerId: string, enabled: boolean) =>
+    invoke<ClientState>("set_trigger_enabled", { triggerId, enabled }),
 };

@@ -2,9 +2,12 @@ mod commands;
 mod broadcast;
 mod logging;
 mod media;
+mod midi;
+mod osc;
 mod project;
 mod scripture;
 mod state;
+mod triggers;
 mod windows;
 
 use logging::Level;
@@ -53,6 +56,9 @@ fn finalize(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     // Tear down NDI before the SDK lib could be unloaded / windows close.
     state.broadcaster.stop();
+    // Stop external input listeners on a clean exit.
+    state.midi.stop();
+    state.osc.stop();
 
     let data_dir = state.app_data_dir();
     {
@@ -172,6 +178,43 @@ pub fn run() {
                     .log(Level::Info, &format!("ndi: broadcast off (looks for {})", crate::broadcast::lib_filename()));
             }
 
+            // MIDI: restore the listener if a device was left selected. The
+            // connection runs on its own midir I/O thread; setup just opens it.
+            let midi_cfg = state.current_settings();
+            if midi_cfg.midi_enabled {
+                if let Some(device_id) = midi_cfg.midi_device_id.clone() {
+                    match state.midi.start(app.handle().clone(), &device_id) {
+                        Ok(()) => state.logger.log(
+                            Level::Info,
+                            "midi: restored input listener from settings",
+                        ),
+                        Err(e) => state.logger.log(
+                            Level::Warn,
+                            &format!("midi: saved device could not be opened at startup: {e}"),
+                        ),
+                    }
+                }
+            } else {
+                state.logger.log(Level::Info, "midi: input listener disabled");
+            }
+
+            // OSC: restore the UDP listener if it was left enabled.
+            let osc_cfg = state.current_settings();
+            if osc_cfg.osc_enabled {
+                match state.osc.start(app.handle().clone(), osc_cfg.osc_port) {
+                    Ok(()) => state.logger.log(
+                        Level::Info,
+                        &format!("osc: restored listener on UDP :{}", osc_cfg.osc_port),
+                    ),
+                    Err(e) => state.logger.log(
+                        Level::Warn,
+                        &format!("osc: saved listener could not start at startup: {e}"),
+                    ),
+                }
+            } else {
+                state.logger.log(Level::Info, "osc: listener disabled");
+            }
+
             // Load the KJV scripture index once at startup for fast
             // autocomplete search. The ~6 MB JSON is read and parsed into a
             // HashMap-backed index in well under 500ms on any modern hardware.
@@ -288,6 +331,14 @@ pub fn run() {
             commands::get_logs,
             commands::export_logs_to,
             commands::search_scripture,
+            commands::list_midi_devices,
+            commands::set_midi_enabled,
+            commands::set_midi_device,
+            commands::set_osc_enabled,
+            commands::set_osc_port,
+            commands::add_trigger,
+            commands::delete_trigger,
+            commands::set_trigger_enabled,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

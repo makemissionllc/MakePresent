@@ -1,5 +1,7 @@
 use crate::broadcast::Broadcaster;
 use crate::logging::Logger;
+use crate::midi::MidiListener;
+use crate::osc::OscListener;
 use crate::project::{Library, Notice, Project, Settings};
 use crate::scripture::ScriptureIndex;
 use std::path::PathBuf;
@@ -21,6 +23,10 @@ pub struct AppState {
     pub scripture: RwLock<Option<ScriptureIndex>>,
     /// NDI broadcaster (runtime-loaded SDK; inactive unless NDI is enabled).
     pub broadcaster: Broadcaster,
+    /// Native MIDI input listener (inactive unless a device is selected).
+    pub midi: MidiListener,
+    /// UDP OSC listener (inactive unless OSC is enabled).
+    pub osc: OscListener,
 }
 
 impl Default for AppState {
@@ -35,6 +41,8 @@ impl Default for AppState {
             save_tx: Mutex::new(None),
             scripture: RwLock::new(None),
             broadcaster: Broadcaster::default(),
+            midi: MidiListener::default(),
+            osc: OscListener::default(),
         }
     }
 }

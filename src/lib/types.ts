@@ -114,6 +114,11 @@ export interface ClientState {
   outputLookId: string | null;
   stageLookId: string | null;
   ndiLookId: string | null;
+  midiEnabled: boolean;
+  midiDeviceId: string | null;
+  oscEnabled: boolean;
+  oscPort: number;
+  triggers: TriggerMapping[];
 }
 
 export interface DisplayInfo {
@@ -173,4 +178,38 @@ export interface ScriptureMatch {
   verse: number;
   reference: string;
   text: string;
+}
+
+export type Trigger =
+  | { kind: "midi_note"; channel: number; note: number }
+  | { kind: "midi_control"; channel: number; controller: number; value: number | null }
+  | { kind: "midi_program"; channel: number; program: number }
+  | { kind: "osc_address"; address: string };
+
+export type TriggerAction =
+  | { kind: "next_slide" }
+  | { kind: "prev_slide" }
+  | { kind: "jump_to"; index: number }
+  | { kind: "clear_output" };
+
+export interface TriggerMapping {
+  id: string;
+  trigger: Trigger;
+  action: TriggerAction;
+  enabled: boolean;
+  label?: string | null;
+}
+
+export interface MidiDeviceInfo {
+  id: string;
+  name: string;
+}
+
+export interface MidiMessageView {
+  channel: number;
+  kind: string;
+  data: string;
+  describe: string;
+  data1: number | null;
+  data2: number | null;
 }

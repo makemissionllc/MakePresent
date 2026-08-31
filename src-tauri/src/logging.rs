@@ -11,6 +11,7 @@ const ROTATE_KEEP: usize = 4000;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Level {
+    Debug,
     Info,
     Warn,
     Error,
@@ -19,6 +20,7 @@ pub enum Level {
 impl Level {
     pub fn as_str(self) -> &'static str {
         match self {
+            Level::Debug => "DEBUG",
             Level::Info => "INFO",
             Level::Warn => "WARN",
             Level::Error => "ERROR",

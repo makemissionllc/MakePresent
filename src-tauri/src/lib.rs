@@ -66,6 +66,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .setup(|app| {
+            // `setup` runs on the GUI main thread. Mark it so `windows::run_on_main`
+            // can detect re-entrant calls (stage restore, nested ensure_*) and run
+            // inline instead of self-deadlocking by queuing to itself and blocking.
+            crate::windows::mark_as_main_thread();
+
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
 

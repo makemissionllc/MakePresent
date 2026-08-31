@@ -1,8 +1,24 @@
 use crate::state::AppState;
 use serde::Serialize;
+use std::cell::Cell;
+use std::time::Duration;
 use tauri::{
     AppHandle, Manager, Monitor, PhysicalSize, Position, Size, WebviewUrl, WebviewWindow,
 };
+
+thread_local! {
+    static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Mark the current thread as the GUI main thread. Call once at the start of
+/// `setup()` and inside every `run_on_main_thread` closure.
+pub fn mark_as_main_thread() {
+    IS_MAIN_THREAD.with(|c| c.set(true));
+}
+
+fn is_main_thread() -> bool {
+    IS_MAIN_THREAD.with(|c| c.get())
+}
 
 pub const EDITOR_WINDOW: &str = "main";
 pub const OUTPUT_WINDOW: &str = "output";
@@ -72,24 +88,51 @@ fn describe_window(w: &WebviewWindow) -> String {
 /// Window creation on Windows (wry/WebView2) must run on the main thread; doing
 /// it from Tauri's command worker threads wedges the event loop. Tauri's own
 /// `builder.build()` posts a `Message::CreateWindow` to the loop asynchronously,
-/// so we force it to run synchronously on the main thread instead. Safe to call
-/// from the main thread too (the main loop runs the closure inline), so the
-/// stage-restore path during `setup()` does not deadlock.
+/// so we force it to run synchronously on the main thread instead.
 ///
-/// Bounds each dispatch with a log line before and after, so a hang that this
-/// fix does NOT cure is still clearly located between these two lines in
-/// `logs/app.log`.
+/// Correctness: `setup()` and any `run_on_main_thread` closure both run on the
+/// main thread. If this helper unconditionally queued a new closure and blocked,
+/// a call from the main thread (stage restore during setup, or the nested
+/// `ensure_output` inside `move_output_to` when that outer closure is already
+/// on the main thread) would self-deadlock — the main thread would be blocked
+/// waiting for a closure it can never service. We detect that case via a
+/// thread-local flag and run inline instead. Tauri does not expose
+/// `is_main_thread()`, so we maintain the flag ourselves (set at the start of
+/// `setup()` and inside every dispatched closure).
+///
+/// A 5s timeout is used as a diagnostic safety net: instead of freezing
+/// silently forever, we log `main thread dispatch timed out — likely deadlock`.
+///
+/// Bounds each dispatch with a log line before and after, so any remaining hang
+/// is still clearly located between those two lines in `logs/app.log`.
 fn run_on_main<F, T>(app: &AppHandle, state: &AppState, op: &str, f: F) -> Result<T, String>
 where
     F: FnOnce() -> Result<T, String> + Send + 'static,
     T: Send + 'static,
 {
+    // Fast path: already on the main thread → run inline, no queue, no block.
+    if is_main_thread() {
+        state.logger.log(
+            crate::logging::Level::Info,
+            &format!("windows: {op}: already on main thread, running inline"),
+        );
+        let res = f();
+        state.logger.log(
+            crate::logging::Level::Info,
+            &format!("windows: {op}: inline execution completed"),
+        );
+        return res;
+    }
+
     state.logger.log(
         crate::logging::Level::Info,
         &format!("windows: {op}: dispatching to main thread"),
     );
     let (tx, rx) = std::sync::mpsc::channel::<Result<T, String>>();
     if let Err(e) = app.run_on_main_thread(move || {
+        // This closure runs on the main thread — mark it so any nested
+        // `run_on_main` call inside `f()` takes the inline fast path.
+        mark_as_main_thread();
         let _ = tx.send(f());
     }) {
         let msg = format!("{op}: run_on_main_thread dispatch failed: {e}");
@@ -98,8 +141,15 @@ where
             .log(crate::logging::Level::Error, &format!("windows: {msg}"));
         return Err(msg);
     }
-    let result = rx.recv().map_err(|_| {
-        let msg = format!("{op}: main thread never responded (possible hang)");
+    let result = rx.recv_timeout(Duration::from_secs(5)).map_err(|e| {
+        let msg = match e {
+            std::sync::mpsc::RecvTimeoutError::Timeout => {
+                format!("{op}: main thread dispatch timed out after 5s — likely deadlock")
+            }
+            std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                format!("{op}: main thread never responded (channel closed, possible hang/panic)")
+            }
+        };
         state
             .logger
             .log(crate::logging::Level::Error, &format!("windows: {msg}"));

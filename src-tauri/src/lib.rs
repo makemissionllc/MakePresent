@@ -116,7 +116,21 @@ pub fn run() {
             *state.library.write().unwrap() = library;
             state.set_notice(notice);
             *state.data_dir.write().unwrap() = data_dir.clone();
-            state.apply_settings(project::read_settings(&data_dir));
+            {
+                let mut settings = project::read_settings(&data_dir);
+                // Fix: previously defaulted to true, causing fullscreen on first
+                // show even when user never opted in. Migrate persisted `true`
+                // to `false` once so startup is windowed by default.
+                if settings.output_fullscreen {
+                    settings.output_fullscreen = false;
+                    let _ = project::write_settings(&data_dir, &settings);
+                    state.logger.log(
+                        Level::Info,
+                        "settings: migrated output_fullscreen true -> false (default corrected)",
+                    );
+                }
+                state.apply_settings(settings);
+            }
 
             // Load the KJV scripture index once at startup for fast
             // autocomplete search. The ~6 MB JSON is read and parsed into a

@@ -46,6 +46,13 @@
   let scriptureIdx = $state(-1);
   let scriptureLoading = $state(false);
   let scriptureTimer: ReturnType<typeof setTimeout> | null = null;
+  // Draft copies for responsive editing — typing updates these immediately
+  // while the backend save is debounced so the input never resets mid-keystroke.
+  let draftTitle = $state("");
+  let draftBody = $state("");
+  let draftId: string | null = $state(null);
+  let titleTimer: ReturnType<typeof setTimeout> | null = null;
+  let bodyTimer: ReturnType<typeof setTimeout> | null = null;
 
   const project = $derived(appState?.project ?? null);
   const notice = $derived(
@@ -62,6 +69,25 @@
       song.title.toLowerCase().includes(librarySearch.trim().toLowerCase()),
     ),
   );
+
+  // Keep draftTitle/draftBody in sync when selection changes — only when the
+  // underlying slide identity changes, so mid-edit keystrokes are never clobbered.
+  $effect(() => {
+    const s = selected;
+    if (!s) {
+      draftTitle = "";
+      draftBody = "";
+      draftId = null;
+      return;
+    }
+    if (draftId !== s.id) {
+      draftId = s.id;
+      draftTitle = s.title;
+      draftBody = s.body;
+      if (titleTimer) clearTimeout(titleTimer);
+      if (bodyTimer) clearTimeout(bodyTimer);
+    }
+  });
 
   function formatAt(at?: string): string {
     if (!at) return "";
@@ -168,12 +194,46 @@
     }
   }
 
-  function updateTitle(slide: Slide, value: string): void {
-    void run(() => api.updateSlide(slide.id, { title: value }));
+  function commitTitle(id: string, value: string): void {
+    void api
+      .updateSlide(id, { title: value })
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
   }
 
-  function updateBody(slide: Slide, value: string): void {
-    void run(() => api.updateSlide(slide.id, { body: value }));
+  function commitBody(id: string, value: string): void {
+    void api
+      .updateSlide(id, { body: value })
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
+  function onTitleInput(value: string): void {
+    draftTitle = value;
+    if (!draftId) return;
+    const id = draftId;
+    if (titleTimer) clearTimeout(titleTimer);
+    titleTimer = setTimeout(() => commitTitle(id, value), 180);
+  }
+
+  function onBodyInput(value: string): void {
+    draftBody = value;
+    if (!draftId) return;
+    const id = draftId;
+    if (bodyTimer) clearTimeout(bodyTimer);
+    bodyTimer = setTimeout(() => commitBody(id, value), 180);
+  }
+
+  function flushTitle(): void {
+    if (titleTimer) clearTimeout(titleTimer);
+    titleTimer = null;
+    if (draftId) commitTitle(draftId, draftTitle);
+  }
+
+  function flushBody(): void {
+    if (bodyTimer) clearTimeout(bodyTimer);
+    bodyTimer = null;
+    if (draftId) commitBody(draftId, draftBody);
   }
 
   function setColor(slide: Slide, color: string): void {
@@ -215,7 +275,9 @@
 
   function onDisplayChange(e: Event): void {
     const target = e.target as HTMLSelectElement;
+    if (target.value === "") return;
     const index = Number(target.value);
+    if (!Number.isFinite(index)) return;
     void api
       .setOutputDisplay(index)
       .then((d) => (displays = d))
@@ -224,7 +286,9 @@
 
   function onStageDisplayChange(e: Event): void {
     const target = e.target as HTMLSelectElement;
+    if (target.value === "") return;
     const index = Number(target.value);
+    if (!Number.isFinite(index)) return;
     void api
       .setStageDisplay(index)
       .then((d) => (displays = d))
@@ -337,6 +401,8 @@
       unAuto();
       unLib();
       if (scriptureTimer) clearTimeout(scriptureTimer);
+      if (titleTimer) clearTimeout(titleTimer);
+      if (bodyTimer) clearTimeout(bodyTimer);
     };
   });
 </script>
@@ -515,18 +581,20 @@
             Title
             <input
               type="text"
-              value={selected.title}
+              value={draftTitle}
               placeholder="Slide title"
-              oninput={(e) => updateTitle(selected, (e.target as HTMLInputElement).value)}
+              oninput={(e) => onTitleInput((e.target as HTMLInputElement).value)}
+              onblur={() => flushTitle()}
             />
           </label>
           <label>
             Body
             <textarea
               rows="8"
-              value={selected.body}
+              value={draftBody}
               placeholder="Slide body text"
-              oninput={(e) => updateBody(selected, (e.target as HTMLTextAreaElement).value)}
+              oninput={(e) => onBodyInput((e.target as HTMLTextAreaElement).value)}
+              onblur={() => flushBody()}
             ></textarea>
           </label>
           <div class="field">
@@ -607,7 +675,13 @@
         <select
           value={appState?.output.monitorIndex ?? ""}
           onchange={onDisplayChange}
+          disabled={displays === null}
         >
+          {#if displays === null}
+            <option value="" disabled>Loading displays…</option>
+          {:else if (displays?.length ?? 0) === 0}
+            <option value="" disabled>No displays found</option>
+          {/if}
           {#each displays ?? [] as d}
             <option value={d.index}>
               {d.name || `Display ${d.index + 1}`} &middot; {d.width}&times;{d.height}{d.primary
@@ -679,7 +753,13 @@
         <select
           value={appState?.stage.monitorIndex ?? ""}
           onchange={onStageDisplayChange}
+          disabled={displays === null}
         >
+          {#if displays === null}
+            <option value="" disabled>Loading displays…</option>
+          {:else if (displays?.length ?? 0) === 0}
+            <option value="" disabled>No displays found</option>
+          {/if}
           {#each displays ?? [] as d}
             <option value={d.index}>
               {d.name || `Display ${d.index + 1}`} &middot; {d.width}&times;{d.height}{d.primary

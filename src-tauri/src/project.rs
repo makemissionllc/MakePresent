@@ -341,7 +341,7 @@ impl Default for Settings {
         Self {
             output_display_index: None,
             output_display_name: None,
-            output_fullscreen: true,
+            output_fullscreen: false,
             stage_display_index: None,
             stage_display_name: None,
             stage_visible: false,

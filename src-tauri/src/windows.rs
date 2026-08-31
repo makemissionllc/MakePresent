@@ -421,28 +421,56 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
         } else {
             None
         };
-        // Explicitly size the window to the target monitor's exact dimensions
+        // Single-monitor / same-monitor mitigation: when the output target is
+        // the same screen the editor is on, a full-monitor borderless window
+        // would completely cover the editor and make it appear frozen. In that
+        // case create a centered windowed preview instead so the editor stays
+        // reachable. Multi-monitor keeps the true full-monitor placement.
+        let same_as_editor = editor
+            .current_monitor()
+            .ok()
+            .flatten()
+            .is_some_and(|c| same_monitor(&c, monitor));
+        let single = monitors.len() <= 1;
+        let (place_w, place_h, place_pos) = if same_as_editor || single {
+            let w = (target_size.width as f64 * 0.72).round() as u32;
+            let h = (target_size.height as f64 * 0.72).round() as u32;
+            let x = target_pos.x + ((target_size.width as i32 - w as i32) / 2);
+            let y = target_pos.y + ((target_size.height as i32 - h as i32) / 2);
+            (w, h, tauri::PhysicalPosition::new(x, y))
+        } else {
+            (
+                target_size.width,
+                target_size.height,
+                tauri::PhysicalPosition::new(target_pos.x, target_pos.y),
+            )
+        };
+        if same_as_editor || single {
+            let _ = window.set_decorations(true);
+            let _ = window.set_resizable(true);
+        } else {
+            let _ = window.set_decorations(false);
+            let _ = window.set_resizable(false);
+        }
+        // Explicitly size the window to the target dimensions
         // *before* any subsequent set_fullscreen. On Linux/GTK, relying on
         // set_fullscreen alone with a stale/default window size can leave the
         // window smaller than the monitor depending on the window manager
         // (X11 vs Wayland). Sizing up-front gives the WM correct bounds to
         // work from when the fullscreen toggle lands.
-        let size_res = window.set_size(Size::Physical(PhysicalSize::new(
-            target_size.width,
-            target_size.height,
-        )));
-        let pos_res = window.set_position(Position::Physical(target_pos));
+        let size_res = window.set_size(Size::Physical(PhysicalSize::new(place_w, place_h)));
+        let pos_res = window.set_position(Position::Physical(place_pos));
         let show_res = window.show();
         logger.log(
             crate::logging::Level::Info,
             &format!(
                 "windows: move_output_to: exit_fullscreen -> {:?}, set_size({}x{}) -> {:?}, set_position({}, {}) -> {:?}, show() -> {:?}; after: {}",
                 exit_fs,
-                target_size.width,
-                target_size.height,
+                place_w,
+                place_h,
                 size_res,
-                target_pos.x,
-                target_pos.y,
+                place_pos.x,
+                place_pos.y,
                 pos_res,
                 show_res,
                 describe_window(&window)

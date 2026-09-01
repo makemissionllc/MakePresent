@@ -695,13 +695,15 @@
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
-  function handleSongEditorConfirm(title: string, slides: { title: string; body: string }[]): void {
+  function handleSongEditorConfirm(
+    title: string,
+    slides: { title: string; body: string; positioning?: { vAlign: string; hAlign: string }; groupId?: string; groupLabel?: string }[],
+  ): void {
     showSongEditor = false;
     pendingSongTitle = "";
     pendingSongBody = "";
-    // Use multi-slide API: slides array maps to LibrarySlides (Title+Body+Section tag)
     void api
-      .addLibrarySong(title, undefined, undefined, slides)
+      .addLibrarySong(title, undefined, undefined, slides as any)
       .then((l) => (library = l))
       .catch((e: unknown) => (errorMsg = String(e)));
   }

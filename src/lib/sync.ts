@@ -85,7 +85,7 @@ export const api = {
     title: string,
     body?: string,
     background?: Background,
-    slides?: { title: string; body: string }[],
+    slides?: { title: string; body: string; positioning?: { vAlign: string; hAlign: string }; groupId?: string; groupLabel?: string }[],
   ) => invoke<Library>("add_library_song", { title, body, background, slides }),
 
   deleteLibrarySong: (songId: string) =>

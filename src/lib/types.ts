@@ -162,10 +162,18 @@ export interface DisplayInfo {
   current: boolean;
 }
 
+export interface SlidePositioning {
+  vAlign: "top" | "center" | "bottom";
+  hAlign: "left" | "center" | "right";
+}
+
 export interface LibrarySlide {
   id: string;
   title: string;
   body: string;
+  positioning?: SlidePositioning | null;
+  groupId?: string | null;
+  groupLabel?: string | null;
 }
 
 export interface LibrarySong {

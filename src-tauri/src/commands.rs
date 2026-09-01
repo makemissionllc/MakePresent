@@ -146,6 +146,12 @@ fn broadcast_library(app: &AppHandle) -> Library {
 pub struct LibrarySlideInput {
     title: String,
     body: String,
+    #[serde(default)]
+    positioning: Option<crate::project::SlidePositioning>,
+    #[serde(default)]
+    group_id: Option<String>,
+    #[serde(default)]
+    group_label: Option<String>,
 }
 
 #[tauri::command]
@@ -167,6 +173,9 @@ pub fn add_library_song(
                 id: Uuid::new_v4().to_string(),
                 title: s.title,
                 body: s.body,
+                positioning: s.positioning,
+                group_id: s.group_id,
+                group_label: s.group_label,
             })
             .collect()
     } else {

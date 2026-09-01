@@ -397,10 +397,32 @@ pub struct ClientState {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SlidePositioning {
+    #[serde(default = "default_v_align")]
+    pub v_align: String,
+    #[serde(default = "default_h_align")]
+    pub h_align: String,
+}
+
+fn default_v_align() -> String { "center".to_string() }
+fn default_h_align() -> String { "center".to_string() }
+
+impl Default for SlidePositioning {
+    fn default() -> Self { Self { v_align: default_v_align(), h_align: default_h_align() } }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LibrarySlide {
     pub id: String,
     pub title: String,
     pub body: String,
+    #[serde(default)]
+    pub positioning: Option<SlidePositioning>,
+    #[serde(default)]
+    pub group_id: Option<String>,
+    #[serde(default)]
+    pub group_label: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -620,11 +642,17 @@ fn seed_library() -> Library {
                         id: Uuid::new_v4().to_string(),
                         title: "Verse 1".to_string(),
                         body: "Amazing grace, how sweet the sound\nThat saved a wretch like me\nI once was lost, but now am found\nWas blind, but now I see.".to_string(),
+                        positioning: None,
+                        group_id: Some("verse-1".to_string()),
+                        group_label: Some("Verse 1".to_string()),
                     },
                     LibrarySlide {
                         id: Uuid::new_v4().to_string(),
                         title: "Chorus".to_string(),
                         body: "Was grace that taught my heart to fear\nAnd grace my fears relieved\nHow precious did that grace appear\nThe hour I first believed.".to_string(),
+                        positioning: None,
+                        group_id: Some("chorus".to_string()),
+                        group_label: Some("Chorus".to_string()),
                     },
                 ],
             },
@@ -639,11 +667,17 @@ fn seed_library() -> Library {
                         id: Uuid::new_v4().to_string(),
                         title: "Verse 1".to_string(),
                         body: "Great is Thy faithfulness, O God my Father\nThere is no shadow of turning with Thee\nThou changest not, Thy compassions, they fail not\nAs Thou hast been, Thou forever wilt be.".to_string(),
+                        positioning: None,
+                        group_id: Some("verse-1".to_string()),
+                        group_label: Some("Verse 1".to_string()),
                     },
                     LibrarySlide {
                         id: Uuid::new_v4().to_string(),
                         title: "Chorus".to_string(),
                         body: "Great is Thy faithfulness!\nGreat is Thy faithfulness!\nMorning by morning new mercies I see\nAll I have needed Thy hand hath provided\nGreat is Thy faithfulness, Lord, unto me.".to_string(),
+                        positioning: None,
+                        group_id: Some("chorus".to_string()),
+                        group_label: Some("Chorus".to_string()),
                     },
                 ],
             },

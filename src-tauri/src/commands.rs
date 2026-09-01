@@ -142,23 +142,45 @@ fn broadcast_library(app: &AppHandle) -> Library {
     library
 }
 
+#[derive(Deserialize)]
+pub struct LibrarySlideInput {
+    title: String,
+    body: String,
+}
+
 #[tauri::command]
 pub fn add_library_song(
     app: AppHandle,
     title: String,
     body: Option<String>,
     background: Option<Background>,
+    slides: Option<Vec<LibrarySlideInput>>,
 ) -> Result<Library, String> {
     let state = app.state::<AppState>();
+    let lib_slides: Vec<LibrarySlide> = if let Some(inputs) = slides {
+        if inputs.is_empty() {
+            return Err("no slides provided".to_string());
+        }
+        inputs
+            .into_iter()
+            .map(|s| LibrarySlide {
+                id: Uuid::new_v4().to_string(),
+                title: s.title,
+                body: s.body,
+            })
+            .collect()
+    } else {
+        vec![LibrarySlide {
+            id: Uuid::new_v4().to_string(),
+            title: "".to_string(),
+            body: body.unwrap_or_default(),
+        }]
+    };
     let song = LibrarySong {
         id: Uuid::new_v4().to_string(),
         title,
         default_background: background.unwrap_or_default(),
-        slides: vec![LibrarySlide {
-            id: Uuid::new_v4().to_string(),
-            title: "".to_string(),
-            body: body.unwrap_or_default(),
-        }],
+        slides: lib_slides,
     };
     state.library.write().unwrap().songs.push(song);
     state.request_save();

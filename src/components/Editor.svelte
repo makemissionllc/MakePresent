@@ -7,6 +7,7 @@
   import { isMedia } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
+  import SongEditorModal from "./SongEditorModal.svelte";
 
   const PALETTE = [
     "#1a1a24",
@@ -49,6 +50,7 @@
   let scriptureTimer: ReturnType<typeof setTimeout> | null = null;
   let scriptureBusy = $state(false);
   let scriptureStatus = $state<string | null>(null);
+  let scriptureSeq = 0;
 
   // Scripture browse (Full panel, collapsible — FreeShow-inspired)
   let bibles = $state<BibleInfo[]>([]);
@@ -72,7 +74,9 @@
   // Add song modal (reusable Modal, replaces window.prompt "localhost:1420 says")
   let showAddSongTitleModal = $state(false);
   let showAddSongBodyModal = $state(false);
+  let showSongEditor = $state(false);
   let pendingSongTitle = $state("");
+  let pendingSongBody = $state("");
 
   // Draft copies for responsive editing — typing updates these immediately
   // while the backend save is debounced so the input never resets mid-keystroke.
@@ -158,23 +162,27 @@
   }
 
   async function doScriptureSearch(q: string): Promise<void> {
+    const seq = ++scriptureSeq;
     if (!q.trim()) {
       scriptureResults = [];
       scriptureOpen = false;
       scriptureIdx = -1;
+      scriptureLoading = false;
       return;
     }
     try {
       const matches = await api.searchScripture(q.trim());
+      if (seq !== scriptureSeq) return;
       scriptureResults = matches;
       scriptureOpen = matches.length > 0;
       scriptureIdx = -1;
     } catch (e) {
+      if (seq !== scriptureSeq) return;
       scriptureResults = [];
       scriptureOpen = false;
       errorMsg = String(e);
     } finally {
-      scriptureLoading = false;
+      if (seq === scriptureSeq) scriptureLoading = false;
     }
   }
 
@@ -236,6 +244,7 @@
     if (!value.trim()) {
       scriptureResults = [];
       scriptureOpen = false;
+      scriptureLoading = false;
       return;
     }
     scriptureLoading = true;
@@ -314,7 +323,7 @@
       chapterNumbers = nums;
     } catch (e) {
       browseError = String(e);
-      chapterNumbers = Array.from({ length: 50 }, (_, i) => i + 1);
+      chapterNumbers = [];
     } finally {
       browseLoading = false;
     }
@@ -342,7 +351,8 @@
   }
 
   function onBrowseBookSelect(book: string): void {
-    void loadChaptersForBook(selectedBibleId ?? "kjv", book);
+    if (!selectedBibleId) return;
+    void loadChaptersForBook(selectedBibleId, book);
   }
 
   function onBrowseChapterSelect(ch: number): void {
@@ -374,17 +384,11 @@
   function onPlaylistDragOver(e: DragEvent, index: number): void {
     e.preventDefault();
     if (!isDragging) return;
-    // Calculate insertion point: if dragging over item, show line before or after based on mouse Y
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    if (rect.height === 0) return;
     const mid = rect.top + rect.height / 2;
     const overIndex = e.clientY < mid ? index : index + 1;
-    // If dragging a playlist item, adjust for removal
-    let adjusted = overIndex;
-    if (dragType === "playlist-reorder" && draggedSlideId) {
-      const fromIdx = project?.slides.findIndex((s) => s.id === draggedSlideId) ?? -1;
-      if (fromIdx !== -1 && fromIdx < overIndex) adjusted = overIndex - 1;
-    }
-    dragOverIndex = adjusted;
+    dragOverIndex = overIndex;
     if (e.dataTransfer) e.dataTransfer.dropEffect = dragType === "playlist-reorder" ? "move" : "copy";
   }
 
@@ -398,23 +402,33 @@
 
   function onPlaylistDrop(e: DragEvent, dropIndex?: number): void {
     e.preventDefault();
-    const targetIdx = dropIndex ?? dragOverIndex ?? project?.slides.length ?? 0;
+    e.stopPropagation();
+    if (!project) {
+      errorMsg = "Project not loaded yet";
+      dragOverIndex = null;
+      isDragging = false;
+      return;
+    }
+    let targetIdx = dropIndex ?? dragOverIndex ?? project.slides.length;
+    const len = project.slides.length;
+    targetIdx = Math.max(0, Math.min(targetIdx, len));
     const raw = e.dataTransfer?.getData("text/plain");
     let payload: any = null;
     try { payload = raw ? JSON.parse(raw) : dragPayload; } catch { payload = dragPayload; }
 
-    if (!payload) {
+    if (!payload || !payload.type) {
+      if (!payload) errorMsg = "Drop failed: unknown payload";
       dragOverIndex = null;
       isDragging = false;
       return;
     }
 
     if (payload.type === "playlist-reorder" && payload.slideId) {
-      const fromIdx = project?.slides.findIndex((s) => s.id === payload.slideId) ?? -1;
+      const fromIdx = project.slides.findIndex((s) => s.id === payload.slideId);
       if (fromIdx !== -1 && fromIdx !== targetIdx && targetIdx !== fromIdx + 1) {
-        // Backend is single source of truth — compute new order and send ordered_ids
-        const ids = (project?.slides ?? []).map((s) => s.id);
+        const ids = project.slides.map((s) => s.id);
         const [moved] = ids.splice(fromIdx, 1);
+        if (moved === undefined) return;
         const insertAt = targetIdx > fromIdx ? targetIdx - 1 : targetIdx;
         ids.splice(insertAt, 0, moved);
         void api.reorderSlides(ids).then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
@@ -422,43 +436,43 @@
     } else if (payload.type === "library-song" && payload.songId) {
       void (async () => {
         try {
-          const beforeLen = project?.slides.length ?? 0;
+          const beforeLen = project.slides.length;
           const s = await api.addSongToPlaylist(payload.songId);
           appState = s;
-          // If dropped not at end, reorder the newly added song's slides to drop position
           if (targetIdx < beforeLen) {
             const addedCount = s.project.slides.length - beforeLen;
-            if (addedCount > 0) {
-              const ids = s.project.slides.map((x) => x.id);
-              // New slides are at end: slice last addedCount
-              const newIds = ids.slice(-addedCount);
-              const remaining = ids.slice(0, -addedCount);
-              remaining.splice(targetIdx, 0, ...newIds);
-              const s2 = await api.reorderSlides(remaining);
-              appState = s2;
-            }
+            if (addedCount <= 0) return;
+            const ids = s.project.slides.map((x) => x.id);
+            const newIds = ids.slice(-addedCount);
+            if (newIds.length === 0) return;
+            const remaining = ids.slice(0, -addedCount);
+            remaining.splice(targetIdx, 0, ...newIds);
+            const s2 = await api.reorderSlides(remaining);
+            appState = s2;
           }
         } catch (err: unknown) { errorMsg = String(err); }
       })();
     } else if (payload.type === "library-verse" && payload.songId && payload.slideId) {
-      // Add single verse from library song
       const song = library?.songs.find((x) => x.id === payload.songId);
       const verse = song?.slides.find((x) => x.id === payload.slideId);
-      if (verse) {
-        void (async () => {
-          try {
-            const s = await api.addSlide(verse.title, verse.body);
-            appState = s;
-            if (targetIdx < (s.project.slides.length - 1)) {
-              const ids = s.project.slides.map((x) => x.id);
-              const moved = ids.pop()!;
-              ids.splice(targetIdx, 0, moved);
-              const s2 = await api.reorderSlides(ids);
-              appState = s2;
-            }
-          } catch (err: unknown) { errorMsg = String(err); }
-        })();
+      if (!verse) {
+        errorMsg = "Verse not found";
+        return;
       }
+      void (async () => {
+        try {
+          const s = await api.addSlide(verse.title, verse.body);
+          appState = s;
+          if (targetIdx < (s.project.slides.length - 1)) {
+            const ids = s.project.slides.map((x) => x.id);
+            const moved = ids.pop();
+            if (!moved) return;
+            ids.splice(targetIdx, 0, moved);
+            const s2 = await api.reorderSlides(ids);
+            appState = s2;
+          }
+        } catch (err: unknown) { errorMsg = String(err); }
+      })();
     } else if (payload.type === "scripture" && payload.reference && payload.text !== undefined) {
       void (async () => {
         try {
@@ -523,6 +537,7 @@
   }
 
   function commitTitle(id: string, value: string): void {
+    if (draftId !== id || !selected || selected.id !== id) return;
     void api
       .updateSlide(id, { title: value })
       .then((s) => (appState = s))
@@ -530,6 +545,7 @@
   }
 
   function commitBody(id: string, value: string): void {
+    if (draftId !== id || !selected || selected.id !== id) return;
     void api
       .updateSlide(id, { body: value })
       .then((s) => (appState = s))
@@ -571,7 +587,12 @@
   }
 
   function fileUrl(path: string): string {
-    return convertFileSrc(path);
+    if (!path) return "";
+    try {
+      return convertFileSrc(path);
+    } catch {
+      return "";
+    }
   }
 
   // Pick an image/video, import it into the managed media cache, then assign
@@ -597,8 +618,16 @@
   }
 
   function deleteSlide(slide: Slide): void {
-    void run(() => api.deleteSlide(slide.id));
-    if (selectedId === slide.id) selectedId = null;
+    const wasSelected = selectedId === slide.id;
+    void (async () => {
+      try {
+        errorMsg = null;
+        appState = await api.deleteSlide(slide.id);
+        if (wasSelected) selectedId = null;
+      } catch (e) {
+        errorMsg = String(e);
+      }
+    })();
   }
 
   function onDisplayChange(e: Event): void {
@@ -652,7 +681,8 @@
     if (!trimmed) return;
     pendingSongTitle = trimmed;
     showAddSongTitleModal = false;
-    showAddSongBodyModal = true;
+    pendingSongBody = "";
+    showSongEditor = true;
   }
 
   function handleAddSongBodyConfirm(body: string): void {
@@ -665,10 +695,28 @@
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
+  function handleSongEditorConfirm(title: string, slides: { title: string; body: string }[]): void {
+    showSongEditor = false;
+    pendingSongTitle = "";
+    pendingSongBody = "";
+    // Use multi-slide API: slides array maps to LibrarySlides (Title+Body+Section tag)
+    void api
+      .addLibrarySong(title, undefined, undefined, slides)
+      .then((l) => (library = l))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
+  function handleSongEditorBack(): void {
+    showSongEditor = false;
+    showAddSongTitleModal = true;
+  }
+
   function handleAddSongCancel(): void {
     showAddSongTitleModal = false;
     showAddSongBodyModal = false;
+    showSongEditor = false;
     pendingSongTitle = "";
+    pendingSongBody = "";
   }
 
   function deleteSong(song: LibrarySong): void {
@@ -720,31 +768,44 @@
     let unSub: () => void = () => {};
     let unAuto: () => void = () => {};
     let unLib: () => void = () => {};
+    let cancelled = false;
 
     void (async () => {
-      unSub = await subscribeState((s) => {
-        appState = s;
+      const sub = await subscribeState((s) => {
+        if (!cancelled) appState = s;
       });
-      unAuto = await subscribeAutosave((e) => {
+      if (cancelled) { sub(); return; }
+      unSub = sub;
+      const autoSub = await subscribeAutosave((e) => {
+        if (cancelled) return;
         savedLabel =
           e.status === "saved" ? `Saved ${formatAt(e.at)}` : `Autosave failed: ${e.message ?? "unknown"}`;
       });
-      unLib = await subscribeLibrary((l) => {
-        library = l;
+      if (cancelled) { autoSub(); return; }
+      unAuto = autoSub;
+      const libSub = await subscribeLibrary((l) => {
+        if (!cancelled) library = l;
       });
+      if (cancelled) { libSub(); return; }
+      unLib = libSub;
       try {
         const s = await api.getState();
-        appState = s;
-        selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
+        if (!cancelled) {
+          appState = s;
+          selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
+        }
       } catch (e) {
-        errorMsg = String(e);
+        if (!cancelled) errorMsg = String(e);
       }
-      api.listDisplays().then((d) => (displays = d)).catch((e: unknown) => (errorMsg = String(e)));
-      api.getLibrary().then((l) => (library = l)).catch((e: unknown) => (errorMsg = String(e)));
-      void loadBibles();
+      if (!cancelled) {
+        api.listDisplays().then((d) => { if (!cancelled) displays = d; }).catch((e: unknown) => { if (!cancelled) errorMsg = String(e); });
+        api.getLibrary().then((l) => { if (!cancelled) library = l; }).catch((e: unknown) => { if (!cancelled) errorMsg = String(e); });
+        void loadBibles();
+      }
     })();
 
     return () => {
+      cancelled = true;
       unSub();
       unAuto();
       unLib();
@@ -824,7 +885,7 @@
       >
         {#each project?.slides ?? [] as slide, i (slide.id)}
           {#if dragOverIndex === i}
-            <div class="drop-indicator" aria-hidden="true"></div>
+            <li class="drop-indicator" aria-hidden="true"></li>
           {/if}
           <li
             draggable="true"
@@ -868,7 +929,7 @@
           </li>
         {/each}
         {#if dragOverIndex === (project?.slides.length ?? 0)}
-          <div class="drop-indicator" aria-hidden="true"></div>
+          <li class="drop-indicator" aria-hidden="true"></li>
         {/if}
       </ul>
       <button class="add" onclick={() => addSlide()}>+ Add slide</button>
@@ -1329,11 +1390,21 @@
   }}
 />
 
+<SongEditorModal
+  open={showSongEditor}
+  initialTitle={pendingSongTitle}
+  initialBody={pendingSongBody}
+  onConfirm={handleSongEditorConfirm}
+  onCancel={handleAddSongCancel}
+  onBack={handleSongEditorBack}
+/>
+
 <style>
   .shell {
     display: flex;
     flex-direction: column;
     height: 100%;
+    overflow: hidden;
   }
 
   .topbar {
@@ -1430,10 +1501,11 @@
      scaling and during snap. Use viewport-relative clamp + flex so the center editor always
      has room and sidebars shrink proportionally. */
   .body {
-    flex: 1;
+    flex: 1 1 0;
     display: grid;
     grid-template-columns: clamp(220px, 18vw, 300px) minmax(320px, 1fr) clamp(220px, 18vw, 300px);
     min-height: 0;
+    overflow: hidden;
   }
 
   @media (max-width: 1180px) {
@@ -1454,7 +1526,9 @@
     padding: 12px;
     display: flex;
     flex-direction: column;
+    gap: 0;
     overflow: hidden;
+    min-height: 0;
   }
 
   .sidebar-section {
@@ -1464,12 +1538,19 @@
   }
 
   .sidebar-section.playlist {
-    flex: 1 1 0;
+    flex: 1 1 180px;
+    min-height: 120px;
   }
 
-  .sidebar-section.scripture,
-  .sidebar-section.library {
+  .sidebar-section.scripture {
     flex: 0 1 auto;
+    flex-shrink: 0;
+  }
+
+  .sidebar-section.library {
+    flex: 1 1 180px;
+    min-height: 140px;
+    max-height: 45%;
   }
 
   /* Phase 1 — Output panel is the representative screen for the warm/bold
@@ -1570,6 +1651,8 @@
     flex: 1 1 0;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
   }
 
   .slide-list li {
@@ -1823,9 +1906,11 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
   }
 
   .song-list li {
@@ -2118,10 +2203,12 @@
     padding: 16px;
     border-top: 1px solid var(--border);
     background: var(--panel);
-    min-height: 260px;
-    max-height: 38vh;
-    overflow: hidden;
+    min-height: 180px;
+    max-height: 42vh;
+    overflow: auto;
     position: relative;
+    flex: 0 0 auto;
+    resize: vertical;
   }
   .browse-dock-left {
     width: 220px;

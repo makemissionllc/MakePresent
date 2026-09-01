@@ -399,3 +399,32 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Bottom dock** `Editor.svelte:1286` `div.browse-dock` full-width `role="region"` inside `.shell` after `.body` (`Editor.svelte:1285` `</div>` `</div>`), `display:flex` `gap:16px` `padding:16px` `border-top` `min-height:260px` `max-height:38vh` `src/components/Editor.svelte:2020` (pushes `.body` `flex:1` up, not overlay, collapses to reclaim). Layout: left `browse-dock-left` `220px` `Translation` + `browse-books` (flex:1, more rows than 140px), middle `browse-dock-middle` `280px` `chapter-grid`, right `browse-dock-right` `flex:1` `browse-verses` (flex:1, largest area, full verse list with numbers, each `browse-verse` `draggable="true"` `Editor.svelte:660` `onScriptureDragStart` + `onclick` `insertBrowseVerse` — click is primary, drag secondary). `browse-placeholder` `Editor.svelte:2020` for empty states, `browse-dock-close` `× Hide` `Editor.svelte:1286`.
 - **Why:** fiddly verse selection in 140px/180px boxes + substantial unused empty space below slide edit form (currently wasted) — bottom dock gives real width+height, FreeShow bottom tab bar inspired. Keeps search available (`scripture-wrap` `Editor.svelte:555` stays in sidebar, both modes useful) and collapsible (`browseCollapsed` `true` default, preserves `clarity over density` for volunteers not using browse).
 - **Verify:** `cargo check` 1 `dead_code` `ensure_stage` / `npm run check` 0 warnings (after removing `browse-body` unused), `vite build` 129 modules; **hands-tested Ubuntu (built binary):** `Show` → bottom dock appears full-width below edit area, left book list shows 66 books scrollable with >10 visible rows (vs 5 before), middle chapter grid 1..50, right verse list shows `Genesis 1:1..31` each as clickable row → click `1:1` inserts `Genesis 1:1` slide, drag `John 3:16` from right verse list onto playlist at index 2 → inserted at 2, live slide unchanged. **Not hands-tested:** real window resize snap with bottom dock open (gap noted).
+
+## Feature Backlog (ProPresenter-parity push)
+
+*2026-09-04 — Planning/tracking only, no implementation this session.*
+
+### TIER 1 — Quick wins, high value
+
+- Targeted Clear Text / Clear Background (separate from existing `clear_output`)
+- Playlist templates (saved service skeletons: Pre-Service Loop, Worship, Sermon, etc.)
+- Slide auto-advance (per-slide countdown timer)
+- External desktop drag-and-drop → auto-create media slide (extends existing internal drag-and-drop)
+- Global quick search (unified: library + all cached Bibles + media cache)
+- In-line text tools (title-case formatter, basic spellcheck)
+- Local file parsing: `.pro` (ProPresenter), `.cho` (ChordPro), CCLI USR — via `quick-xml`, drag-and-drop import into `library.json`
+
+### TIER 2 — Real work, good architecture fit
+
+- Dynamic song arrangements: master block dictionary (Verse 1/Chorus/Bridge etc.) + array-flattening at queue time, replacing duplicated slide data
+- ChordPro parsing: strip brackets for Output, stacked chord/lyric layout for Stage (band-view monitor)
+- Targeted `stage_message` broadcast state (flashing banner for nursery alerts/countdowns, independent of main projection)
+- Remote control via embedded local HTTP/WebSocket server (axum/warp), mobile-optimized Svelte build served to phones on the LAN — extends the existing stage-network server pattern (port 1426) to control, not just view
+- Multi-layer compositing: `AppState` tracks independent background/slide/overlay arrays, `SlideRender.svelte` stacks them as transparent absolute-positioned layers via CSS `z-index`
+
+### TIER 3 — Real weight, scope carefully when reached
+
+- Native audio playback (`rodio`/`cpal`) for a single backing track with device routing to a specific sound card — NOTE: must coordinate with existing muted `<video>` playback to avoid audio conflicts; this is scoped as single-track, NOT the multi-track Dante stem routing already flagged long-tail in the earlier Future Ideas section
+- Live Editor preview thumbnails of Output/Stage (requires window/frame capture, not just state — meaningfully harder than a UI change)
+- Live video input via `getUserMedia` (UVC capture cards) — self-contained, moderate effort
+- NDI framepull/receiving (harder than existing NDI send; separate scope from Tier 2's remote control server)

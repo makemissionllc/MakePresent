@@ -810,6 +810,7 @@
         </div>
       {/if}
 
+      <div class="sidebar-section playlist">
       <div class="section-title">Playlist</div>
       <ul
         class="slide-list"
@@ -871,7 +872,9 @@
         {/if}
       </ul>
       <button class="add" onclick={() => addSlide()}>+ Add slide</button>
+      </div>
 
+      <div class="sidebar-section scripture">
       <div class="section-title scripture-title">Add Scripture</div>
       <div class="scripture-wrap">
         <input
@@ -948,7 +951,9 @@
           <p class="browse-hint">Browsing as full-width panel below — click a verse to add as slide (drag secondary).</p>
         {/if}
       </div>
+      </div>
 
+      <div class="sidebar-section library">
       <div class="section-title library-title">Library</div>
       <input
         type="text"
@@ -1000,6 +1005,7 @@
         {/each}
       </ul>
       <button class="add" onclick={() => addLibrarySong()}>+ Add song</button>
+      </div>
     </aside>
 
     <main class="editor">
@@ -1446,7 +1452,24 @@
     background: var(--panel);
     border-right: 1px solid var(--border);
     padding: 12px;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-section {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .sidebar-section.playlist {
+    flex: 1 1 0;
+  }
+
+  .sidebar-section.scripture,
+  .sidebar-section.library {
+    flex: 0 1 auto;
   }
 
   /* Phase 1 — Output panel is the representative screen for the warm/bold
@@ -1544,6 +1567,9 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .slide-list li {
@@ -1797,6 +1823,9 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
   }
 
   .song-list li {

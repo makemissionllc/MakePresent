@@ -196,18 +196,38 @@ pub fn run() {
                 std::thread::spawn(move || media::verify_on_startup(app));
             }
 
-            // Onboarding: only the Editor window exists at launch. The Output
-            // window is created on demand (first live slide or "Show Output");
-            // the Stage Display is restored below if it was left switched on.
-            if state.current_settings().stage_visible {
-                if let Some(index) = state.current_settings().stage_display_index {
-                    match windows::move_stage_to(app.handle(), index) {
-                        Ok(_) => state.logger.log(Level::Info, "stage: restored on startup"),
-                        Err(e) => {
-                            state.logger.log(Level::Warn, &format!("stage: restore failed: {e}"));
+            // Windows deadlock fix: pre-create Output+Stage hidden via deferred next-tick
+            // so live command handlers never call WebviewWindow::builder().build().
+            // This is scheduled as a short-delay run_on_main_thread task AFTER setup
+            // returns, so setup itself is not blocked (mirrors the 2.5s diagnostic pattern).
+            // Onboarding is preserved — windows are built hidden and only shown when
+            // the user goes live / toggles Stage, so .build() never runs inside a click handler.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(180));
+                    let handle_clone = handle.clone();
+                    let dispatch = handle.run_on_main_thread(move || {
+                        crate::windows::mark_as_main_thread();
+                        crate::windows::precreate_hidden_windows(&handle_clone);
+                        // If Stage was left visible last session, show it now (still deferred, not inline in setup).
+                        let st = handle_clone.state::<AppState>();
+                        if st.current_settings().stage_visible {
+                            if let Some(idx) = st.current_settings().stage_display_index {
+                                match crate::windows::move_stage_to(&handle_clone, idx) {
+                                    Ok(_) => st.logger.log(Level::Info, "stage: restored on startup (deferred pre-create)"),
+                                    Err(e) => st.logger.log(Level::Warn, &format!("stage: deferred restore failed: {e}")),
+                                }
+                            }
                         }
+                    });
+                    if let Err(e) = dispatch {
+                        handle.state::<AppState>().logger.log(
+                            Level::Error,
+                            &format!("windows: deferred pre-create dispatch failed: {e}"),
+                        );
                     }
-                }
+                });
             }
 
             // Diagnostic re-check a couple of seconds in: by then the stage

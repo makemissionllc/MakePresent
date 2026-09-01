@@ -185,43 +185,76 @@ where
 }
 
 /// The output window is a dumb renderer. Create it once, keep it around.
-/// Creation runs on the main thread (see `run_on_main`); on Windows, building
-/// a WebView2 window from a command thread can wedge the event loop.
+/// Pre-created hidden after setup so live handlers never call builder().build().
 pub fn ensure_output(app: &AppHandle) -> Result<WebviewWindow, String> {
     if let Some(window) = app.get_webview_window(OUTPUT_WINDOW) {
         return Ok(window);
     }
     let state = app.state::<AppState>();
-    state.logger.log(crate::logging::Level::Info, "windows: creating output window");
-    let app_main = app.clone();
-    run_on_main(app, &state, "ensure_output", move || {
-        match WebviewWindow::builder(&app_main, OUTPUT_WINDOW, output_url())
-            .title("MakePresent - Output")
-            .decorations(false)
-            .resizable(false)
-            .fullscreen(false)
-            .visible(false)
-            .build()
-        {
-            Ok(window) => {
-                app_main.state::<AppState>().logger.log(
+    // Fallback — should have been pre-created. On Windows, never build inline
+    // from a live command handler (inline Build blocks WebView2 IPC); schedule deferred.
+    #[cfg(windows)]
+    {
+        state.logger.log(
+            crate::logging::Level::Error,
+            "windows: ensure_output FALLBACK triggered — Output window was not pre-created! Scheduling deferred build (Windows inline deadlock avoidance).",
+        );
+        let app_clone = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            mark_as_main_thread();
+            let r = WebviewWindow::builder(&app_clone, OUTPUT_WINDOW, output_url())
+                .title("MakePresent - Output")
+                .decorations(false)
+                .resizable(false)
+                .fullscreen(false)
+                .visible(false)
+                .build();
+            match r {
+                Ok(w) => app_clone.state::<AppState>().logger.log(
                     crate::logging::Level::Info,
-                    &format!(
-                        "windows: output window created successfully ({})",
-                        describe_window(&window)
-                    ),
-                );
-                Ok(window)
-            }
-            Err(e) => {
-                app_main.state::<AppState>().logger.log(
+                    &format!("windows: deferred fallback Output created ({})", describe_window(&w)),
+                ),
+                Err(e) => app_clone.state::<AppState>().logger.log(
                     crate::logging::Level::Error,
-                    &format!("windows: FAILED to create output window: {e}"),
-                );
-                Err(format!("failed to create output window: {e}"))
+                    &format!("windows: deferred fallback Output FAILED: {e}"),
+                ),
             }
-        }
-    })
+        });
+        return Err("output window not yet pre-created — deferred build scheduled (retry shortly)".to_string());
+    }
+    #[cfg(not(windows))]
+    {
+        state.logger.log(crate::logging::Level::Info, "windows: creating output window");
+        let app_main = app.clone();
+        return run_on_main(app, &state, "ensure_output", move || {
+            match WebviewWindow::builder(&app_main, OUTPUT_WINDOW, output_url())
+                .title("MakePresent - Output")
+                .decorations(false)
+                .resizable(false)
+                .fullscreen(false)
+                .visible(false)
+                .build()
+            {
+                Ok(window) => {
+                    app_main.state::<AppState>().logger.log(
+                        crate::logging::Level::Info,
+                        &format!(
+                            "windows: output window created successfully ({})",
+                            describe_window(&window)
+                        ),
+                    );
+                    Ok(window)
+                }
+                Err(e) => {
+                    app_main.state::<AppState>().logger.log(
+                        crate::logging::Level::Error,
+                        &format!("windows: FAILED to create output window: {e}"),
+                    );
+                    Err(format!("failed to create output window: {e}"))
+                }
+            }
+        });
+    }
 }
 
 /// The stage display is a dumb renderer aimed at the performers/presenters.
@@ -250,34 +283,130 @@ pub fn ensure_stage(app: &AppHandle) -> Result<WebviewWindow, String> {
         return Ok(window);
     }
     let state = app.state::<AppState>();
-    state.logger.log(crate::logging::Level::Info, "windows: creating stage window");
-    let app_main = app.clone();
-    run_on_main(app, &state, "ensure_stage", move || {
-        match WebviewWindow::builder(&app_main, STAGE_WINDOW, stage_url())
+    // Fallback: should have been pre-created hidden after setup. On Windows, never build inline
+    // from a live command handler — that inline Build blocks WebView2 IPC and deadlocks the app.
+    // Log loudly and schedule a genuinely deferred next-tick build instead.
+    #[cfg(windows)]
+    {
+        state.logger.log(
+            crate::logging::Level::Error,
+            "windows: ensure_stage FALLBACK triggered — Stage window was not pre-created! Scheduling deferred build (Windows inline deadlock avoidance, not inline even if is_main_thread).",
+        );
+        let app_clone = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            mark_as_main_thread();
+            let r = WebviewWindow::builder(&app_clone, STAGE_WINDOW, stage_url())
+                .title("MakePresent - Stage Display")
+                .resizable(true)
+                .visible(false)
+                .build();
+            match r {
+                Ok(w) => app_clone.state::<AppState>().logger.log(
+                    crate::logging::Level::Info,
+                    &format!("windows: deferred fallback Stage created ({})", describe_window(&w)),
+                ),
+                Err(e) => app_clone.state::<AppState>().logger.log(
+                    crate::logging::Level::Error,
+                    &format!("windows: deferred fallback Stage FAILED: {e}"),
+                ),
+            }
+        });
+        return Err("stage window not yet pre-created — deferred build scheduled (retry shortly)".to_string());
+    }
+    #[cfg(not(windows))]
+    {
+        state.logger.log(crate::logging::Level::Info, "windows: creating stage window");
+        let app_main = app.clone();
+        return run_on_main(app, &state, "ensure_stage", move || {
+            match WebviewWindow::builder(&app_main, STAGE_WINDOW, stage_url())
+                .title("MakePresent - Stage Display")
+                .resizable(true)
+                .visible(false)
+                .build()
+            {
+                Ok(window) => {
+                    app_main.state::<AppState>().logger.log(
+                        crate::logging::Level::Info,
+                        &format!(
+                            "windows: stage window created successfully ({})",
+                            describe_window(&window)
+                        ),
+                    );
+                    Ok(window)
+                }
+                Err(e) => {
+                    app_main.state::<AppState>().logger.log(
+                        crate::logging::Level::Error,
+                        &format!("windows: FAILED to create stage window: {e}"),
+                    );
+                    Err(format!("failed to create stage window: {e}"))
+                }
+            }
+        });
+    }
+}
+
+/// Pre-create hidden Output+Stage windows once, unconditionally, after setup
+/// via a deferred next-tick dispatch. This ensures live command handlers
+/// (set_live_slide, show_output, toggle_stage) never call builder().build()
+/// and therefore never block WebView2 IPC on Windows.
+pub fn precreate_hidden_windows(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state.logger.log(
+        crate::logging::Level::Info,
+        "windows: pre-create hidden Output+Stage (deferred, not blocking setup)",
+    );
+    if app.get_webview_window(OUTPUT_WINDOW).is_none() {
+        match WebviewWindow::builder(app, OUTPUT_WINDOW, output_url())
+            .title("MakePresent - Output")
+            .decorations(false)
+            .resizable(false)
+            .fullscreen(false)
+            .visible(false)
+            .build()
+        {
+            Ok(w) => state.logger.log(
+                crate::logging::Level::Info,
+                &format!("windows: pre-created Output hidden ({})", describe_window(&w)),
+            ),
+            Err(e) => state.logger.log(
+                crate::logging::Level::Error,
+                &format!("windows: pre-create Output FAILED: {e}"),
+            ),
+        }
+    } else {
+        state.logger.log(
+            crate::logging::Level::Info,
+            "windows: Output already exists, skip pre-create",
+        );
+    }
+    if app.get_webview_window(STAGE_WINDOW).is_none() {
+        match WebviewWindow::builder(app, STAGE_WINDOW, stage_url())
             .title("MakePresent - Stage Display")
             .resizable(true)
             .visible(false)
             .build()
         {
-            Ok(window) => {
-                app_main.state::<AppState>().logger.log(
-                    crate::logging::Level::Info,
-                    &format!(
-                        "windows: stage window created successfully ({})",
-                        describe_window(&window)
-                    ),
-                );
-                Ok(window)
-            }
-            Err(e) => {
-                app_main.state::<AppState>().logger.log(
-                    crate::logging::Level::Error,
-                    &format!("windows: FAILED to create stage window: {e}"),
-                );
-                Err(format!("failed to create stage window: {e}"))
-            }
+            Ok(w) => state.logger.log(
+                crate::logging::Level::Info,
+                &format!("windows: pre-created Stage hidden ({})", describe_window(&w)),
+            ),
+            Err(e) => state.logger.log(
+                crate::logging::Level::Error,
+                &format!("windows: pre-create Stage FAILED: {e}"),
+            ),
         }
-    })
+    } else {
+        state.logger.log(
+            crate::logging::Level::Info,
+            "windows: Stage already exists, skip pre-create",
+        );
+    }
+    let count = app.webview_windows().len();
+    state.logger.log(
+        crate::logging::Level::Info,
+        &format!("windows: pre-create complete — window count = {count}"),
+    );
 }
 
 /// Place the stage window on the given display, windowed at ~70% of the
@@ -312,7 +441,41 @@ pub fn move_stage_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWin
             ),
         );
 
-        let window = ensure_stage(&app_main)?;
+        // Fast HashMap lookup — never calls builder().build() from a live handler (Windows deadlock avoidance).
+        // Window should have been pre-created hidden after setup; fallback is deferred, not inline.
+        let window = match app_main.get_webview_window(STAGE_WINDOW) {
+            Some(w) => w,
+            None => {
+                logger.log(
+                    crate::logging::Level::Error,
+                    "windows: move_stage_to — Stage window not pre-created! Scheduling deferred build (fallback, should not happen after pre-create)",
+                );
+                #[cfg(windows)]
+                {
+                    let ac_for_run = app_main.clone();
+                    let ac_for_build = app_main.clone();
+                    let _ = ac_for_run.run_on_main_thread(move || {
+                        mark_as_main_thread();
+                        let r = WebviewWindow::builder(&ac_for_build, STAGE_WINDOW, stage_url())
+                            .title("MakePresent - Stage Display")
+                            .resizable(true)
+                            .visible(false)
+                            .build();
+                        if let Err(e) = r {
+                            ac_for_build.state::<AppState>().logger.log(
+                                crate::logging::Level::Error,
+                                &format!("windows: deferred Stage fallback FAILED: {e}"),
+                            );
+                        }
+                    });
+                    return Err("stage window not pre-created — deferred build scheduled".to_string());
+                }
+                #[cfg(not(windows))]
+                {
+                    ensure_stage(&app_main)?
+                }
+            }
+        };
         let w = (target_size.width as f64 * 0.7).round() as u32;
         let h = (target_size.height as f64 * 0.7).round() as u32;
         let size_res = window.set_size(Size::Physical(PhysicalSize::new(w, h)));
@@ -415,7 +578,42 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
             ),
         );
 
-        let window = ensure_output(&app_main)?;
+        // Fast HashMap lookup — never calls builder().build() from a live handler (Windows deadlock avoidance).
+        let window = match app_main.get_webview_window(OUTPUT_WINDOW) {
+            Some(w) => w,
+            None => {
+                logger.log(
+                    crate::logging::Level::Error,
+                    "windows: move_output_to — Output window not pre-created! Scheduling deferred build (fallback)",
+                );
+                #[cfg(windows)]
+                {
+                    let ac_for_run = app_main.clone();
+                    let ac_for_build = app_main.clone();
+                    let _ = ac_for_run.run_on_main_thread(move || {
+                        mark_as_main_thread();
+                        let r = WebviewWindow::builder(&ac_for_build, OUTPUT_WINDOW, output_url())
+                            .title("MakePresent - Output")
+                            .decorations(false)
+                            .resizable(false)
+                            .fullscreen(false)
+                            .visible(false)
+                            .build();
+                        if let Err(e) = r {
+                            ac_for_build.state::<AppState>().logger.log(
+                                crate::logging::Level::Error,
+                                &format!("windows: deferred Output fallback FAILED: {e}"),
+                            );
+                        }
+                    });
+                    return Err("output window not pre-created — deferred build scheduled".to_string());
+                }
+                #[cfg(not(windows))]
+                {
+                    ensure_output(&app_main)?
+                }
+            }
+        };
         let exit_fs = if window.is_fullscreen().unwrap_or(false) {
             Some(window.set_fullscreen(false))
         } else {

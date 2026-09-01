@@ -72,7 +72,7 @@ never a dead end or a crash.
 
 ## Current Status
 
-### Built (Phases 1–5)
+### Built (Phases 1–9)
 
 Phase 1 — Foundation
 - Two-window Tauri app (Editor + Output), single Rust `AppState` source of
@@ -198,6 +198,38 @@ Phase 6 — Native MIDI + OSC slide triggering
 - 2026-08-31 — Phase 5 (NDI sending side) shipped; NDI capture + live
   streaming remains a documented runtime follow-up.
 
+Phase 7 — Scripture import: OpenLP XML + bible-api.com REST fallback
+- `quick-xml` integration in `scripture.rs` parses the widely-used OpenLP /
+  Zefania XML database formats (native, compact, and Zefania tag schemas) for
+  importing custom Bibles (`import_openlp_bible`).
+- `reqwest` integration queries a standard REST service (bible-api.com) as a
+  fallback (`import_api_bible` / `lookup_api_scripture`), mapping the JSON
+  response into the existing slide-generation workflow used by the bundled KJV.
+- Imported Bibles are cached under the app-data dir (`bibles/imports.json`) and
+  merged verse-level into the search index, so they survive restarts; both
+  import paths emit the same `ScriptureMatch` records the KJV path uses to drop
+  slides.
+
+Phase 8 — FreeShow-style visual template editor
+- The `Look` struct gained layout geometry (`positioning` `auto`/`absolute`,
+  per-role `title_box` / `body_box` with `x`/`y`/`width`/`height`/`z_index` in
+  percent-of-frame) plus independent `title_font` / `body_font` typography
+  pairings (e.g. Druk Wide / Helvetica Neue Bold on custom hex backgrounds).
+  All new fields carry serde defaults for clean deserialization of legacy
+  projects.
+- A drag-and-drop bounding-box editor in Settings → Looks translates the boxes
+  into absolute CSS in the shared `SlideRender.svelte`; `fitText` gained an
+  `absolute` mode so each text role fits independently within its own box.
+
+Phase 9 — Persistent renderers (standby / tray)
+- Closing the Editor window hides it rather than quitting — the Rust process
+  and any Output/Stage windows keep running and hold their state.
+- A `tray-icon`-enabled **system tray** (declared in `tauri.conf.json` +
+  `lib.rs`) offers *Open Editor* / *Quit* and a left-click-to-open; reopening
+  re-broadcasts `AppState` so every window resyncs. `ExitRequested` is
+  prevented unless the user explicitly chooses Quit.
+- `windows::ensure_editor` recreates a destroyed Editor window from the tray.
+
 ### Explicitly Deferred
 
 - Remote control (web/phone)
@@ -240,23 +272,27 @@ Startup creates **only the Editor window**.
 
 ```
 src-tauri/src/
-  lib.rs        App lifecycle: setup (recovery, logger, autosave worker), finalize, commands
+  lib.rs        App lifecycle: setup (recovery, logger, autosave worker, tray/standby), finalize, commands
   state.rs      AppState — the single source of truth
-  project.rs    Domain model (Project/Slide/Settings/Library), persistence, autosave worker
-  windows.rs    Window lifecycle: Output + Stage, display picking
+  project.rs    Domain model (Project/Slide/Settings/Library/Look+geometry), persistence, autosave worker
+  windows.rs    Window lifecycle: Output + Stage + Editor respawn, display picking
   media.rs      Media import/cache: copy+hash, ffmpeg thumbnails, startup verification
   broadcast.rs  NDI sender: runtime-loaded SDK (libloading), dedicated send thread
   midi.rs       MIDI input: midir listener, device enumeration, message parsing
   osc.rs        OSC listener: dedicated UDP thread, rosc decode, bundle flattening
   triggers.rs   Trigger/action model, routing, action→command dispatch
-  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import, NDI, MIDI/OSC/triggers
+  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import, NDI, MIDI/OSC/triggers, scripture import
   logging.rs    Rolling, immediately-flushed event log (logs/app.log)
+  scripture.rs  KJV search index + OpenLP/Zefania XML import + bible-api.com REST fallback
 src/
   editor.ts / Editor.svelte     Operator's window (playlist, edit, output/stage controls, settings)
   output.ts / Output.svelte     Dumb projection renderer (cut/fade crossfade)
   stage.ts / Stage.svelte       Dumb performer-facing renderer (current + next)
-  lib/types.ts                  Shared client contract (incl. Trigger/TriggerAction/MidiDeviceInfo)
+  components/SlideRender.svelte Shared slide+Look renderer (auto + absolute box layout)
+  components/SettingsPanel.svelte Settings modal (General / Looks+box editor / Triggers / Network / Logs)
+  lib/types.ts                  Shared client contract (incl. Trigger/TriggerAction/MidiDeviceInfo/Look+BoxGeometry)
   lib/sync.ts                   Tauri invoke + event subscriptions (incl. midi-message)
+  lib/fitText.ts                Auto-shrink text (auto + absolute box modes)
 ```
 
 ## NDI licensing & installation

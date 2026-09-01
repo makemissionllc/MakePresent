@@ -130,6 +130,12 @@ created the first time a slide goes live **or** the operator clicks *Show
 Output*. The Stage window is created purely through its toggle. This avoids a
 black/empty dead-end window at startup.
 
+**Persistent standby:** the app runs in the **system tray**. Closing the Editor
+hides it (the process and any Output/Stage windows keep running and holding
+their state); the tray's *Open Editor* (or a left-click on the icon) instantly
+respawns it and re-broadcasts state so every view resyncs. The app only exits
+via the tray's *Quit*.
+
 ---
 
 ## Data & Persistence
@@ -181,6 +187,20 @@ and shows a recovery notice when the prior exit was unclean.
 - A bundled **KJV** index (`kjv.json`, all 66 books) with abbreviation support
   (`jn`, `1 cor`, `psalm`, etc.). Search as you type and insert a verse as a
   new slide.
+- **Import custom Bibles** from the widely-used **OpenLP / Zefania XML** format
+  (`quick-xml`) — native, compact, and Zefania tag schemas — via
+  `import_openlp_bible`.
+- **REST fallback** via **bible-api.com** (`reqwest`): query any reference or
+  translation and fold the JSON response into the same slide-generation
+  workflow (`import_api_bible` / `lookup_api_scripture`). Imports are cached in
+  the app-data dir and merged into the search index so they survive restarts.
+
+### Persistent renderers (standby / tray)
+- Closing the Editor window **hides it instead of quitting** — the Rust process
+  (and any Output / Stage windows) keep running and hold their state.
+- A **system tray icon** (Open Editor / Quit) plus left-click-on-icon respawns
+  the Editor instantly; reopening re-broadcasts `AppState` so every view resyncs.
+- The process only exits when the user explicitly chooses **Quit** from the tray.
 
 ### On-deck media preloading
 - The backend names one **on-deck** slide per state (the selected-but-not-live
@@ -247,10 +267,17 @@ A **Look** contains:
 - `name`
 - `titleSize` / `bodySize` (base font sizes in px — `fitText` still shrinks on
   overflow)
+- `titleFont` / `bodyFont` (font-family strings, e.g. `Druk Wide`,
+  `Helvetica Neue Bold`) for typography pairings on any background
 - `textColor` (colour override)
 - `showBackground` (on/off — off yields plain text, useful for stage/stream
   compositing)
 - `textPosition` (`top` / `center` / `bottom`)
+- `positioning` — `auto` (text flows naturally, filled to the frame) or
+  `absolute` (FreeShow-style template editor: each text role lives in an
+  explicit draggable box)
+- `titleBox` / `bodyBox` — bounding-box geometry in % of the frame
+  (`x`, `y`, `width`, `height`, `zIndex`) used in `absolute` mode
 
 **Mapping:** each output window is assigned a Look id. The mapping lives in
 per-machine **settings** (`outputLookId` / `stageLookId` / `ndiLookId`), *not*
@@ -261,12 +288,21 @@ first look.
 
 **Storage:** Looks are stored on the **Project** (`project.looks`), so they save
 and load with autosave. New (and legacy) projects are seeded with default
-`Main` and `Stage` Looks.
+`Main` and `Stage` Looks; the new geometry/font fields carry serde defaults, so
+old saved projects deserialize cleanly.
 
 **Rendering:** a single shared `SlideRender.svelte` component accepts a `Look`
-prop and applies its styling — font sizes, text colour, text position, and
-background visibility. Both `Output.svelte` and `Stage.svelte` use it rather
-than duplicating slide logic.
+prop and applies its styling — font sizes, colour, position, background
+visibility and (in `absolute` mode) per-role bounding boxes translated into
+absolute CSS. Both `Output.svelte` and `Stage.svelte` use it rather than
+duplicating slide logic. `fitText` has an `absolute` mode that fits each text
+role independently against its own box.
+
+**Layout editor:** Settings → Looks → "Bounding boxes" exposes a 16:9 drag-drop
+canvas where the title and body boxes can be moved (drag) and resized (corner
+handle); live X/Y/W/H readouts update optimistically. Because it's just percent
+geometry, the boxes scale to any output resolution, and font pairs render
+cleanly over custom hex-colour backgrounds.
 
 **Live updates (optimistic):** editing a Look updates the editor's state
 immediately and broadcasts to all windows via the shared `"state"` event; the
@@ -280,8 +316,9 @@ edits take effect instantly.
 
 | Layer | Technology |
 |---|---|
-| Shell | **Tauri 2** (Rust backend + native webview windows) |
+| Shell | **Tauri 2** (Rust backend + native webview windows, system tray) |
 | Backend | **Rust** (edition 2021) — `serde`, `serde_json`, `uuid`, `chrono`, `sha2` |
+| Scripture XML/API | `quick-xml` (OpenLP/Zefania import) · `reqwest` (bible-api.com fallback) |
 | Frontend | **Svelte 5** (runes) + **TypeScript** + **Vite 6** |
 | Plugins | `@tauri-apps/plugin-dialog` (native file dialogs) |
 | Media | `ffmpeg` / `ffprobe` CLI (thumbnails + probe) |
@@ -317,23 +354,31 @@ src-tauri/                                 Rust backend
 ├─ resources/kjv.json                      Vendored KJV scripture data
 └─ src/
    ├─ main.rs                              Entry point
-   ├─ lib.rs                               Lifecycle: setup, finalize, command registration
+   ├─ lib.rs                               Lifecycle: setup, tray/standby, finalize, command registration
    ├─ state.rs                             AppState — the single source of truth
    ├─ project.rs                           Domain model, persistence, autosave worker
-   ├─ commands.rs                          38 Tauri IPC command handlers
-   ├─ windows.rs                           Output/Stage lifecycle + display picking
+   ├─ commands.rs                          46 Tauri IPC command handlers
+   ├─ windows.rs                           Output/Stage lifecycle + display picking + editor respawn
    ├─ media.rs                             Media import/cache + ffmpeg thumbnails
    ├─ broadcast.rs                         NDI sender (runtime-loaded SDK, own thread)
    ├─ midi.rs                              MIDI input (midir) + device enumeration + parsing
    ├─ osc.rs                               OSC listener (rosc, dedicated UDP thread)
    ├─ triggers.rs                          Trigger/action model + routing + dispatch
    ├─ logging.rs                           Rolling, immediately-flushed event log
-   └─ scripture.rs                         KJV scripture search index
+   └─ scripture.rs                         KJV search index + OpenLP XML + bible-api.com import
 ```
 
 ---
 
-## IPC Commands (38)
+## IPC Commands (46)
+
+**Scripture**
+| Command | Purpose |
+|---|---|
+| `search_scripture` | KJV / imported-Bible autocomplete search |
+| `import_openlp_bible` | Import an OpenLP / Zefania XML Bible file |
+| `import_api_bible` | Fetch a reference/translation from bible-api.com and import it |
+| `lookup_api_scripture` | Fetch + merge + return matches (drives the same slide path) |
 
 **State & project**
 | Command | Purpose |
@@ -343,6 +388,7 @@ src-tauri/                                 Rust backend
 | `add_slide` / `update_slide` / `delete_slide` | Edit playlist slides |
 | `set_live_slide` / `clear_output` | Set / clear the live slide |
 | `set_transition` | Set project Cut/Fade transition |
+| `log_output_intentionally_closed` | Mark an output close as intentional (no self-heal) |
 
 **Looks**
 | Command | Purpose |
@@ -391,7 +437,6 @@ src-tauri/                                 Rust backend
 |---|---|
 | `export_settings` / `import_settings` | Import/export per-machine settings |
 | `get_logs` / `export_logs_to` | View / export the event log |
-| `search_scripture` | KJV autocomplete search |
 
 ---
 
@@ -436,7 +481,7 @@ npm run check
 # Rust compile check
 cd src-tauri && cargo check
 
-# Rust unit / integration tests (37 tests: logging, media, scripture, settings, broadcast, midi, osc, triggers)
+# Rust unit / integration tests (44 tests: logging, media, scripture, settings, broadcast, midi, osc, triggers)
 cd src-tauri && cargo test
 
 # Production frontend bundle
@@ -493,7 +538,8 @@ largest remaining) rather than crash.
 ## Documentation
 
 - **`docs/PROJECT.md`** — the living project spec: what MakePresent is, design
-  intent, current status (Phases 1–5 shipped, including the NDI sender work),
-  anticipated failure modes, onboarding flow, and the code layout. This is the
-  source of truth for *direction*; this README is the source of truth for the
-  current codebase.
+  intent, current status (Phases 1–7 shipped, including NDI sender, MIDI/OSC
+  triggers, XML/API scripture import, visual template editor, and persistent
+  tray/standby), anticipated failure modes, onboarding flow, and the code
+  layout. This is the source of truth for *direction*; this README is the source
+  of truth for the current codebase.

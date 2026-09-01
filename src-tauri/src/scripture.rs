@@ -509,6 +509,11 @@ impl ScriptureIndex {
 
 /// Load the KJV index from the given kjv.json path. Panics on failure — use
 /// `try_load` for graceful startup handling.
+///
+/// Only compiled for tests: production startup uses `try_load` (and continues
+/// with scripture search disabled rather than panicking when the bundled
+/// resource is missing or corrupt).
+#[cfg(test)]
 pub fn load(kjv_path: &Path) -> ScriptureIndex {
     try_load(kjv_path).unwrap_or_else(|e| panic!("{e}"))
 }

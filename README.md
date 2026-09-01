@@ -494,14 +494,13 @@ npm run build
 
 ## CI / CD
 
-`.github/workflows/build.yml` builds on push to `main` (and via
-`workflow_dispatch`) on both **Ubuntu 22.04** and **Windows 2022**:
+`.github/workflows/build.yml` builds on push to `main`/`windows` (and PRs + `workflow_dispatch`) on both **Ubuntu 22.04** and **Windows 2022**:
 
 1. Install Tauri platform dependencies
 2. `npm ci`
 3. `npm run build` (frontend)
 4. `npm run check` (svelte-check)
-5. `npm run tauri build -- --no-bundle` (Rust release binary)
+5. `npm run tauri build` — `windows` job does full NSIS/MSI bundle (`webviewInstallMode.embedBootstrapper`), `ubuntu` does `--no-bundle` binary; `windows` uploads `bundle/nsis/*.exe` + `bundle/msi/*.msi`
 
 ---
 
@@ -526,12 +525,22 @@ largest remaining) rather than crash.
 
 ## Known Issues
 
-- **Windows build — post-Output-creation backend freeze (deferred).** After the
-  first successful command that creates the Output window, all subsequent
-  backend commands become unresponsive (frontend-only interactions still work).
-  Suspected: WebView2 leaves the main thread/event loop degraded after creating
-  a second webview window on Windows. **Deferred — Ubuntu is the active
-  development platform; revisit before any Windows deployment.**
+- **Windows build — post-Output-creation backend freeze (fixed 2026-08-31).** `output_visible()` used `is_visible()` WebView2 IPC; fixed to `get_webview_window().is_some()` HashMap `windows.rs:648`, `show_output` fire-and-forget, autosave `RwLock` fix `project.rs:633`.
+- **Windows build — `builder().build()` deadlock (fixed 2026-09-01).** `WebviewWindow::builder().build()` inside live `#[tauri::command]` handler blocks WebView2's Win32 message loop, freezing *all* commands. Fix: `lib.rs:166` deferred `precreate_hidden_windows()` after `setup` + `windows.rs:489` fast `get_webview_window()` + Windows-deferred fallback (never inline). Awaiting Windows log verification.
+
+---
+
+## Windows Blocking Audit (2026-09-01) — Same-Class Scan
+
+All `#[tauri::command]` + live paths scanned for synchronous Windows OS calls that could block the message loop. No remaining **HIGH** `builder().build()` in handlers. Highest residual:
+
+| Rank | Area | Risk |
+|---|---|---|
+| 1 | `windows.rs:86` `ensure_editor` (`builder().build()` via tray `show_editor` inline) | **MEDIUM** — rare tray recreation, not `invoke()`, but still inline on main |
+| 2 | `windows.rs:129` `describe_window` IPC (`is_visible` etc. in `log_window_state` worker) | **LOW** — diagnostic only, `snapshot()` no longer uses IPC |
+| 3-10 | `list_displays` Win32 `EnumDisplayMonitors`, `move_*` `set_*`/`show` (now fast after pre-create), `midi.rs:76` WinMM, `osc.rs:55`/`network.rs:126` already off-thread (`spawn` + `join` ≤1s), `broadcast.rs:147` `LoadLibraryExW` on worker (setup main at startup only), `tray` static (no runtime `set_menu` from handlers), `dialog` modal expected + already `spawn_blocking` | **LOW / FALSE POSITIVE** — on worker/thread, not main loop; not WebView2 deadlock class |
+
+Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Blocking Audit.
 
 ---
 

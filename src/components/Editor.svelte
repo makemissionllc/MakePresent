@@ -6,6 +6,7 @@
   import type { BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, ScriptureMatch, Slide } from "../lib/types";
   import { isMedia } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
+  import Modal from "./Modal.svelte";
 
   const PALETTE = [
     "#1a1a24",
@@ -67,6 +68,11 @@
   let isDragging = $state(false);
   let dragType = $state<string | null>(null);
   let dragPayload = $state<any>(null);
+
+  // Add song modal (reusable Modal, replaces window.prompt "localhost:1420 says")
+  let showAddSongTitleModal = $state(false);
+  let showAddSongBodyModal = $state(false);
+  let pendingSongTitle = $state("");
 
   // Draft copies for responsive editing — typing updates these immediately
   // while the backend save is debounced so the input never resets mid-keystroke.
@@ -637,13 +643,32 @@
   }
 
   function addLibrarySong(): void {
-    const title = window.prompt("Song title");
-    if (!title) return;
-    const body = window.prompt("Lyrics / body text") ?? "";
+    pendingSongTitle = "";
+    showAddSongTitleModal = true;
+  }
+
+  function handleAddSongTitleConfirm(title: string): void {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    pendingSongTitle = trimmed;
+    showAddSongTitleModal = false;
+    showAddSongBodyModal = true;
+  }
+
+  function handleAddSongBodyConfirm(body: string): void {
+    const title = pendingSongTitle;
+    showAddSongBodyModal = false;
+    pendingSongTitle = "";
     void api
       .addLibrarySong(title, body)
       .then((l) => (library = l))
       .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
+  function handleAddSongCancel(): void {
+    showAddSongTitleModal = false;
+    showAddSongBodyModal = false;
+    pendingSongTitle = "";
   }
 
   function deleteSong(song: LibrarySong): void {
@@ -1264,6 +1289,32 @@
 {#if settingsOpen}
   <SettingsPanel app={appState} onclose={() => (settingsOpen = false)} />
 {/if}
+
+<Modal
+  open={showAddSongTitleModal}
+  title="Add song"
+  label="Song title"
+  placeholder="e.g. Amazing Grace"
+  initialValue=""
+  confirmLabel="Next"
+  cancelLabel="Cancel"
+  onConfirm={handleAddSongTitleConfirm}
+  onCancel={handleAddSongCancel}
+/>
+<Modal
+  open={showAddSongBodyModal}
+  title="Add song"
+  label="Lyrics / body text (optional)"
+  placeholder="Enter lyrics, press Enter to save"
+  initialValue=""
+  confirmLabel="Add song"
+  cancelLabel="Back"
+  onConfirm={handleAddSongBodyConfirm}
+  onCancel={() => {
+    showAddSongBodyModal = false;
+    showAddSongTitleModal = true;
+  }}
+/>
 
 <style>
   .shell {

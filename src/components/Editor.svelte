@@ -8,6 +8,7 @@
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
   import SongEditorModal from "./SongEditorModal.svelte";
+  import ProjectHub from "../lib/components/ProjectHub.svelte";
 
   const PALETTE = [
     "#1a1a24",
@@ -77,6 +78,9 @@
   let showSongEditor = $state(false);
   let pendingSongTitle = $state("");
   let pendingSongBody = $state("");
+
+  // Project Hub (Startup launcher)
+  let showHub = $state(false);
 
   // Draft copies for responsive editing — typing updates these immediately
   // while the backend save is debounced so the input never resets mid-keystroke.
@@ -755,15 +759,28 @@
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
-  async function newProject(): Promise<void> {
+  function openHub(): void {
+    showHub = true;
+  }
+
+  async function handleHubCreate(
+    presetId: string,
+    opts: { title: string; aspect: string; theme: string; transition: string },
+  ): Promise<void> {
     try {
+      errorMsg = null;
       welcomeDismissed = true;
-      const s = await api.newProject();
-      appState = s;
-      selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
+      appState = await api.newProjectFromPreset(presetId, opts.title, opts.aspect, opts.theme, opts.transition);
+      selectedId = appState.project.slides[0]?.id ?? null;
+      showHub = false;
     } catch (e) {
       errorMsg = String(e);
     }
+  }
+
+  async function newProject(): Promise<void> {
+    // Legacy fallback — now routed through hub
+    openHub();
   }
 
   onMount(() => {
@@ -795,6 +812,8 @@
         if (!cancelled) {
           appState = s;
           selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
+          // Boot hub — Affinity-style launcher
+          showHub = true;
         }
       } catch (e) {
         if (!cancelled) errorMsg = String(e);
@@ -1399,6 +1418,13 @@
   onConfirm={handleSongEditorConfirm}
   onCancel={handleAddSongCancel}
   onBack={handleSongEditorBack}
+/>
+
+<ProjectHub
+  open={showHub}
+  recentName={project?.name ?? ""}
+  onClose={() => (showHub = false)}
+  onCreate={handleHubCreate}
 />
 
 <style>

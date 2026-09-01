@@ -183,6 +183,9 @@ pub fn add_library_song(
             id: Uuid::new_v4().to_string(),
             title: "".to_string(),
             body: body.unwrap_or_default(),
+            positioning: None,
+            group_id: None,
+            group_label: None,
         }]
     };
     let song = LibrarySong {
@@ -660,6 +663,56 @@ pub fn new_project(app: AppHandle) -> Result<ClientState, String> {
         project.selected = Some(first.id.clone());
     }
     log(&app, Level::Info, "project: created new project");
+    replace_project(&app, project)
+}
+
+#[tauri::command]
+pub fn list_presets() -> Vec<crate::project::ServicePreset> {
+    crate::project::default_presets()
+}
+
+#[tauri::command]
+pub fn new_project_from_preset(
+    app: AppHandle,
+    preset_id: String,
+    title: String,
+    aspect: Option<String>,
+    theme: Option<String>,
+    transition: Option<String>,
+) -> Result<ClientState, String> {
+    let presets = crate::project::default_presets();
+    let preset = presets.iter().find(|p| p.id == preset_id).cloned().unwrap_or(crate::project::ServicePreset {
+        id: "blank".to_string(),
+        name: "Custom".to_string(),
+        category: "Custom".to_string(),
+        description: "".to_string(),
+        default_aspect: "16:9".to_string(),
+        playlist_items: vec![],
+    });
+    let name = if title.trim().is_empty() { preset.name.clone() } else { title.trim().to_string() };
+    let aspect_val = aspect.unwrap_or(preset.default_aspect.clone());
+    let trans: crate::project::Transition = match transition.as_deref() {
+        Some("fade") | Some("Fade 300ms") | Some("Dissolve") => crate::project::Transition::Fade,
+        _ => crate::project::Transition::Cut,
+    };
+    let mut project = crate::project::Project::from_preset(&name, &aspect_val, trans, &preset);
+    // Theme maps to look selection for now — keep default looks, optionally tweak
+    if let Some(t) = theme {
+        if t.to_lowercase().contains("lower third") {
+            // Move text to bottom for lower third
+            for look in &mut project.looks {
+                look.text_position = crate::project::TextPosition::Bottom;
+            }
+        } else if t.to_lowercase().contains("gradient") {
+            for look in &mut project.looks {
+                look.show_background = true;
+            }
+        }
+    }
+    if let Some(first) = project.slides.first() {
+        project.selected = Some(first.id.clone());
+    }
+    log(&app, Level::Info, &format!("project: created from preset '{}' as '{}'", preset_id, name));
     replace_project(&app, project)
 }
 

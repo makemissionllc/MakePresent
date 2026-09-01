@@ -246,8 +246,12 @@ pub struct Project {
     /// How the Output switches between live slides ("cut" or "fade").
     #[serde(default)]
     pub transition: Transition,
+    #[serde(default = "default_aspect")]
+    pub aspect_ratio: String,
     pub modified_at: String,
 }
+
+fn default_aspect() -> String { "16:9".to_string() }
 
 impl Project {
     pub fn new(name: &str) -> Self {
@@ -267,8 +271,41 @@ impl Project {
             live: None,
             selected: None,
             transition: Transition::Cut,
+            aspect_ratio: default_aspect(),
             modified_at: now_iso(),
         }
+    }
+
+    pub fn from_preset(
+        name: &str,
+        aspect: &str,
+        transition: Transition,
+        preset: &ServicePreset,
+    ) -> Self {
+        let mut p = Self::new(name);
+        p.aspect_ratio = aspect.to_string();
+        p.transition = transition;
+        if preset.id == "blank" {
+            p.slides = vec![];
+        } else {
+            p.slides = preset
+                .playlist_items
+                .iter()
+                .map(|it| Slide {
+                    id: Uuid::new_v4().to_string(),
+                    library_id: None,
+                    library_slide_id: None,
+                    title: it.title.clone(),
+                    body: it.content.clone().unwrap_or_default(),
+                    background: Background::default(),
+                })
+                .collect();
+        }
+        if let Some(first) = p.slides.first() {
+            p.selected = Some(first.id.clone());
+        }
+        p.modified_at = now_iso();
+        p
     }
 
     /// Guarantee at least the default Main/Stage looks exist. Called on legacy
@@ -432,6 +469,86 @@ pub struct LibrarySong {
     pub title: String,
     pub default_background: Background,
     pub slides: Vec<LibrarySlide>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServicePresetItem {
+    pub title: String,
+    #[serde(rename = "type")]
+    pub item_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServicePreset {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub default_aspect: String,
+    pub playlist_items: Vec<ServicePresetItem>,
+}
+
+pub fn default_presets() -> Vec<ServicePreset> {
+    vec![
+        ServicePreset {
+            id: "sunday-morning".to_string(),
+            name: "Sunday Morning Service".to_string(),
+            category: "Sunday Service".to_string(),
+            description: "Welcome, worship, scripture, sermon & closing — the classic Sunday flow.".to_string(),
+            default_aspect: "16:9".to_string(),
+            playlist_items: vec![
+                ServicePresetItem { title: "Welcome".to_string(), item_type: "slide".to_string(), reference_id: None, content: Some("Welcome to Worship\nWe're glad you're here!".to_string()) },
+                ServicePresetItem { title: "Worship — Amazing Grace".to_string(), item_type: "song".to_string(), reference_id: Some("amazing-grace".to_string()), content: Some("Amazing grace, how sweet the sound\nThat saved a wretch like me".to_string()) },
+                ServicePresetItem { title: "Worship — Great Is Thy Faithfulness".to_string(), item_type: "song".to_string(), reference_id: Some("great-is-thy-faithfulness".to_string()), content: Some("Great is Thy faithfulness, O God my Father".to_string()) },
+                ServicePresetItem { title: "Scripture Reading".to_string(), item_type: "scripture".to_string(), reference_id: Some("John 3:16".to_string()), content: Some("For God so loved the world… — John 3:16".to_string()) },
+                ServicePresetItem { title: "Sermon Outline — Title".to_string(), item_type: "slide".to_string(), reference_id: None, content: Some("Today's Message\nSpeaker: Pastor\nText: John 3:16".to_string()) },
+                ServicePresetItem { title: "Closing Announcement".to_string(), item_type: "slide".to_string(), reference_id: None, content: Some("Thanks for joining!\nSee you next Sunday".to_string()) },
+            ],
+        },
+        ServicePreset {
+            id: "midweek".to_string(),
+            name: "Midweek Prayer & Bible Study".to_string(),
+            category: "Midweek".to_string(),
+            description: "Opening prayer, verse-by-verse study and prayer requests.".to_string(),
+            default_aspect: "16:9".to_string(),
+            playlist_items: vec![
+                ServicePresetItem { title: "Opening Prayer".to_string(), item_type: "slide".to_string(), reference_id: None, content: Some("Opening Prayer\nLet us pray together".to_string()) },
+                ServicePresetItem { title: "Scripture — Psalm 23:1".to_string(), item_type: "scripture".to_string(), reference_id: Some("Psalm 23:1".to_string()), content: Some("The Lord is my shepherd; I shall not want. — Psalm 23:1".to_string()) },
+                ServicePresetItem { title: "Scripture — Psalm 23:2".to_string(), item_type: "scripture".to_string(), reference_id: Some("Psalm 23:2".to_string()), content: Some("He makes me lie down in green pastures. — Psalm 23:2".to_string()) },
+                ServicePresetItem { title: "Scripture — Psalm 23:4".to_string(), item_type: "scripture".to_string(), reference_id: Some("Psalm 23:4".to_string()), content: Some("Even though I walk through the darkest valley… — Psalm 23:4".to_string()) },
+                ServicePresetItem { title: "Prayer Requests".to_string(), item_type: "slide".to_string(), reference_id: None, content: Some("Prayer Requests\nShare your burdens".to_string()) },
+                ServicePresetItem { title: "Closing Blessing".to_string(), item_type: "slide".to_string(), reference_id: None, content: Some("Go in peace — see you Sunday".to_string()) },
+            ],
+        },
+        ServicePreset {
+            id: "youth".to_string(),
+            name: "Youth Event — Upbeat Service".to_string(),
+            category: "Youth".to_string(),
+            description: "High-energy songs, games & announcements for youth night.".to_string(),
+            default_aspect: "16:9".to_string(),
+            playlist_items: vec![
+                ServicePresetItem { title: "Welcome — Youth Night!".to_string(), item_type: "slide".to_string(), reference_id: None, content: Some("YOUTH NIGHT\nAre you ready?".to_string()) },
+                ServicePresetItem { title: "Upbeat Worship".to_string(), item_type: "song".to_string(), reference_id: Some("youth-worship".to_string()), content: Some("This is the day the Lord has made\nWe will rejoice!".to_string()) },
+                ServicePresetItem { title: "Game — Ice Breaker".to_string(), item_type: "slide".to_string(), reference_id: None, content: Some("Quick Game\nTwo Truths & a Lie".to_string()) },
+                ServicePresetItem { title: "Announcements".to_string(), item_type: "slide".to_string(), reference_id: None, content: Some("Upcoming Events\nRetreat — Dec 12".to_string()) },
+                ServicePresetItem { title: "Message — Live Boldly".to_string(), item_type: "slide".to_string(), reference_id: None, content: Some("Live boldly for Christ\n1 Timothy 4:12".to_string()) },
+            ],
+        },
+        ServicePreset {
+            id: "blank".to_string(),
+            name: "Blank / Custom Service".to_string(),
+            category: "Custom".to_string(),
+            description: "Empty canvas — start from scratch.".to_string(),
+            default_aspect: "16:9".to_string(),
+            playlist_items: vec![],
+        },
+    ]
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -46,6 +46,10 @@ export function subscribeMidiMessage(
 export const api = {
   getState: () => invoke<ClientState>("get_state"),
 
+  listPresets: () => invoke<import("./types").ServicePreset[]>("list_presets"),
+  newProjectFromPreset: (presetId: string, title: string, aspect?: string, theme?: string, transition?: string) =>
+    invoke<ClientState>("new_project_from_preset", { presetId, title, aspect, theme, transition }),
+
   setLiveSlide: (slideId: string) =>
     invoke<ClientState>("set_live_slide", { slideId }),
 

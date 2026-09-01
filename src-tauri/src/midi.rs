@@ -23,8 +23,11 @@ use crate::state::AppState;
 use crate::triggers::{route_incoming, Trigger};
 use midir::{Ignore, MidiInput, MidiInputConnection};
 use serde::Serialize;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
+
+static LAST_STATUS: AtomicU8 = AtomicU8::new(0);
 
 /// A MIDI input device as shown in the settings panel.
 #[derive(Clone, Debug, Serialize)]
@@ -268,11 +271,7 @@ impl ParsedMidi {
 /// (reusing the previous status byte when a message is missing one) and
 /// guards every index so a short/garbage buffer is logged, not panic'd on.
 fn parse_midi_message(message: &[u8]) -> Option<ParsedMidi> {
-    static mut LAST_STATUS: u8 = 0;
-    // `parse_midi_message` is only ever called from the single midir callback
-    // thread, so a small static for running-status tracking is sound here.
-    // SAFETY: single-threaded access (one MidiListener).
-    let running_status = unsafe { LAST_STATUS };
+    let running_status = LAST_STATUS.load(Ordering::Relaxed);
 
     if message.is_empty() {
         return None;
@@ -281,17 +280,13 @@ fn parse_midi_message(message: &[u8]) -> Option<ParsedMidi> {
     let mut status = message[0];
 
     let body: &[u8] = if !is_status(status) {
-        // Running status: the first byte is actually data for the previous
-        // status. If we have no stored running status we can't interpret it.
         if !is_status(running_status) || running_status < 0x80 {
             return None;
         }
         status = running_status;
         message
     } else {
-        // Remember this status for the next message (running status).
-        // SAFETY: single-threaded as above.
-        unsafe { LAST_STATUS = status };
+        LAST_STATUS.store(status, Ordering::Relaxed);
         &message[1..]
     };
 

@@ -162,10 +162,18 @@ export interface DisplayInfo {
   current: boolean;
 }
 
+export interface SlidePositioning {
+  vAlign: "top" | "center" | "bottom";
+  hAlign: "left" | "center" | "right";
+}
+
 export interface LibrarySlide {
   id: string;
   title: string;
   body: string;
+  positioning?: SlidePositioning | null;
+  groupId?: string | null;
+  groupLabel?: string | null;
 }
 
 export interface LibrarySong {
@@ -173,6 +181,22 @@ export interface LibrarySong {
   title: string;
   defaultBackground: Background;
   slides: LibrarySlide[];
+}
+
+export interface ServicePresetItem {
+  title: string;
+  type: "slide" | "song" | "scripture";
+  referenceId?: string;
+  content?: string;
+}
+
+export interface ServicePreset {
+  id: string;
+  name: string;
+  category: "Sunday Service" | "Midweek" | "Youth" | "Custom";
+  description: string;
+  defaultAspect: "16:9" | "4:3" | "Vertical";
+  playlistItems: ServicePresetItem[];
 }
 
 export interface Library {

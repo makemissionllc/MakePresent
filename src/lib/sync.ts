@@ -46,6 +46,10 @@ export function subscribeMidiMessage(
 export const api = {
   getState: () => invoke<ClientState>("get_state"),
 
+  listPresets: () => invoke<import("./types").ServicePreset[]>("list_presets"),
+  newProjectFromPreset: (presetId: string, title: string, aspect?: string, theme?: string, transition?: string) =>
+    invoke<ClientState>("new_project_from_preset", { presetId, title, aspect, theme, transition }),
+
   setLiveSlide: (slideId: string) =>
     invoke<ClientState>("set_live_slide", { slideId }),
 
@@ -81,8 +85,12 @@ export const api = {
 
   getLibrary: () => invoke<Library>("get_library"),
 
-  addLibrarySong: (title: string, body?: string, background?: Background) =>
-    invoke<Library>("add_library_song", { title, body, background }),
+  addLibrarySong: (
+    title: string,
+    body?: string,
+    background?: Background,
+    slides?: { title: string; body: string; positioning?: { vAlign: string; hAlign: string }; groupId?: string; groupLabel?: string }[],
+  ) => invoke<Library>("add_library_song", { title, body, background, slides }),
 
   deleteLibrarySong: (songId: string) =>
     invoke<Library>("delete_library_song", { songId }),

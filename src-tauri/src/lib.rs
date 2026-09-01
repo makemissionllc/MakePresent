@@ -534,6 +534,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
+            commands::list_presets,
+            commands::new_project_from_preset,
             commands::get_library,
             commands::add_library_song,
             commands::delete_library_song,

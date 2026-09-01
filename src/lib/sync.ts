@@ -14,6 +14,7 @@ import type {
   MidiDeviceInfo,
   MidiMessageView,
   ScriptureMatch,
+  ScriptureImportResult,
   StageNetworkInfo,
   Transition,
   Trigger,
@@ -123,6 +124,21 @@ export const api = {
 
   searchScripture: (query: string) =>
     invoke<ScriptureMatch[]>("search_scripture", { query }),
+
+  importOpenlpBible: (path: string) =>
+    invoke<ScriptureImportResult>("import_openlp_bible", { path }),
+
+  importApiBible: (reference: string, translation?: string) =>
+    invoke<ScriptureImportResult>("import_api_bible", {
+      reference,
+      translation: translation || null,
+    }),
+
+  lookupApiScripture: (reference: string, translation?: string) =>
+    invoke<ScriptureMatch[]>("lookup_api_scripture", {
+      reference,
+      translation: translation || null,
+    }),
 
   listMidiDevices: () => invoke<MidiDeviceInfo[]>("list_midi_devices"),
 

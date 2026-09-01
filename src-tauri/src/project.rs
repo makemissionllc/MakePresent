@@ -83,9 +83,72 @@ pub enum TextPosition {
     Bottom,
 }
 
+/// How a text block is placed within its frame.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Positioning {
+    /// Text flows naturally (centred / top / bottom) and fills available space.
+    #[default]
+    Auto,
+    /// Text is placed in an explicit bounding box (FreeShow-style) using the
+    /// per-role geometry stored on the Look.
+    Absolute,
+}
+
+/// A single draggable text box's geometry, in percent of the frame (0-100).
+/// `width`/`height` are the box extent; `x`/`y` are the top-left corner.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BoxGeometry {
+    #[serde(default = "default_box_x")]
+    pub x: f32,
+    #[serde(default = "default_box_y")]
+    pub y: f32,
+    #[serde(default = "default_box_width")]
+    pub width: f32,
+    #[serde(default = "default_box_height")]
+    pub height: f32,
+    #[serde(default = "default_box_z")]
+    pub z_index: u32,
+}
+
+fn default_box_x() -> f32 {
+    5.0
+}
+fn default_box_y() -> f32 {
+    10.0
+}
+fn default_box_width() -> f32 {
+    90.0
+}
+fn default_box_height() -> f32 {
+    20.0
+}
+fn default_box_z() -> u32 {
+    1
+}
+
+impl Default for BoxGeometry {
+    fn default() -> Self {
+        Self {
+            x: default_box_x(),
+            y: default_box_y(),
+            width: default_box_width(),
+            height: default_box_height(),
+            z_index: default_box_z(),
+        }
+    }
+}
+
 /// A named style profile ("Look") that tells an output how to present the
 /// *same* underlying slide differently: main audience screen, stage display,
 /// or a future NDI/stream feed.
+///
+/// Layout: by default the text auto-flows (centred/top/bottom). Setting
+/// `positioning` to `absolute` switches to a FreeShow-style template editor
+/// where the title and body each live in an explicit, draggable bounding box
+/// (`title_box` / `body_box`) placed in percent-of-frame coordinates and
+/// translated to absolute CSS by the renderer.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Look {
@@ -96,13 +159,35 @@ pub struct Look {
     pub title_size: u32,
     /// Base font size for the slide body (px).
     pub body_size: u32,
+    /// Font family for the title (e.g. "Druk Wide", "Helvetica Neue Bold").
+    #[serde(default = "default_title_font")]
+    pub title_font: String,
+    /// Font family for the body text.
+    #[serde(default = "default_body_font")]
+    pub body_font: String,
     /// Override colour for the text.
     pub text_color: String,
     /// Whether the slide's background (solid colour or media) is drawn. When
     /// off only the text is shown, e.g. transparent for stage/stream compositing.
     pub show_background: bool,
-    /// Vertical placement of the text block within the frame.
+    /// Vertical placement of the text block within the frame (auto mode only).
     pub text_position: TextPosition,
+    /// Whether text uses auto flow or explicit absolute bounding boxes.
+    #[serde(default)]
+    pub positioning: Positioning,
+    /// Geometry of the title box (absolute mode).
+    #[serde(default)]
+    pub title_box: BoxGeometry,
+    /// Geometry of the body box (absolute mode).
+    #[serde(default)]
+    pub body_box: BoxGeometry,
+}
+
+fn default_title_font() -> String {
+    "sans-serif".to_string()
+}
+fn default_body_font() -> String {
+    "sans-serif".to_string()
 }
 
 impl Look {
@@ -112,9 +197,14 @@ impl Look {
             name: "Main".to_string(),
             title_size: 72,
             body_size: 40,
+            title_font: default_title_font(),
+            body_font: default_body_font(),
             text_color: "#ffffff".to_string(),
             show_background: true,
             text_position: TextPosition::Center,
+            positioning: Positioning::Auto,
+            title_box: BoxGeometry::default(),
+            body_box: BoxGeometry::default(),
         }
     }
 
@@ -124,9 +214,14 @@ impl Look {
             name: "Stage".to_string(),
             title_size: 60,
             body_size: 56,
+            title_font: default_title_font(),
+            body_font: default_body_font(),
             text_color: "#ffffff".to_string(),
             show_background: false,
             text_position: TextPosition::Center,
+            positioning: Positioning::Auto,
+            title_box: BoxGeometry::default(),
+            body_box: BoxGeometry::default(),
         }
     }
 }

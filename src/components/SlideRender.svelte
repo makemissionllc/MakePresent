@@ -18,11 +18,13 @@
 <div
   class="slide-render"
   class:no-bg={!look.showBackground}
+  class:absolute={look.positioning === "absolute"}
   class:pos-top={look.textPosition === "top"}
   class:pos-center={look.textPosition === "center"}
   class:pos-bottom={look.textPosition === "bottom"}
   use:fitText={{
-    deps: `${look.titleSize}:${look.bodySize}:${look.textPosition}`,
+    mode: look.positioning === "absolute" ? "absolute" : "auto",
+    deps: `${look.titleSize}:${look.bodySize}:${look.textPosition}:${look.positioning}:${look.titleFont}:${look.bodyFont}`,
   }}
   style:--look-title-size={`${look.titleSize}px`}
   style:--look-body-size={`${look.bodySize}px`}
@@ -32,7 +34,7 @@
   {#if look.showBackground}
     {#if slide.background.type === "image"}
       <img
-        class="media-layer"
+        class="slide-background media-layer"
         src={convertFileSrc(slide.background.path)}
         alt=""
         draggable="false"
@@ -42,7 +44,7 @@
       />
     {:else if slide.background.type === "video"}
       <video
-        class="media-layer"
+        class="slide-background media-layer"
         src={convertFileSrc(slide.background.path)}
         autoplay
         loop
@@ -53,10 +55,32 @@
     {/if}
   {/if}
   {#if slide.title}
-    <h1 class="look-title" data-role="title">{slide.title}</h1>
+    <h1
+      class="look-title"
+      data-role="title"
+      style:font-family={look.titleFont}
+      style:left={`${look.titleBox.x}%`}
+      style:top={`${look.titleBox.y}%`}
+      style:width={`${look.titleBox.width}%`}
+      style:height={`${look.titleBox.height}%`}
+      style:z-index={look.titleBox.zIndex}
+    >
+      {slide.title}
+    </h1>
   {/if}
   {#if slide.body}
-    <p class="look-body" data-role="body">{slide.body}</p>
+    <p
+      class="look-body"
+      data-role="body"
+      style:font-family={look.bodyFont}
+      style:left={`${look.bodyBox.x}%`}
+      style:top={`${look.bodyBox.y}%`}
+      style:width={`${look.bodyBox.width}%`}
+      style:height={`${look.bodyBox.height}%`}
+      style:z-index={look.bodyBox.zIndex}
+    >
+      {slide.body}
+    </p>
   {/if}
 </div>
 
@@ -64,13 +88,27 @@
   .slide-render {
     position: absolute;
     inset: 0;
+    width: 100%;
+    height: 100%;
+    flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
+    box-sizing: border-box;
     gap: 2.5vh;
     padding: 8vh 10vw;
     text-align: center;
     overflow: hidden;
+  }
+
+  .slide-background {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    object-fit: cover;
   }
 
   .slide-render.pos-top {
@@ -97,6 +135,25 @@
   .look-body {
     position: relative;
     z-index: 1;
+  }
+
+  /* FreeShow-style absolute layout: each text role becomes an explicit,
+     draggable bounding box positioned by the geometry injected as inline
+     styles (left/top/width/height/z-index) from the Look. */
+  .slide-render.absolute .look-title,
+  .slide-render.absolute .look-body {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    box-sizing: border-box;
+    margin: 0;
+    overflow: hidden;
+    text-align: center;
+    white-space: pre-wrap;
+  }
+  .slide-render.absolute .look-body {
+    max-width: none;
   }
 
   .look-title {

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
@@ -7,22 +7,25 @@ use std::time::Instant;
 // Raw deserialization types (matches kjv.json structure)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
-struct RawBook {
-    book: String,
-    chapters: Vec<RawChapter>,
+/// One Bible book with its chapters/verses. Also the JSON shape used to persist
+/// imported Bibles and the output of the OpenLP / bible-api.com parsers.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RawBook {
+    pub book: String,
+    pub chapters: Vec<RawChapter>,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawChapter {
-    chapter: String,
-    verses: Vec<RawVerse>,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RawChapter {
+    #[serde(rename = "chapter")]
+    pub chapter: String,
+    pub verses: Vec<RawVerse>,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawVerse {
-    verse: String,
-    text: String,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RawVerse {
+    pub verse: String,
+    pub text: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -170,34 +173,7 @@ impl ScriptureIndex {
 
         // Load book data
         for raw in raw_books {
-            let name = raw.book.clone();
-            let chapters: Vec<ScriptureChapter> = raw
-                .chapters
-                .into_iter()
-                .filter_map(|rc| {
-                    let ch_num = rc.chapter.parse::<u32>().ok()?;
-                    let verses: Vec<ScriptureVerse> = rc
-                        .verses
-                        .into_iter()
-                        .filter_map(|rv| {
-                            let v_num = rv.verse.parse::<u32>().ok()?;
-                            Some(ScriptureVerse {
-                                verse: v_num,
-                                text: rv.text,
-                            })
-                        })
-                        .collect();
-                    Some(ScriptureChapter {
-                        chapter: ch_num,
-                        verses,
-                    })
-                })
-                .collect();
-
-            // Also register the canonical name if it wasn't in the abbreviation table
-            Self::add_alias(&mut name_map, &name, &name);
-
-            books.insert(name.clone(), BookData { name, chapters });
+            Self::add_book(&mut name_map, &mut books, raw);
         }
 
         // De-duplicate the alias lists.
@@ -207,6 +183,98 @@ impl ScriptureIndex {
         }
 
         ScriptureIndex { name_map, books }
+    }
+
+    /// Fold `incoming` chapters/verses into an existing book without dropping
+    /// verses the import did not mention.
+    fn merge_book_data(existing: &mut BookData, incoming: BookData) {
+        for ch in incoming.chapters {
+            if let Some(dst) = existing.chapters.iter_mut().find(|c| c.chapter == ch.chapter) {
+                for v in ch.verses {
+                    if let Some(ev) = dst.verses.iter_mut().find(|x| x.verse == v.verse) {
+                        ev.text = v.text;
+                    } else {
+                        dst.verses.push(v);
+                    }
+                }
+                dst.verses.sort_by_key(|v| v.verse);
+            } else {
+                existing.chapters.push(ch);
+            }
+        }
+        existing.chapters.sort_by_key(|c| c.chapter);
+    }
+
+    /// Convert a raw book into its in-memory representation, skipping any
+    /// non-numeric chapter/verse numbers.
+    fn book_data_from(raw: RawBook) -> Option<BookData> {
+        let chapters: Vec<ScriptureChapter> = raw
+            .chapters
+            .into_iter()
+            .filter_map(|rc| {
+                let ch_num = rc.chapter.parse::<u32>().ok()?;
+                let verses: Vec<ScriptureVerse> = rc
+                    .verses
+                    .into_iter()
+                    .filter_map(|rv| {
+                        let v_num = rv.verse.parse::<u32>().ok()?;
+                        Some(ScriptureVerse {
+                            verse: v_num,
+                            text: rv.text,
+                        })
+                    })
+                    .collect();
+                Some(ScriptureChapter { chapter: ch_num, verses })
+            })
+            .collect();
+        if chapters.is_empty() {
+            return None;
+        }
+        Some(BookData { name: raw.book, chapters })
+    }
+
+    /// Register a book in the index, creating or extending its entry and
+    /// ensuring its canonical name is searchable.
+    ///
+    /// Verse-level upsert: a full OpenLP Bible overwrites matching verses, while
+    /// a bible-api.com snippet (e.g. John 3:16) does not wipe the rest of that
+    /// book from the bundled KJV.
+    fn add_book(
+        name_map: &mut HashMap<String, Vec<String>>,
+        books: &mut HashMap<String, BookData>,
+        raw: RawBook,
+    ) {
+        let name = raw.book.clone();
+        let Some(incoming) = Self::book_data_from(raw) else {
+            return;
+        };
+        match books.get_mut(&name) {
+            Some(existing) => Self::merge_book_data(existing, incoming),
+            None => {
+                books.insert(name.clone(), incoming);
+            }
+        }
+        Self::add_alias(name_map, &name, &name);
+    }
+
+    /// Merge imported books (from an OpenLP file or the API) into the index.
+    /// Matching book/chapter/verse cells are overwritten; everything else in
+    /// the bundled set stays. Returns the number of verses in `added`.
+    pub fn merge_books(&mut self, added: Vec<RawBook>) -> usize {
+        let mut imported = 0;
+        for raw in added {
+            imported += raw
+                .chapters
+                .iter()
+                .map(|ch| ch.verses.len())
+                .sum::<usize>();
+            Self::add_book(&mut self.name_map, &mut self.books, raw);
+        }
+        for names in self.name_map.values_mut() {
+            names.sort();
+            names.dedup();
+        }
+        imported
     }
 
     /// Parse a query string into (normalized_book, chapter?, verse?).
@@ -461,6 +529,374 @@ pub fn try_load(kjv_path: &Path) -> Result<ScriptureIndex, String> {
     Ok(index)
 }
 
+// ---------------------------------------------------------------------------
+// Persistence of imported Bibles
+// ---------------------------------------------------------------------------
+
+/// Where imported Bibles (OpenLP files + bible-api.com fetches) are cached so
+/// they survive app restarts alongside the bundled KJV.
+pub fn imported_books_path(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join("bibles").join("imports.json")
+}
+
+/// Load any previously imported books from disk (best effort; empty on error).
+pub fn load_imported_books(data_dir: &Path) -> Vec<RawBook> {
+    std::fs::read_to_string(imported_books_path(data_dir))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Write the imported-book cache to disk.
+pub fn save_imported_books(data_dir: &Path, books: &[RawBook]) -> Result<(), String> {
+    let path = imported_books_path(data_dir);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(books).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+/// Fold newly imported books into the persistent list. Matching verses are
+/// overwritten; books/chapters that only exist on one side are kept.
+pub fn merge_persisted(existing: &mut Vec<RawBook>, added: Vec<RawBook>) {
+    for raw in added {
+        if let Some(dst) = existing.iter_mut().find(|b| b.book == raw.book) {
+            for ch in raw.chapters {
+                if let Some(dst_ch) = dst.chapters.iter_mut().find(|c| c.chapter == ch.chapter) {
+                    for v in ch.verses {
+                        if let Some(ev) = dst_ch.verses.iter_mut().find(|x| x.verse == v.verse) {
+                            ev.text = v.text;
+                        } else {
+                            dst_ch.verses.push(v);
+                        }
+                    }
+                } else {
+                    dst.chapters.push(ch);
+                }
+            }
+        } else {
+            existing.push(raw);
+        }
+    }
+}
+
+/// Flatten nested book data into the same `ScriptureMatch` records the bundled
+/// KJV search feeds into `add_slide` (title = reference, body = verse text).
+pub fn matches_from_books(books: &[RawBook], limit: usize) -> Vec<ScriptureMatch> {
+    let mut out = Vec::new();
+    for book in books {
+        for ch in &book.chapters {
+            let Ok(ch_num) = ch.chapter.parse::<u32>() else {
+                continue;
+            };
+            for v in &ch.verses {
+                let Ok(vs_num) = v.verse.parse::<u32>() else {
+                    continue;
+                };
+                if out.len() >= limit {
+                    return out;
+                }
+                out.push(ScriptureMatch {
+                    book: book.book.clone(),
+                    chapter: ch_num,
+                    verse: vs_num,
+                    reference: format!("{} {}:{}", book.book, ch_num, vs_num),
+                    text: v.text.trim().to_string(),
+                });
+            }
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// OpenLP / Zefania XML import
+// ---------------------------------------------------------------------------
+
+use quick_xml::events::{BytesStart, Event};
+
+/// Lowercased local tag name so `BIBLEBOOK`, `biblebook`, and namespaced
+/// variants (`osis:verse`) are treated identically.
+fn tag_name(e: &BytesStart) -> String {
+    String::from_utf8_lossy(e.local_name().as_ref()).to_lowercase()
+}
+
+fn end_tag_name(e: &quick_xml::events::BytesEnd) -> String {
+    String::from_utf8_lossy(e.local_name().as_ref()).to_lowercase()
+}
+
+/// Read the first matching attribute value (case-insensitive) from an element.
+fn attr(e: &BytesStart, names: &[&str]) -> Option<String> {
+    for a in e.attributes().flatten() {
+        let key = String::from_utf8_lossy(a.key.as_ref()).to_lowercase();
+        let key = key.rsplit(':').next().unwrap_or(&key);
+        if names.iter().any(|n| key == *n) {
+            return Some(a.unescape_value().unwrap_or_default().into_owned());
+        }
+    }
+    None
+}
+
+fn is_book_tag(name: &str) -> bool {
+    matches!(name, "biblebook" | "b" | "book")
+}
+
+fn is_chapter_tag(name: &str) -> bool {
+    matches!(name, "chapter" | "c")
+}
+
+fn is_verse_tag(name: &str) -> bool {
+    matches!(name, "vers" | "verse" | "v")
+}
+
+fn is_skip_tag(name: &str) -> bool {
+    matches!(
+        name,
+        "note" | "title" | "style" | "caption" | "comment" | "metadata"
+    )
+}
+
+/// Parse an OpenLP-compatible Bible XML document into raw book data.
+///
+/// Accepts:
+/// - Zefania: `XMLBIBLE / BIBLEBOOK bname / CHAPTER cnumber / VERS vnumber`
+/// - OpenLP compact: `bible / b n / c n / v n`
+/// - OpenLP native: `bible / book name / chapter number / verse number`
+///
+/// Nested notes/titles inside a verse are ignored. Returns books in document
+/// order. The numeric book id is unused — the index already has English aliases.
+pub fn parse_openlp_xml(xml: &str) -> Result<Vec<RawBook>, String> {
+    let mut reader = quick_xml::Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+
+    let mut books: Vec<RawBook> = Vec::new();
+    let mut buf = Vec::new();
+    let mut cur_book: Option<usize> = None;
+    let mut cur_chapter: Option<(usize, usize)> = None;
+    let mut in_verse = false;
+    let mut skip_depth: usize = 0;
+    let mut verse_num = String::new();
+    let mut verse_text = String::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let name = tag_name(&e);
+                if skip_depth > 0 || is_skip_tag(&name) {
+                    skip_depth += 1;
+                } else if is_book_tag(&name) {
+                    let name = attr(&e, &["bname", "name", "n", "bsname"]).unwrap_or_default();
+                    if !name.is_empty() {
+                        books.push(RawBook {
+                            book: name,
+                            chapters: Vec::new(),
+                        });
+                        cur_book = Some(books.len() - 1);
+                    }
+                    cur_chapter = None;
+                } else if is_chapter_tag(&name) {
+                    if let Some(bi) = cur_book {
+                        let num = attr(&e, &["cnumber", "number", "n"]).unwrap_or_default();
+                        if !num.is_empty() {
+                            books[bi].chapters.push(RawChapter {
+                                chapter: num,
+                                verses: Vec::new(),
+                            });
+                            cur_chapter = Some((bi, books[bi].chapters.len() - 1));
+                        }
+                    }
+                } else if is_verse_tag(&name) && cur_chapter.is_some() {
+                    in_verse = true;
+                    verse_num = attr(&e, &["vnumber", "number", "n"]).unwrap_or_default();
+                    verse_text.clear();
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let name = tag_name(&e);
+                if skip_depth == 0 && is_verse_tag(&name) {
+                    if let Some((bi, ci)) = cur_chapter {
+                        let num = attr(&e, &["vnumber", "number", "n"]).unwrap_or_default();
+                        books[bi].chapters[ci].verses.push(RawVerse {
+                            verse: num,
+                            text: String::new(),
+                        });
+                    }
+                }
+            }
+            Ok(Event::Text(t)) => {
+                if in_verse && skip_depth == 0 {
+                    verse_text.push_str(&t.unescape().unwrap_or_default());
+                }
+            }
+            Ok(Event::CData(t)) => {
+                if in_verse && skip_depth == 0 {
+                    verse_text.push_str(&String::from_utf8_lossy(t.as_ref()));
+                }
+            }
+            Ok(Event::End(e)) => {
+                let name = end_tag_name(&e);
+                if skip_depth > 0 {
+                    skip_depth -= 1;
+                } else if in_verse && is_verse_tag(&name) {
+                    in_verse = false;
+                    if let Some((bi, ci)) = cur_chapter {
+                        books[bi].chapters[ci].verses.push(RawVerse {
+                            verse: verse_num.clone(),
+                            text: verse_text.trim().to_string(),
+                        });
+                    }
+                } else if is_chapter_tag(&name) {
+                    cur_chapter = None;
+                } else if is_book_tag(&name) {
+                    cur_book = None;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => {
+                return Err(format!(
+                    "failed to parse OpenLP XML at byte {}: {e}",
+                    reader.buffer_position()
+                ))
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    if books.is_empty() {
+        return Err("no Bible books found in the OpenLP XML document".to_string());
+    }
+    // Drop any books that ended up with no verses/chapters.
+    books.retain(|b| !b.chapters.is_empty());
+    if books.is_empty() {
+        return Err("no verses found in the OpenLP XML document".to_string());
+    }
+    Ok(books)
+}
+
+// ---------------------------------------------------------------------------
+// bible-api.com REST integration
+// ---------------------------------------------------------------------------
+
+/// A single verse returned by bible-api.com.
+#[derive(Debug, Deserialize)]
+struct ApiVerse {
+    #[serde(rename = "book_name")]
+    book_name: String,
+    chapter: u32,
+    verse: u32,
+    text: String,
+    #[serde(rename = "book_id")]
+    #[allow(dead_code)]
+    book_id: Option<String>,
+}
+
+/// The overall bible-api.com response container.
+#[derive(Debug, Deserialize)]
+struct ApiResponse {
+    #[allow(dead_code)]
+    reference: String,
+    verses: Vec<ApiVerse>,
+    #[serde(rename = "translation_id")]
+    #[allow(dead_code)]
+    translation_id: Option<String>,
+}
+
+/// Query bible-api.com for a human-readable reference ("John 3:16",
+/// "rom 8:28", "John 3") and map the returned verses into raw book data ready
+/// to fold into the scripture index. `translation` is optional (defaults to
+/// WEB on the service).
+pub async fn fetch_api_bible(
+    reference: &str,
+    translation: Option<&str>,
+) -> Result<Vec<RawBook>, String> {
+    let reference = reference.trim();
+    if reference.is_empty() {
+        return Err("empty scripture reference".to_string());
+    }
+    let base = format!("https://bible-api.com/{}", url_encode(reference));
+    let url = match translation {
+        Some(t) if !t.trim().is_empty() => {
+            format!("{}?translation={}", base, url_encode(t.trim()))
+        }
+        _ => base,
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("MakePresent/0.1 (https://github.com/dwellpraise/makepresent)")
+        .build()
+        .map_err(|e| format!("bible-api client: {e}"))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("bible-api request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "bible-api returned HTTP {} — check the reference (book, chapter, verse)",
+            resp.status()
+        ));
+    }
+    let api: ApiResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("failed to decode bible-api response: {e}"))?;
+    if api.verses.is_empty() {
+        return Err("bible-api returned no verses for that reference".to_string());
+    }
+    Ok(group_api_verses(api.verses))
+}
+
+/// Group a flat list of API verses (possibly spanning books/chapters) into the
+/// nested book → chapter → verse structure the index consumes.
+fn group_api_verses(verses: Vec<ApiVerse>) -> Vec<RawBook> {
+    let mut books: Vec<RawBook> = Vec::new();
+    let mut book_index: HashMap<String, usize> = HashMap::new();
+    for v in verses {
+        let bi = match book_index.get(&v.book_name) {
+            Some(&i) => i,
+            None => {
+                book_index.insert(v.book_name.clone(), books.len());
+                books.push(RawBook { book: v.book_name.clone(), chapters: Vec::new() });
+                books.len() - 1
+            }
+        };
+        let chapter_str = v.chapter.to_string();
+        let chapters = &mut books[bi].chapters;
+        let ci = match chapters.iter().position(|c| c.chapter == chapter_str) {
+            Some(i) => i,
+            None => {
+                chapters.push(RawChapter { chapter: chapter_str, verses: Vec::new() });
+                chapters.len() - 1
+            }
+        };
+        chapters[ci].verses.push(RawVerse {
+            verse: v.verse.to_string(),
+            text: v.text.trim().to_string(),
+        });
+    }
+    books
+}
+
+/// Lightweight percent-encoding suitable for a bible-api.com path segment.
+/// Spaces become `+` and a literal `:` is left intact (the service expects
+/// references like `john+3:16`).
+fn url_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b':' => {
+                out.push(char::from(*b));
+            }
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,11 +997,129 @@ mod tests {
         assert_eq!(r[0].book, "Psalms");
         assert_eq!(r[0].chapter, 23);
         assert_eq!(r[0].verse, 1);
+    }
 
-        // Book only → first verse of chapter 1
-        let r = idx.search("gen", 10);
-        assert!(!r.is_empty());
-        assert_eq!(r[0].book, "Genesis");
-        assert_eq!(r[0].chapter, 1);
+    #[test]
+    fn parse_zefania_xml() {
+        let xml = r#"<?xml version="1.0"?>
+        <XMLBIBLE>
+          <BIBLEBOOK bnumber="43" bname="John">
+            <CHAPTER cnumber="3">
+              <VERS vnumber="16">For God so loved the world.</VERS>
+              <VERS vnumber="17">For God sent not his Son into the world to condemn the world.</VERS>
+            </CHAPTER>
+          </BIBLEBOOK>
+        </XMLBIBLE>"#;
+        let books = parse_openlp_xml(xml).unwrap();
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].book, "John");
+        assert_eq!(books[0].chapters[0].chapter, "3");
+        assert_eq!(books[0].chapters[0].verses[0].verse, "16");
+        assert!(books[0].chapters[0].verses[0].text.contains("God so loved"));
+        assert_eq!(books[0].chapters[0].verses.len(), 2);
+    }
+
+    #[test]
+    fn parse_openlp_native_and_compact() {
+        let native = r#"<bible>
+          <testament name="nt">
+            <book name="John">
+              <chapter number="1">
+                <verse number="1">In the beginning was the Word.</verse>
+                <verse number="2">The same was in the beginning with God.<note>ignored</note></verse>
+              </chapter>
+            </book>
+          </testament>
+        </bible>"#;
+        let books = parse_openlp_xml(native).unwrap();
+        assert_eq!(books[0].book, "John");
+        assert_eq!(books[0].chapters[0].verses[0].text, "In the beginning was the Word.");
+        assert_eq!(
+            books[0].chapters[0].verses[1].text,
+            "The same was in the beginning with God."
+        );
+
+        let compact = r#"<bible><b n="Ruth"><c n="1"><v n="1">In the days when the judges ruled.</v></c></b></bible>"#;
+        let books = parse_openlp_xml(compact).unwrap();
+        assert_eq!(books[0].book, "Ruth");
+        assert_eq!(books[0].chapters[0].chapter, "1");
+        assert_eq!(books[0].chapters[0].verses[0].verse, "1");
+    }
+
+    #[test]
+    fn parse_openlp_empty_document_errors() {
+        assert!(parse_openlp_xml("<XMLBIBLE></XMLBIBLE>").is_err());
+    }
+
+    #[test]
+    fn group_api_verses_nests_books() {
+        let verses = vec![
+            ApiVerse {
+                book_name: "John".into(),
+                chapter: 3,
+                verse: 16,
+                text: "  For God so loved the world.  ".into(),
+                book_id: Some("JHN".into()),
+            },
+            ApiVerse {
+                book_name: "John".into(),
+                chapter: 3,
+                verse: 17,
+                text: "For God sent not his Son.".into(),
+                book_id: Some("JHN".into()),
+            },
+            ApiVerse {
+                book_name: "Romans".into(),
+                chapter: 8,
+                verse: 28,
+                text: "And we know that all things work together.".into(),
+                book_id: Some("ROM".into()),
+            },
+        ];
+        let books = group_api_verses(verses);
+        assert_eq!(books.len(), 2);
+        assert_eq!(books[0].book, "John");
+        assert_eq!(books[0].chapters[0].verses.len(), 2);
+        assert_eq!(books[0].chapters[0].verses[0].text, "For God so loved the world.");
+        assert_eq!(books[1].book, "Romans");
+        let matches = matches_from_books(&books, 10);
+        assert_eq!(matches.len(), 3);
+        assert_eq!(matches[0].reference, "John 3:16");
+        assert_eq!(matches[0].text, "For God so loved the world.");
+    }
+
+    #[test]
+    fn merge_does_not_wipe_existing_verses() {
+        let idx = ScriptureIndex::build(vec![RawBook {
+            book: "John".into(),
+            chapters: vec![RawChapter {
+                chapter: "3".into(),
+                verses: vec![
+                    RawVerse {
+                        verse: "16".into(),
+                        text: "KJV 16".into(),
+                    },
+                    RawVerse {
+                        verse: "17".into(),
+                        text: "KJV 17".into(),
+                    },
+                ],
+            }],
+        }]);
+        let mut idx = idx;
+        idx.merge_books(vec![RawBook {
+            book: "John".into(),
+            chapters: vec![RawChapter {
+                chapter: "3".into(),
+                verses: vec![RawVerse {
+                    verse: "16".into(),
+                    text: "WEB 16".into(),
+                }],
+            }],
+        }]);
+        let r16 = idx.search("john 3:16", 5);
+        assert_eq!(r16[0].text, "WEB 16");
+        let r17 = idx.search("john 3:17", 5);
+        assert_eq!(r17[0].text, "KJV 17");
     }
 }

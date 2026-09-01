@@ -265,11 +265,12 @@ pub fn run() {
             {
                 let handle = app.handle().clone();
                 let kjv_resolved = app.path().resolve("kjv.json", tauri::path::BaseDirectory::Resource);
+                let data_dir = app.path().app_data_dir();
                 std::thread::spawn(move || {
                     let st = handle.state::<AppState>();
                     match kjv_resolved {
                         Ok(kjv_path) => match scripture::try_load(&kjv_path) {
-                            Ok(scripture) => {
+                            Ok(mut scripture) => {
                                 st.logger.log(
                                     Level::Info,
                                     &format!(
@@ -278,6 +279,23 @@ pub fn run() {
                                         kjv_path.display()
                                     ),
                                 );
+                                // Fold in any Bibles the user imported in an
+                                // earlier session so they stay searchable.
+                                if let Ok(data_dir) = data_dir {
+                                    let imported = scripture::load_imported_books(&data_dir);
+                                    if !imported.is_empty() {
+                                        let verses = scripture.merge_books(imported);
+                                        st.logger.log(
+                                            Level::Info,
+                                            &format!(
+                                                "scripture: restored imported Bibles \
+                                                 ({} books, {} verses)",
+                                                scripture.book_count(),
+                                                verses
+                                            ),
+                                        );
+                                    }
+                                }
                                 *st.scripture.write().unwrap() = Some(scripture);
                             }
                             Err(e) => {
@@ -372,6 +390,9 @@ pub fn run() {
             commands::get_logs,
             commands::export_logs_to,
             commands::search_scripture,
+            commands::import_openlp_bible,
+            commands::import_api_bible,
+            commands::lookup_api_scripture,
             commands::list_midi_devices,
             commands::set_midi_enabled,
             commands::set_midi_device,

@@ -38,3 +38,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "
 futures-util = "0.3"
 # Local IP enumeration for the Settings Network URL/QR display (no manual IP lookup).
 get_if_addrs = "0.5"
+# Scripture integrations: quick-xml parses the widely used OpenLP/Zefania XML
+# Bible database format for importing custom Bibles; reqwest queries the
+# bible-api.com REST service as a fallback source. `rustls-tls` keeps the build
+# free of a system OpenSSL dependency.
+quick-xml = "0.37"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2"] }

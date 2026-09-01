@@ -32,6 +32,13 @@ import type { Action } from "svelte/action";
  */
 
 export interface FitTextOptions {
+  /**
+   * `"auto"` (default): text roles share one vertical budget inside the node
+   * and are measured against the node's content box. `"absolute"`: each role
+   * lives in its own explicit bounding box (FreeShow-style template editor)
+   * and is independently fitted to that box's own width/height.
+   */
+  mode?: "auto" | "absolute";
   /** Floor font size in px for [data-role="title"] before ellipsis truncation. */
   minTitlePx?: number;
   /** Floor font size in px for [data-role="body"] before ellipsis truncation. */
@@ -199,6 +206,7 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
     const body = node.querySelector<HTMLElement>(BODY_SEL);
     if (!title && !body) return;
 
+    const mode = opts?.mode ?? "auto";
     const cs = getComputedStyle(node);
     const padX = px(cs.paddingLeft) + px(cs.paddingRight);
     const padY = px(cs.paddingTop) + px(cs.paddingBottom);
@@ -211,6 +219,23 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
       const pct = readMetrics(el).maxWidthPct ?? 100;
       return Math.max(0, ((contentW * pct) / 100));
     };
+
+    // Absolute mode: each role has its own explicit box (inline left/top/
+    // width/height). Capture the box's pixel size before neutralising, then
+    // fit each role independently against its own box — never its sibling.
+    if (mode === "absolute") {
+      if (title) {
+        const tw = Math.max(1, title.getBoundingClientRect().width);
+        const th = Math.max(1, title.getBoundingClientRect().height);
+        fitElement(title, minTitlePx, tw, th);
+      }
+      if (body) {
+        const bw = Math.max(1, body.getBoundingClientRect().width);
+        const bh = Math.max(1, body.getBoundingClientRect().height);
+        fitElement(body, minBodyPx, bw, bh);
+      }
+      return;
+    }
 
     let titleH = title ? title.offsetHeight : 0;
     let bodyH = body ? body.offsetHeight : 0;

@@ -46,6 +46,8 @@
   let scriptureIdx = $state(-1);
   let scriptureLoading = $state(false);
   let scriptureTimer: ReturnType<typeof setTimeout> | null = null;
+  let scriptureBusy = $state(false);
+  let scriptureStatus = $state<string | null>(null);
   // Draft copies for responsive editing — typing updates these immediately
   // while the backend save is debounced so the input never resets mid-keystroke.
   let draftTitle = $state("");
@@ -147,6 +149,56 @@
       errorMsg = String(e);
     } finally {
       scriptureLoading = false;
+    }
+  }
+
+  function looksLikeReference(q: string): boolean {
+    return /\d/.test(q.trim());
+  }
+
+  async function fetchApiScripture(q: string): Promise<void> {
+    scriptureBusy = true;
+    scriptureStatus = null;
+    scriptureLoading = true;
+    try {
+      const matches = await api.lookupApiScripture(q.trim());
+      scriptureResults = matches;
+      scriptureOpen = matches.length > 0;
+      scriptureIdx = -1;
+      if (matches.length === 0) {
+        scriptureStatus = "bible-api.com returned no verses for that reference.";
+      }
+    } catch (e) {
+      scriptureResults = [];
+      scriptureOpen = false;
+      errorMsg = String(e);
+    } finally {
+      scriptureBusy = false;
+      scriptureLoading = false;
+    }
+  }
+
+  async function importOpenlpFile(): Promise<void> {
+    try {
+      errorMsg = null;
+      scriptureStatus = null;
+      const picked = await open({
+        multiple: false,
+        filters: [
+          { name: "OpenLP / Zefania Bible XML", extensions: ["xml"] },
+        ],
+      });
+      if (!picked || Array.isArray(picked)) return;
+      scriptureBusy = true;
+      const result = await api.importOpenlpBible(picked);
+      scriptureStatus = `Imported ${result.books} books (${result.verses} verses). ${result.totalBooks} books searchable.`;
+      if (scriptureQuery.trim()) {
+        await doScriptureSearch(scriptureQuery);
+      }
+    } catch (e) {
+      errorMsg = String(e);
+    } finally {
+      scriptureBusy = false;
     }
   }
 
@@ -541,6 +593,25 @@
               </li>
             {/each}
           </ul>
+        {/if}
+        {#if scriptureQuery.trim() && !scriptureLoading && scriptureResults.length === 0 && looksLikeReference(scriptureQuery)}
+          <button
+            class="add scripture-fallback"
+            disabled={scriptureBusy}
+            onclick={() => fetchApiScripture(scriptureQuery)}
+          >
+            Look up “{scriptureQuery.trim()}” on bible-api.com
+          </button>
+        {/if}
+        <button
+          class="add scripture-import"
+          disabled={scriptureBusy}
+          onclick={() => void importOpenlpFile()}
+        >
+          Import OpenLP Bible…
+        </button>
+        {#if scriptureStatus}
+          <p class="scripture-status">{scriptureStatus}</p>
         {/if}
       </div>
 
@@ -1182,6 +1253,18 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     display: block;
+  }
+
+  .scripture-fallback,
+  .scripture-import {
+    margin-top: 6px;
+    font-size: 12px;
+  }
+
+  .scripture-status {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--text-dim);
   }
 
   .song-list {

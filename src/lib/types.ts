@@ -43,14 +43,29 @@ export interface Slide {
 
 export type TextPosition = "top" | "center" | "bottom";
 
+export type Positioning = "auto" | "absolute";
+
+export interface BoxGeometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zIndex: number;
+}
+
 export interface Look {
   id: string;
   name: string;
   titleSize: number;
   bodySize: number;
+  titleFont: string;
+  bodyFont: string;
   textColor: string;
   showBackground: boolean;
   textPosition: TextPosition;
+  positioning: Positioning;
+  titleBox: BoxGeometry;
+  bodyBox: BoxGeometry;
 }
 
 export type Transition = "cut" | "fade";
@@ -70,9 +85,14 @@ export interface LookPatch {
   name?: string;
   titleSize?: number;
   bodySize?: number;
+  titleFont?: string;
+  bodyFont?: string;
   textColor?: string;
   showBackground?: boolean;
   textPosition?: TextPosition;
+  positioning?: Positioning;
+  titleBox?: BoxGeometry;
+  bodyBox?: BoxGeometry;
 }
 
 export interface Notice {
@@ -188,6 +208,12 @@ export interface ScriptureMatch {
   verse: number;
   reference: string;
   text: string;
+}
+
+export interface ScriptureImportResult {
+  books: number;
+  verses: number;
+  totalBooks: number;
 }
 
 export type Trigger =

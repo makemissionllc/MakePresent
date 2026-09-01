@@ -1,7 +1,8 @@
 use crate::logging::{Level, LogEntry};
 use crate::project::{
     is_first_run, now_iso, Background, BroadcastView, ClientState, Library, LibrarySlide,
-    LibrarySong, Look, OutputView, Project, Settings, Slide, StageView, TextPosition, Transition,
+    BoxGeometry, LibrarySong, Look, OutputView, Positioning, Project, Settings, Slide, StageView,
+    TextPosition, Transition,
     write_settings,
 };
 use crate::scripture::ScriptureMatch;
@@ -382,9 +383,14 @@ pub struct LookPatch {
     pub name: Option<String>,
     pub title_size: Option<u32>,
     pub body_size: Option<u32>,
+    pub title_font: Option<String>,
+    pub body_font: Option<String>,
     pub text_color: Option<String>,
     pub show_background: Option<bool>,
     pub text_position: Option<TextPosition>,
+    pub positioning: Option<Positioning>,
+    pub title_box: Option<BoxGeometry>,
+    pub body_box: Option<BoxGeometry>,
 }
 
 /// Create a new Look (when `look_id` is None) or update an existing one with
@@ -440,6 +446,16 @@ fn apply_look_patch(look: &mut Look, patch: LookPatch) {
     if let Some(body_size) = patch.body_size {
         look.body_size = body_size.clamp(16, 300);
     }
+    if let Some(title_font) = patch.title_font {
+        if !title_font.trim().is_empty() {
+            look.title_font = title_font;
+        }
+    }
+    if let Some(body_font) = patch.body_font {
+        if !body_font.trim().is_empty() {
+            look.body_font = body_font;
+        }
+    }
     if let Some(text_color) = patch.text_color {
         if !text_color.trim().is_empty() {
             look.text_color = text_color;
@@ -451,6 +467,26 @@ fn apply_look_patch(look: &mut Look, patch: LookPatch) {
     if let Some(text_position) = patch.text_position {
         look.text_position = text_position;
     }
+    if let Some(positioning) = patch.positioning {
+        look.positioning = positioning;
+    }
+    if let Some(title_box) = patch.title_box {
+        look.title_box = clamp_box(title_box);
+    }
+    if let Some(body_box) = patch.body_box {
+        look.body_box = clamp_box(body_box);
+    }
+}
+
+/// Clamp a bounding box's geometry to valid percent ranges so the renderer can
+/// always translate it into sane absolute CSS.
+fn clamp_box(mut b: BoxGeometry) -> BoxGeometry {
+    b.x = b.x.clamp(0.0, 100.0);
+    b.y = b.y.clamp(0.0, 100.0);
+    b.width = b.width.clamp(5.0, 100.0);
+    b.height = b.height.clamp(5.0, 100.0);
+    b.z_index = b.z_index.min(100);
+    b
 }
 
 /// Delete a Look. Outputs still mapped to it fall back to the first remaining
@@ -1254,6 +1290,125 @@ pub fn search_scripture(
         .as_ref()
         .ok_or_else(|| "scripture index not loaded".to_string())?;
     Ok(index.search(&query, 10))
+}
+
+/// The outcome of folding imported scripture into the search index.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptureImportResult {
+    /// Number of distinct books that were (re)added by this import.
+    pub books: usize,
+    /// Total verses folded in by this import (across all its books).
+    pub verses: usize,
+    /// Total distinct books now in the search index (bundled + imported).
+    pub total_books: usize,
+}
+
+/// Merge imported books into the live scripture index and persist them to the
+/// re-importable cache so imports survive an app restart.
+fn apply_scripture_import(
+    state: &AppState,
+    books: &[crate::scripture::RawBook],
+) -> Result<ScriptureImportResult, String> {
+    let verses;
+    let total_books;
+    {
+        let mut guard = state.scripture.write().unwrap();
+        let index = guard
+            .as_mut()
+            .ok_or_else(|| "scripture index not loaded yet — try again in a moment".to_string())?;
+        verses = index.merge_books(books.to_vec());
+        total_books = index.book_count();
+    }
+    let data_dir = state.app_data_dir();
+    let mut imported = crate::scripture::load_imported_books(&data_dir);
+    crate::scripture::merge_persisted(&mut imported, books.to_vec());
+    crate::scripture::save_imported_books(&data_dir, &imported)?;
+    Ok(ScriptureImportResult {
+        books: books.len(),
+        verses,
+        total_books,
+    })
+}
+
+/// Import a custom Bible from an OpenLP / Zefania XML file (the format OpenLP
+/// ships and imports). The frontend picks the file; parsing runs off-thread so
+/// a large XML dump cannot stall the UI. Books merge into the scripture search
+/// index and then use the same add-slide path as the bundled KJV.
+#[tauri::command]
+pub async fn import_openlp_bible(
+    app: AppHandle,
+    path: String,
+) -> Result<ScriptureImportResult, String> {
+    let path_buf = std::path::PathBuf::from(path.clone());
+    let books = tauri::async_runtime::spawn_blocking(move || {
+        let xml = std::fs::read_to_string(&path_buf)
+            .map_err(|e| format!("failed to read {}: {e}", path_buf.display()))?;
+        crate::scripture::parse_openlp_xml(&xml)
+    })
+    .await
+    .map_err(|e| format!("import task failed: {e}"))??;
+    let state = app.state::<AppState>();
+    let result = apply_scripture_import(&state, &books)?;
+    log(
+        &app,
+        Level::Info,
+        &format!(
+            "scripture: imported {} books / {} verses from {path}",
+            result.books, result.verses
+        ),
+    );
+    Ok(result)
+}
+
+/// Import a book (or a specific passage) from the bible-api.com REST service
+/// as a fallback source, mapping the JSON response into the same scripture
+/// index and slide-generation workflow used by the bundled Bible. `reference`
+/// is a human-readable string like "John 3:16" or "rom 8:28"; `translation`
+/// is optional (defaults to WEB on the service).
+#[tauri::command]
+pub async fn import_api_bible(
+    app: AppHandle,
+    reference: String,
+    translation: Option<String>,
+) -> Result<ScriptureImportResult, String> {
+    let books = crate::scripture::fetch_api_bible(&reference, translation.as_deref()).await?;
+    let state = app.state::<AppState>();
+    let result = apply_scripture_import(&state, &books)?;
+    log(
+        &app,
+        Level::Info,
+        &format!(
+            "scripture: imported {} books / {} verses from bible-api.com ({})",
+            result.books, result.verses, reference
+        ),
+    );
+    Ok(result)
+}
+
+/// Fetch a passage from bible-api.com, fold it into the search index, and
+/// return `ScriptureMatch` records ready for the same `add_slide(reference,
+/// text)` workflow used by bundled KJV autocomplete.
+#[tauri::command]
+pub async fn lookup_api_scripture(
+    app: AppHandle,
+    reference: String,
+    translation: Option<String>,
+) -> Result<Vec<ScriptureMatch>, String> {
+    let books = crate::scripture::fetch_api_bible(&reference, translation.as_deref()).await?;
+    let matches = crate::scripture::matches_from_books(&books, 20);
+    let state = app.state::<AppState>();
+    apply_scripture_import(&state, &books)?;
+    log(
+        &app,
+        Level::Info,
+        &format!(
+            "scripture: bible-api.com fallback for \"{}\" — {} verses",
+            reference,
+            matches.len()
+        ),
+    );
+    Ok(matches)
 }
 
 // ---------------------------------------------------------------------------

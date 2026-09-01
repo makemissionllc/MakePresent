@@ -2,12 +2,14 @@
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { api, subscribeMidiMessage } from "../lib/sync";
   import type {
+    BoxGeometry,
     ClientState,
     LogEntry,
     Look,
     LookPatch,
     MidiDeviceInfo,
     MidiMessageView,
+    Positioning,
     StageNetworkInfo,
     TextPosition,
     Trigger,
@@ -90,9 +92,14 @@
       name: updated.name,
       titleSize: updated.titleSize,
       bodySize: updated.bodySize,
+      titleFont: updated.titleFont,
+      bodyFont: updated.bodyFont,
       textColor: updated.textColor,
       showBackground: updated.showBackground,
       textPosition: updated.textPosition,
+      positioning: updated.positioning,
+      titleBox: updated.titleBox,
+      bodyBox: updated.bodyBox,
     };
     if (commitTimer) clearTimeout(commitTimer);
     commitTimer = setTimeout(() => {
@@ -107,9 +114,14 @@
         name: `Look ${looks.length + 1}`,
         titleSize: 60,
         bodySize: 40,
+        titleFont: "sans-serif",
+        bodyFont: "sans-serif",
         textColor: "#ffffff",
         showBackground: true,
         textPosition: "center",
+        positioning: "auto",
+        titleBox: { x: 5, y: 10, width: 90, height: 20, zIndex: 1 },
+        bodyBox: { x: 5, y: 35, width: 90, height: 45, zIndex: 1 },
       })
       .then((s) => {
         appState = s;
@@ -140,6 +152,77 @@
           ? api.setStageLook
           : api.setNdiLook;
     void fn(id).then((s) => (appState = s)).catch((e: unknown) => (lookErr = String(e)));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bounding-box template editor (FreeShow-style)
+  // ---------------------------------------------------------------------------
+
+  // Which role's box the pointer is currently moving/resizing ("title"|"body").
+  let boxDrag: { role: "title" | "body"; mode: "move" | "resize" } | null = $state(null);
+  let canvasRef = $state<HTMLDivElement | null>(null);
+
+  function boxOf(role: "title" | "body"): BoxGeometry {
+    if (!draft) return { x: 5, y: 10, width: 90, height: 20, zIndex: 1 };
+    return role === "title" ? draft.titleBox : draft.bodyBox;
+  }
+
+  function updateBox(role: "title" | "body", next: BoxGeometry): void {
+    if (!draft) return;
+    setDraft(role === "title" ? "titleBox" : "bodyBox", next);
+  }
+
+  function setPositioning(p: Positioning): void {
+    if (!draft) return;
+    setDraft("positioning", p);
+  }
+
+  function onBoxPointerDown(e: PointerEvent, role: "title" | "body", mode: "move" | "resize") {
+    e.preventDefault();
+    e.stopPropagation();
+    boxDrag = { role, mode };
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+  }
+
+  function onCanvasPointerMove(e: PointerEvent): void {
+    if (!boxDrag || !draft) return;
+    const el = canvasRef;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const w = Math.max(1, rect.width);
+    const h = Math.max(1, rect.height);
+    const px = (e.clientX - rect.left) / w;
+    const py = (e.clientY - rect.top) / h;
+
+    let cur = boxOf(boxDrag.role);
+    let next: BoxGeometry;
+    if (boxDrag.mode === "move") {
+      next = { ...cur, x: clamp(px * 100 - cur.width / 2), y: clamp(py * 100 - cur.height / 2) };
+    } else {
+      // Resize from the bottom-right corner: keep the top-left anchored.
+      next = {
+        ...cur,
+        width: clamp(px * 100 - cur.x, 5, 100 - cur.x),
+        height: clamp(py * 100 - cur.y, 5, 100 - cur.y),
+      };
+    }
+    updateBox(boxDrag.role, next);
+  }
+
+  function endBoxDrag(e: PointerEvent): void {
+    if (!boxDrag) return;
+    const el = e.currentTarget as HTMLElement;
+    if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    boxDrag = null;
+  }
+
+  function clamp(v: number, lo = 0, hi = 100): number {
+    return Math.min(hi, Math.max(lo, v));
+  }
+
+  function n0(v: number): string {
+    return Math.round(v).toString();
   }
 
   function setNdiEnabled(enabled: boolean): void {
@@ -686,6 +769,115 @@
                       <option value="bottom">Bottom</option>
                     </select>
                   </label>
+
+                  <div class="field-row">
+                    <label>
+                      Title font
+                      <input
+                        type="text"
+                        placeholder="Druk Wide, Helvetica Neue Bold…"
+                        value={draft.titleFont}
+                        oninput={(e) =>
+                          setDraft("titleFont", (e.target as HTMLInputElement).value)}
+                      />
+                    </label>
+                    <label>
+                      Body font
+                      <input
+                        type="text"
+                        placeholder="Helvetica Neue Bold…"
+                        value={draft.bodyFont}
+                        oninput={(e) =>
+                          setDraft("bodyFont", (e.target as HTMLInputElement).value)}
+                      />
+                    </label>
+                  </div>
+
+                  <div class="positioning-row">
+                    <span class="assign-title">Layout</span>
+                    <label class="check">
+                      <input
+                        type="radio"
+                        name="positioning"
+                        checked={draft.positioning === "auto"}
+                        onchange={() => setPositioning("auto")}
+                      />
+                      Auto flow
+                    </label>
+                    <label class="check">
+                      <input
+                        type="radio"
+                        name="positioning"
+                        checked={draft.positioning === "absolute"}
+                        onchange={() => setPositioning("absolute")}
+                      />
+                      Bounding boxes
+                    </label>
+                  </div>
+
+                  {#if draft.positioning === "absolute"}
+                    <div class="box-editor">
+                      <div
+                        class="box-canvas"
+                        role="presentation"
+                        bind:this={canvasRef}
+                        onpointermove={onCanvasPointerMove}
+                        onpointerup={endBoxDrag}
+                        onpointercancel={endBoxDrag}
+                      >
+                        <div
+                          class="box title"
+                          role="button"
+                          tabindex="0"
+                          style:left={`${draft.titleBox.x}%`}
+                          style:top={`${draft.titleBox.y}%`}
+                          style:width={`${draft.titleBox.width}%`}
+                          style:height={`${draft.titleBox.height}%`}
+                          style:z-index={draft.titleBox.zIndex}
+                          onpointerdown={(e) => onBoxPointerDown(e, "title", "move")}
+                        >
+                          <span class="box-label">Title</span>
+                          <span
+                            class="handle"
+                            role="button"
+                            tabindex="0"
+                            aria-label="Resize title box"
+                            onpointerdown={(e) => onBoxPointerDown(e, "title", "resize")}
+                          ></span>
+                        </div>
+                        <div
+                          class="box body"
+                          role="button"
+                          tabindex="0"
+                          style:left={`${draft.bodyBox.x}%`}
+                          style:top={`${draft.bodyBox.y}%`}
+                          style:width={`${draft.bodyBox.width}%`}
+                          style:height={`${draft.bodyBox.height}%`}
+                          style:z-index={draft.bodyBox.zIndex}
+                          onpointerdown={(e) => onBoxPointerDown(e, "body", "move")}
+                        >
+                          <span class="box-label">Body</span>
+                          <span
+                            class="handle"
+                            role="button"
+                            tabindex="0"
+                            aria-label="Resize body box"
+                            onpointerdown={(e) => onBoxPointerDown(e, "body", "resize")}
+                          ></span>
+                        </div>
+                      </div>
+                      <div class="box-fields">
+                        <div class="box-field">
+                          <span class="assign-title">Title</span>
+                          <code>X {n0(draft.titleBox.x)} · Y {n0(draft.titleBox.y)} · W {n0(draft.titleBox.width)} · H {n0(draft.titleBox.height)}</code>
+                        </div>
+                        <div class="box-field">
+                          <span class="assign-title">Body</span>
+                          <code>X {n0(draft.bodyBox.x)} · Y {n0(draft.bodyBox.y)} · W {n0(draft.bodyBox.width)} · H {n0(draft.bodyBox.height)}</code>
+                        </div>
+                      </div>
+                    </div>
+                  {/if}
 
                   <div class="assign-block">
                     <span class="assign-title">Assign to</span>
@@ -1371,6 +1563,105 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-dim);
+  }
+
+  .positioning-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .box-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .box-canvas {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background:
+      linear-gradient(135deg, #16232f 0%, #0d141c 100%);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .box-canvas::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size: 10% 10%;
+    pointer-events: none;
+  }
+
+  .box {
+    position: absolute;
+    box-sizing: border-box;
+    cursor: move;
+    border: 1.5px dashed rgba(255, 255, 255, 0.55);
+    border-radius: 6px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 6px;
+  }
+
+  .box.title {
+    background: rgba(97, 175, 239, 0.16);
+    border-color: #61afef;
+  }
+
+  .box.body {
+    background: rgba(152, 195, 121, 0.16);
+    border-color: #98c379;
+  }
+
+  .box-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.85);
+    pointer-events: none;
+  }
+
+  .handle {
+    position: absolute;
+    right: -5px;
+    bottom: -5px;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    background: #fff;
+    border: 1.5px solid #000;
+    cursor: nwse-resize;
+  }
+
+  .box-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .box-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .box-field code {
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
   }
 
   .danger {

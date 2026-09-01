@@ -501,6 +501,85 @@ impl ScriptureIndex {
     pub fn book_count(&self) -> usize {
         self.books.len()
     }
+
+    pub fn ordered_book_names(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for (canonical, _) in abbreviation_table() {
+            if self.books.contains_key(canonical) {
+                out.push(canonical.to_string());
+            }
+        }
+        for name in self.books.keys() {
+            if !out.contains(name) {
+                out.push(name.clone());
+            }
+        }
+        out
+    }
+
+    pub fn get_chapter_verses(&self, book: &str, chapter: u32) -> Option<Vec<(u32, String)>> {
+        let normalized = book.to_lowercase().replace(' ', "").replace('.', "");
+        let mut canonical: Option<String> = None;
+        for (canon, _) in abbreviation_table() {
+            if canon.to_lowercase().replace(' ', "") == normalized {
+                canonical = Some(canon.to_string());
+                break;
+            }
+        }
+        if canonical.is_none() {
+            if let Some(names) = self.name_map.get(&normalized) {
+                if let Some(first) = names.first() {
+                    canonical = Some(first.clone());
+                }
+            }
+        }
+        if canonical.is_none() {
+            for key in self.books.keys() {
+                if key.to_lowercase() == book.to_lowercase() {
+                    canonical = Some(key.clone());
+                    break;
+                }
+            }
+        }
+        let canon = canonical.unwrap_or_else(|| book.to_string());
+        let book_data = self.books.get(&canon)?;
+        let chapter_data = book_data.chapters.iter().find(|c| c.chapter == chapter)?;
+        Some(
+            chapter_data
+                .verses
+                .iter()
+                .map(|v| (v.verse, v.text.clone()))
+                .collect(),
+        )
+    }
+
+    pub fn chapter_numbers(&self, book: &str) -> Option<Vec<u32>> {
+        let normalized = book.to_lowercase().replace(' ', "").replace('.', "");
+        let mut canonical: Option<String> = None;
+        for (canon, _) in abbreviation_table() {
+            if canon.to_lowercase().replace(' ', "") == normalized {
+                canonical = Some(canon.to_string());
+                break;
+            }
+        }
+        if canonical.is_none() {
+            if let Some(names) = self.name_map.get(&normalized) {
+                if let Some(first) = names.first() {
+                    canonical = Some(first.clone());
+                }
+            }
+        }
+        if canonical.is_none() {
+            for key in self.books.keys() {
+                if key.to_lowercase() == book.to_lowercase() {
+                    canonical = Some(key.clone());
+                    break;
+                }
+            }
+        }
+        let canon = canonical.unwrap_or_else(|| book.to_string());
+        self.books.get(&canon).map(|b| b.chapters.iter().map(|c| c.chapter).collect())
+    }
 }
 
 // ---------------------------------------------------------------------------

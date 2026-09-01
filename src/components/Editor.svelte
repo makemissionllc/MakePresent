@@ -3,7 +3,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { api, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { ClientState, DisplayInfo, Library, LibrarySong, ScriptureMatch, Slide } from "../lib/types";
+  import type { BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, ScriptureMatch, Slide } from "../lib/types";
   import { isMedia } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
 
@@ -48,6 +48,26 @@
   let scriptureTimer: ReturnType<typeof setTimeout> | null = null;
   let scriptureBusy = $state(false);
   let scriptureStatus = $state<string | null>(null);
+
+  // Scripture browse (Full panel, collapsible — FreeShow-inspired)
+  let bibles = $state<BibleInfo[]>([]);
+  let selectedBibleId = $state<string | null>(null);
+  let bibleBooks = $state<string[]>([]);
+  let selectedBook = $state<string | null>(null);
+  let chapterNumbers = $state<number[]>([]);
+  let selectedChapter = $state<number | null>(null);
+  let chapterVerses = $state<ChapterVerse[]>([]);
+  let browseCollapsed = $state(true);
+  let browseLoading = $state(false);
+  let browseError = $state<string | null>(null);
+
+  // Drag-and-drop state (native HTML5, no library)
+  let draggedSlideId = $state<string | null>(null);
+  let dragOverIndex = $state<number | null>(null);
+  let isDragging = $state(false);
+  let dragType = $state<string | null>(null);
+  let dragPayload = $state<any>(null);
+
   // Draft copies for responsive editing — typing updates these immediately
   // while the backend save is debounced so the input never resets mid-keystroke.
   let draftTitle = $state("");
@@ -243,6 +263,256 @@
     } else if (e.key === "Escape") {
       scriptureOpen = false;
       scriptureIdx = -1;
+    }
+  }
+
+  // Scripture browse — FreeShow-inspired full panel
+  async function loadBibles(): Promise<void> {
+    try {
+      browseError = null;
+      const list = await api.listBibles();
+      bibles = list;
+      if (!selectedBibleId && list.length > 0) {
+        selectedBibleId = list[0].id;
+        await loadBooks(selectedBibleId);
+      }
+    } catch (e) {
+      browseError = String(e);
+    }
+  }
+
+  async function loadBooks(bibleId: string): Promise<void> {
+    try {
+      browseLoading = true;
+      browseError = null;
+      bibleBooks = await api.getBookList(bibleId);
+      selectedBook = null;
+      chapterNumbers = [];
+      selectedChapter = null;
+      chapterVerses = [];
+    } catch (e) {
+      browseError = String(e);
+    } finally {
+      browseLoading = false;
+    }
+  }
+
+  async function loadChaptersForBook(bibleId: string, book: string): Promise<void> {
+    selectedBook = book;
+    selectedChapter = null;
+    chapterVerses = [];
+    browseLoading = true;
+    browseError = null;
+    try {
+      const nums = await api.listChapters(bibleId, book);
+      chapterNumbers = nums;
+    } catch (e) {
+      browseError = String(e);
+      chapterNumbers = Array.from({ length: 50 }, (_, i) => i + 1);
+    } finally {
+      browseLoading = false;
+    }
+  }
+
+  async function loadChapterVerses(bibleId: string, book: string, chapter: number): Promise<void> {
+    try {
+      browseLoading = true;
+      browseError = null;
+      const verses = await api.getChapter(bibleId, book, chapter);
+      chapterVerses = verses;
+      selectedChapter = chapter;
+    } catch (e) {
+      browseError = String(e);
+      chapterVerses = [];
+    } finally {
+      browseLoading = false;
+    }
+  }
+
+  function onBrowseBibleChange(e: Event): void {
+    const id = (e.target as HTMLSelectElement).value;
+    selectedBibleId = id;
+    void loadBooks(id);
+  }
+
+  function onBrowseBookSelect(book: string): void {
+    void loadChaptersForBook(selectedBibleId ?? "kjv", book);
+  }
+
+  function onBrowseChapterSelect(ch: number): void {
+    if (!selectedBibleId || !selectedBook) return;
+    void loadChapterVerses(selectedBibleId, selectedBook, ch);
+  }
+
+  function insertBrowseVerse(v: ChapterVerse): void {
+    if (!selectedBook || selectedChapter == null) return;
+    const ref = `${selectedBook} ${selectedChapter}:${v.verse}`;
+    void run(() => api.addSlide(ref, v.text));
+  }
+
+  // Drag-and-drop — native HTML5, no library
+  function onPlaylistDragStart(e: DragEvent, slide: Slide, index: number): void {
+    draggedSlideId = slide.id;
+    dragType = "playlist-reorder";
+    isDragging = true;
+    dragPayload = { type: "playlist-reorder", slideId: slide.id, fromIndex: index };
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
+      // Use transparent drag image for cleaner indicator
+    }
+    // Add dragging class via data attribute
+    (e.currentTarget as HTMLElement).classList.add("dragging");
+  }
+
+  function onPlaylistDragOver(e: DragEvent, index: number): void {
+    e.preventDefault();
+    if (!isDragging) return;
+    // Calculate insertion point: if dragging over item, show line before or after based on mouse Y
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const mid = rect.top + rect.height / 2;
+    const overIndex = e.clientY < mid ? index : index + 1;
+    // If dragging a playlist item, adjust for removal
+    let adjusted = overIndex;
+    if (dragType === "playlist-reorder" && draggedSlideId) {
+      const fromIdx = project?.slides.findIndex((s) => s.id === draggedSlideId) ?? -1;
+      if (fromIdx !== -1 && fromIdx < overIndex) adjusted = overIndex - 1;
+    }
+    dragOverIndex = adjusted;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = dragType === "playlist-reorder" ? "move" : "copy";
+  }
+
+  function onPlaylistDragLeave(e: DragEvent): void {
+    // Only clear if leaving the list container, not a child
+    const related = e.relatedTarget as HTMLElement | null;
+    if (!related || !(e.currentTarget as HTMLElement).contains(related)) {
+      // Keep indicator if still over playlist, otherwise clear on drop
+    }
+  }
+
+  function onPlaylistDrop(e: DragEvent, dropIndex?: number): void {
+    e.preventDefault();
+    const targetIdx = dropIndex ?? dragOverIndex ?? project?.slides.length ?? 0;
+    const raw = e.dataTransfer?.getData("text/plain");
+    let payload: any = null;
+    try { payload = raw ? JSON.parse(raw) : dragPayload; } catch { payload = dragPayload; }
+
+    if (!payload) {
+      dragOverIndex = null;
+      isDragging = false;
+      return;
+    }
+
+    if (payload.type === "playlist-reorder" && payload.slideId) {
+      const fromIdx = project?.slides.findIndex((s) => s.id === payload.slideId) ?? -1;
+      if (fromIdx !== -1 && fromIdx !== targetIdx && targetIdx !== fromIdx + 1) {
+        // Backend is single source of truth — compute new order and send ordered_ids
+        const ids = (project?.slides ?? []).map((s) => s.id);
+        const [moved] = ids.splice(fromIdx, 1);
+        const insertAt = targetIdx > fromIdx ? targetIdx - 1 : targetIdx;
+        ids.splice(insertAt, 0, moved);
+        void api.reorderSlides(ids).then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
+      }
+    } else if (payload.type === "library-song" && payload.songId) {
+      void (async () => {
+        try {
+          const beforeLen = project?.slides.length ?? 0;
+          const s = await api.addSongToPlaylist(payload.songId);
+          appState = s;
+          // If dropped not at end, reorder the newly added song's slides to drop position
+          if (targetIdx < beforeLen) {
+            const addedCount = s.project.slides.length - beforeLen;
+            if (addedCount > 0) {
+              const ids = s.project.slides.map((x) => x.id);
+              // New slides are at end: slice last addedCount
+              const newIds = ids.slice(-addedCount);
+              const remaining = ids.slice(0, -addedCount);
+              remaining.splice(targetIdx, 0, ...newIds);
+              const s2 = await api.reorderSlides(remaining);
+              appState = s2;
+            }
+          }
+        } catch (err: unknown) { errorMsg = String(err); }
+      })();
+    } else if (payload.type === "library-verse" && payload.songId && payload.slideId) {
+      // Add single verse from library song
+      const song = library?.songs.find((x) => x.id === payload.songId);
+      const verse = song?.slides.find((x) => x.id === payload.slideId);
+      if (verse) {
+        void (async () => {
+          try {
+            const s = await api.addSlide(verse.title, verse.body);
+            appState = s;
+            if (targetIdx < (s.project.slides.length - 1)) {
+              const ids = s.project.slides.map((x) => x.id);
+              const moved = ids.pop()!;
+              ids.splice(targetIdx, 0, moved);
+              const s2 = await api.reorderSlides(ids);
+              appState = s2;
+            }
+          } catch (err: unknown) { errorMsg = String(err); }
+        })();
+      }
+    } else if (payload.type === "scripture" && payload.reference && payload.text !== undefined) {
+      void (async () => {
+        try {
+          const s = await api.addSlide(payload.reference, payload.text);
+          appState = s;
+          const newId = s.project.slides.at(-1)?.id;
+          if (newId && targetIdx < s.project.slides.length - 1) {
+            const ids = s.project.slides.map((x) => x.id);
+            ids.splice(ids.indexOf(newId), 1);
+            ids.splice(targetIdx, 0, newId);
+            const s2 = await api.reorderSlides(ids);
+            appState = s2;
+          }
+        } catch (err: unknown) { errorMsg = String(err); }
+      })();
+    }
+
+    dragOverIndex = null;
+    isDragging = false;
+    draggedSlideId = null;
+    dragType = null;
+    dragPayload = null;
+  }
+
+  function onPlaylistDragEnd(e: DragEvent): void {
+    (e.currentTarget as HTMLElement).classList.remove("dragging");
+    dragOverIndex = null;
+    isDragging = false;
+    draggedSlideId = null;
+    dragType = null;
+    dragPayload = null;
+  }
+
+  function onLibrarySongDragStart(e: DragEvent, song: LibrarySong): void {
+    isDragging = true;
+    dragType = "library-song";
+    dragPayload = { type: "library-song", songId: song.id };
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "copy";
+      e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
+    }
+  }
+
+  function onLibraryVerseDragStart(e: DragEvent, song: LibrarySong, verse: { id: string }): void {
+    isDragging = true;
+    dragType = "library-verse";
+    dragPayload = { type: "library-verse", songId: song.id, slideId: verse.id };
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "copy";
+      e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
+    }
+  }
+
+  function onScriptureDragStart(e: DragEvent, ref: string, text: string): void {
+    isDragging = true;
+    dragType = "scripture";
+    dragPayload = { type: "scripture", reference: ref, text };
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "copy";
+      e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
     }
   }
 
@@ -446,6 +716,7 @@
       }
       api.listDisplays().then((d) => (displays = d)).catch((e: unknown) => (errorMsg = String(e)));
       api.getLibrary().then((l) => (library = l)).catch((e: unknown) => (errorMsg = String(e)));
+      void loadBibles();
     })();
 
     return () => {
@@ -515,13 +786,34 @@
       {/if}
 
       <div class="section-title">Playlist</div>
-      <ul class="slide-list">
-        {#each project?.slides ?? [] as slide (slide.id)}
-          <li>
+      <ul
+        class="slide-list"
+        class:drag-active={isDragging}
+        ondragover={(e) => { e.preventDefault(); if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0; }}
+        ondrop={(e) => onPlaylistDrop(e)}
+        ondragleave={(e) => {
+          const rt = e.relatedTarget as HTMLElement | null;
+          if (!rt || !(e.currentTarget as HTMLElement).contains(rt)) dragOverIndex = null;
+        }}
+      >
+        {#each project?.slides ?? [] as slide, i (slide.id)}
+          {#if dragOverIndex === i}
+            <div class="drop-indicator" aria-hidden="true"></div>
+          {/if}
+          <li
+            draggable="true"
+            class:dragging={draggedSlideId === slide.id}
+            class:drag-over={dragOverIndex === i}
+            ondragstart={(e) => onPlaylistDragStart(e, slide, i)}
+            ondragover={(e) => onPlaylistDragOver(e, i)}
+            ondragend={onPlaylistDragEnd}
+            ondrop={(e) => onPlaylistDrop(e, i)}
+          >
             <button
               class:active={project?.live === slide.id}
               class="slide-entry"
               onclick={() => goLive(slide)}
+              draggable="false"
             >
               <span
                 class="swatch"
@@ -549,6 +841,9 @@
             </button>
           </li>
         {/each}
+        {#if dragOverIndex === (project?.slides.length ?? 0)}
+          <div class="drop-indicator" aria-hidden="true"></div>
+        {/if}
       </ul>
       <button class="add" onclick={() => addSlide()}>+ Add slide</button>
 
@@ -582,10 +877,13 @@
                 <button
                   class:active={i === scriptureIdx}
                   class="scripture-entry"
+                  draggable="true"
+                  ondragstart={(e) => onScriptureDragStart(e, match.reference, match.text)}
                   onmousedown={(e) => {
                     e.preventDefault();
                     selectScripture(match);
                   }}
+                  title="Drag to playlist • Click to add"
                 >
                   <span class="scripture-ref">{match.reference}</span>
                   <span class="scripture-preview">{match.text}</span>
@@ -615,6 +913,76 @@
         {/if}
       </div>
 
+      <!-- Scripture Browse Panel — FreeShow-inspired, collapsible, keeps search available -->
+      <div class="browse-panel">
+        <button class="browse-header" onclick={() => (browseCollapsed = !browseCollapsed)} aria-expanded={!browseCollapsed}>
+          <span class="section-title" style="margin:0; border:none; padding:0;">Browse Scripture</span>
+          <span class="browse-toggle">{browseCollapsed ? "▸ Show" : "▾ Hide"}</span>
+        </button>
+        {#if !browseCollapsed}
+          <div class="browse-body">
+            <label>
+              Translation
+              <select value={selectedBibleId ?? ""} onchange={onBrowseBibleChange} disabled={bibles.length === 0}>
+                {#each bibles as b}
+                  <option value={b.id}>{b.name} ({b.bookCount})</option>
+                {/each}
+              </select>
+            </label>
+            {#if browseError}
+              <p class="browse-error">{browseError}</p>
+            {/if}
+            {#if browseLoading}
+              <span class="media-spinner" style="align-self:center; margin: 8px 0;"></span>
+            {/if}
+            <div class="browse-books">
+              {#each bibleBooks as book}
+                <button
+                  class="browse-book"
+                  class:active={book === selectedBook}
+                  onclick={() => onBrowseBookSelect(book)}
+                >
+                  {book}
+                </button>
+              {/each}
+            </div>
+            {#if selectedBook}
+              <div class="browse-chapters">
+                <span class="field-label">{selectedBook} — Chapters</span>
+                <div class="chapter-grid">
+                  {#each chapterNumbers as ch}
+                    <button
+                      class="chapter-pill"
+                      class:active={ch === selectedChapter}
+                      onclick={() => onBrowseChapterSelect(ch)}
+                    >
+                      {ch}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+            {#if chapterVerses.length > 0}
+              <ul class="browse-verses">
+                {#each chapterVerses as v}
+                  <li>
+                    <button
+                      class="browse-verse"
+                      draggable="true"
+                      ondragstart={(e) => onScriptureDragStart(e, `${selectedBook} ${selectedChapter}:${v.verse}`, v.text)}
+                      onclick={() => insertBrowseVerse(v)}
+                    >
+                      <span class="verse-num">{v.verse}</span>
+                      <span class="verse-text">{v.text}</span>
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/if}
+      </div>
+
       <div class="section-title library-title">Library</div>
       <input
         type="text"
@@ -625,7 +993,13 @@
       <ul class="song-list">
         {#each librarySongs as song (song.id)}
           <li>
-            <button class="song-entry" onclick={() => addToPlaylist(song)}>
+            <button
+              class="song-entry"
+              draggable="true"
+              ondragstart={(e) => onLibrarySongDragStart(e, song)}
+              onclick={() => addToPlaylist(song)}
+              title="Drag to playlist to add • Click to add"
+            >
               <span class="song-label">{song.title || "Untitled"}</span>
               <span class="song-count">{song.slides.length} {song.slides.length === 1 ? "slide" : "slides"}</span>
             </button>
@@ -640,6 +1014,21 @@
               &times;
             </button>
           </li>
+          <!-- Individual verses draggable (keep click-to-add buttons) -->
+          {#each song.slides as verse (verse.id)}
+            <li class="library-verse-row">
+              <button
+                class="library-verse"
+                draggable="true"
+                ondragstart={(e) => onLibraryVerseDragStart(e, song, verse)}
+                onclick={() => void api.addSlide(verse.title, verse.body).then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)))}
+                title="Drag verse to playlist • Click to add as slide"
+              >
+                <span class="verse-title">{verse.title || "Untitled verse"}</span>
+                <span class="verse-preview">{verse.body.slice(0, 60)}{verse.body.length > 60 ? "…" : ""}</span>
+              </button>
+            </li>
+          {/each}
         {:else}
           <li class="empty">No songs yet. Add one below.</li>
         {/each}
@@ -1498,6 +1887,209 @@
     color: var(--danger);
     max-width: 60%;
     text-align: center;
+  }
+
+  /* Browse Scripture panel — FreeShow-inspired, collapsible */
+  .browse-panel {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-2);
+    overflow: hidden;
+  }
+  .browse-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: transparent;
+    border: none;
+    padding: 10px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .browse-header:hover {
+    background: var(--panel);
+  }
+  .browse-toggle {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .browse-body {
+    padding: 10px 12px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-top: 1px solid var(--border);
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  .browse-error {
+    color: var(--danger);
+    font-size: 12px;
+  }
+  .browse-books {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 140px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    padding: 4px;
+  }
+  .browse-book {
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .browse-book:hover {
+    background: var(--panel-2);
+  }
+  .browse-book.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .browse-chapters {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .chapter-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+    gap: 4px;
+  }
+  .chapter-pill {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 0;
+    font-size: 12px;
+    text-align: center;
+  }
+  .chapter-pill.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .browse-verses {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 180px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    padding: 4px;
+  }
+  .browse-verse {
+    display: flex;
+    gap: 8px;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 6px 8px;
+    width: 100%;
+  }
+  .browse-verse:hover {
+    background: var(--panel-2);
+    border-color: var(--border);
+  }
+  .verse-num {
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 11px;
+    min-width: 18px;
+  }
+  .verse-text {
+    font-size: 11px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .library-verse-row {
+    margin-left: 8px;
+  }
+  .library-verse {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    text-align: left;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 8px;
+    width: 100%;
+    font-size: 11px;
+  }
+  .library-verse:hover {
+    background: var(--panel);
+  }
+  .verse-title {
+    font-weight: 600;
+    color: var(--text);
+    font-size: 11px;
+  }
+  .verse-preview {
+    color: var(--text-dim);
+    font-size: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Drag-and-drop visual feedback */
+  .slide-list.drag-active {
+    background: rgba(79, 140, 255, 0.04);
+    border-radius: 6px;
+  }
+  .slide-list li.dragging {
+    opacity: 0.45;
+    transform: scale(0.98);
+  }
+  .slide-list li.dragging .slide-entry {
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(79, 140, 255, 0.25);
+  }
+  .drop-indicator {
+    height: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+    margin: 4px 8px;
+    animation: drop-pulse 600ms ease-in-out infinite alternate;
+  }
+  @keyframes drop-pulse {
+    from { opacity: 0.6; }
+    to { opacity: 1; }
+  }
+  .song-entry[draggable="true"],
+  .scripture-entry[draggable="true"],
+  .browse-verse[draggable="true"],
+  .library-verse[draggable="true"] {
+    cursor: grab;
+  }
+  .song-entry[draggable="true"]:active,
+  .scripture-entry[draggable="true"]:active,
+  .browse-verse[draggable="true"]:active,
+  .library-verse[draggable="true"]:active {
+    cursor: grabbing;
   }
 
   @keyframes spin {

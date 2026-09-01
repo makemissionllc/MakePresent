@@ -717,6 +717,59 @@ pub fn delete_slide(app: AppHandle, slide_id: String) -> Result<ClientState, Str
 }
 
 #[tauri::command]
+pub fn reorder_slide(app: AppHandle, slide_id: String, new_index: usize) -> Result<ClientState, String> {
+    mutate(&app, |project| {
+        let old_pos = project
+            .slides
+            .iter()
+            .position(|s| s.id == slide_id)
+            .ok_or_else(|| format!("slide {slide_id} not found"))?;
+        let slide = project.slides.remove(old_pos);
+        let clamped = new_index.min(project.slides.len());
+        project.slides.insert(clamped, slide);
+        Ok(())
+    })
+    .map(|s| {
+        log(&app, Level::Info, &format!("playlist: reordered slide \"{slide_id}\" to {new_index}"));
+        s
+    })
+}
+
+#[tauri::command]
+pub fn reorder_slides(app: AppHandle, ordered_ids: Vec<String>) -> Result<ClientState, String> {
+    mutate(&app, |project| {
+        if ordered_ids.len() != project.slides.len() {
+            return Err(format!(
+                "ordered_ids length {} does not match slides length {}",
+                ordered_ids.len(),
+                project.slides.len()
+            ));
+        }
+        let mut id_to_slide: std::collections::HashMap<String, Slide> = project
+            .slides
+            .drain(..)
+            .map(|s| (s.id.clone(), s))
+            .collect();
+        let mut reordered = Vec::with_capacity(ordered_ids.len());
+        for id in ordered_ids {
+            let slide = id_to_slide
+                .remove(&id)
+                .ok_or_else(|| format!("slide {id} not found"))?;
+            reordered.push(slide);
+        }
+        if !id_to_slide.is_empty() {
+            return Err("ordered_ids missing some slides".to_string());
+        }
+        project.slides = reordered;
+        Ok(())
+    })
+    .map(|s| {
+        log(&app, Level::Info, "playlist: reordered slides");
+        s
+    })
+}
+
+#[tauri::command]
 pub fn list_displays(app: AppHandle) -> Result<Vec<DisplayInfo>, String> {
     windows::list_displays(&app)
 }
@@ -1304,6 +1357,21 @@ pub struct ScriptureImportResult {
     pub total_books: usize,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BibleInfo {
+    pub id: String,
+    pub name: String,
+    pub book_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterVerse {
+    pub verse: u32,
+    pub text: String,
+}
+
 /// Merge imported books into the live scripture index and persist them to the
 /// re-importable cache so imports survive an app restart.
 fn apply_scripture_import(
@@ -1409,6 +1477,143 @@ pub async fn lookup_api_scripture(
         ),
     );
     Ok(matches)
+}
+
+#[tauri::command]
+pub fn list_bibles(app: AppHandle) -> Vec<BibleInfo> {
+    let state = app.state::<AppState>();
+    let mut out = Vec::new();
+    if let Some(idx) = state.scripture.read().unwrap().as_ref() {
+        out.push(BibleInfo {
+            id: "kjv".to_string(),
+            name: "King James Version".to_string(),
+            book_count: idx.book_count(),
+        });
+    }
+    let imported = crate::scripture::load_imported_books(&state.app_data_dir());
+    if !imported.is_empty() {
+        let distinct: std::collections::HashSet<String> = imported.iter().map(|b| b.book.clone()).collect();
+        out.push(BibleInfo {
+            id: "imported".to_string(),
+            name: "Imported Bibles".to_string(),
+            book_count: distinct.len(),
+        });
+    }
+    if out.is_empty() {
+        // Fallback: at least report KJV even if index not yet loaded
+        out.push(BibleInfo {
+            id: "kjv".to_string(),
+            name: "King James Version".to_string(),
+            book_count: 66,
+        });
+    }
+    out
+}
+
+#[tauri::command]
+pub fn get_book_list(app: AppHandle, bible_id: String) -> Result<Vec<String>, String> {
+    let state = app.state::<AppState>();
+    match bible_id.as_str() {
+        "kjv" => {
+            let guard = state.scripture.read().unwrap();
+            let idx = guard.as_ref().ok_or_else(|| "scripture index not loaded yet".to_string())?;
+            Ok(idx.ordered_book_names())
+        }
+        "imported" => {
+            let imported = crate::scripture::load_imported_books(&state.app_data_dir());
+            if imported.is_empty() {
+                return Err("no imported Bibles found".to_string());
+            }
+            let mut seen = std::collections::HashSet::new();
+            let mut out = Vec::new();
+            for b in imported {
+                if seen.insert(b.book.clone()) {
+                    out.push(b.book);
+                }
+            }
+            Ok(out)
+        }
+        _ => Err(format!("unknown bible id: {bible_id}")),
+    }
+}
+
+#[tauri::command]
+pub fn get_chapter(
+    app: AppHandle,
+    bible_id: String,
+    book: String,
+    chapter: u32,
+) -> Result<Vec<ChapterVerse>, String> {
+    let state = app.state::<AppState>();
+    match bible_id.as_str() {
+        "kjv" => {
+            let guard = state.scripture.read().unwrap();
+            let idx = guard.as_ref().ok_or_else(|| "scripture index not loaded yet".to_string())?;
+            let verses = idx
+                .get_chapter_verses(&book, chapter)
+                .ok_or_else(|| format!("{book} {chapter} not found in KJV"))?;
+            Ok(verses.into_iter().map(|(verse, text)| ChapterVerse { verse, text }).collect())
+        }
+        "imported" => {
+            let imported = crate::scripture::load_imported_books(&state.app_data_dir());
+            if imported.is_empty() {
+                return Err("no imported Bibles found".to_string());
+            }
+            for b in imported {
+                if b.book.to_lowercase() == book.to_lowercase() {
+                    for ch in b.chapters {
+                        if ch.chapter.parse::<u32>().ok() == Some(chapter) {
+                            return Ok(ch
+                                .verses
+                                .into_iter()
+                                .filter_map(|v| {
+                                    let n = v.verse.parse::<u32>().ok()?;
+                                    Some(ChapterVerse { verse: n, text: v.text })
+                                })
+                                .collect());
+                        }
+                    }
+                    return Err(format!("{book} {chapter} not found in imported Bibles"));
+                }
+            }
+            Err(format!("book {book} not found in imported Bibles"))
+        }
+        _ => Err(format!("unknown bible id: {bible_id}")),
+    }
+}
+
+#[tauri::command]
+pub fn list_chapters(app: AppHandle, bible_id: String, book: String) -> Result<Vec<u32>, String> {
+    let state = app.state::<AppState>();
+    match bible_id.as_str() {
+        "kjv" => {
+            let guard = state.scripture.read().unwrap();
+            let idx = guard
+                .as_ref()
+                .ok_or_else(|| "scripture index not loaded yet".to_string())?;
+            idx.chapter_numbers(&book)
+                .ok_or_else(|| format!("book {book} not found in KJV"))
+        }
+        "imported" => {
+            let imported = crate::scripture::load_imported_books(&state.app_data_dir());
+            if imported.is_empty() {
+                return Err("no imported Bibles found".to_string());
+            }
+            for b in imported {
+                if b.book.to_lowercase() == book.to_lowercase() {
+                    let mut nums: Vec<u32> = b
+                        .chapters
+                        .iter()
+                        .filter_map(|c| c.chapter.parse::<u32>().ok())
+                        .collect();
+                    nums.sort_unstable();
+                    return Ok(nums);
+                }
+            }
+            Err(format!("book {book} not found in imported Bibles"))
+        }
+        _ => Err(format!("unknown bible id: {bible_id}")),
+    }
 }
 
 // ---------------------------------------------------------------------------

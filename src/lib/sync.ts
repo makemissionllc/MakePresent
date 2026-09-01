@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AutosaveEvent,
+  BibleInfo,
+  ChapterVerse,
   ClientState,
   DisplayInfo,
   Background,
@@ -139,6 +141,23 @@ export const api = {
       reference,
       translation: translation || null,
     }),
+
+  listBibles: () => invoke<BibleInfo[]>("list_bibles"),
+
+  getBookList: (bibleId: string) =>
+    invoke<string[]>("get_book_list", { bibleId }),
+
+  getChapter: (bibleId: string, book: string, chapter: number) =>
+    invoke<ChapterVerse[]>("get_chapter", { bibleId, book, chapter }),
+
+  listChapters: (bibleId: string, book: string) =>
+    invoke<number[]>("list_chapters", { bibleId, book }),
+
+  reorderSlide: (slideId: string, newIndex: number) =>
+    invoke<ClientState>("reorder_slide", { slideId, newIndex }),
+
+  reorderSlides: (orderedIds: string[]) =>
+    invoke<ClientState>("reorder_slides", { orderedIds }),
 
   listMidiDevices: () => invoke<MidiDeviceInfo[]>("list_midi_devices"),
 

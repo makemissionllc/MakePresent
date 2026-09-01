@@ -216,6 +216,17 @@ export interface ScriptureImportResult {
   totalBooks: number;
 }
 
+export interface BibleInfo {
+  id: string;
+  name: string;
+  bookCount: number;
+}
+
+export interface ChapterVerse {
+  verse: number;
+  text: string;
+}
+
 export type Trigger =
   | { kind: "midi_note"; channel: number; note: number }
   | { kind: "midi_control"; channel: number; controller: number; value: number | null }

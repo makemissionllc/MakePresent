@@ -38,6 +38,72 @@
   --warn-bg: #4a3b17;
 }
 
+/* ==========================================================================
+   Phase 1 — Design System Tokens (warm/bold, EVOLVE-inspired)
+   Modern/minimal structure, rich confident color. Extends the existing
+   palette rather than replacing it. Chrome only — Output slide rendering
+   stays on Looks/backgrounds.
+   ========================================================================== */
+:root {
+  /* Warm/bold extended palette — deep green base, warm orange/cream accents */
+  --brand-green-950: #0a1f12;
+  --brand-green-900: #11281e;
+  --brand-green-800: #143d2a;
+  --brand-orange-500: #ff7a18;
+  --brand-orange-400: #ff8c3a;
+  --brand-orange-soft: #fff7ed;
+  --brand-cream-100: #fef3c7;
+  --brand-cream-200: #fde68a;
+  --brand-slate-400: #94a3b8;
+  --brand-slate-500: #64748b;
+
+  /* Semantic color system — meaning, not decoration */
+  /* Live/on-air: Output shown, Stage shown, NDI broadcasting, slide live — green dot convention */
+  --semantic-live: #1f9d6a; /* = --live */
+  --semantic-live-bg: rgba(31, 157, 106, 0.14);
+  --semantic-live-border: rgba(31, 157, 106, 0.32);
+  --semantic-live-glow: 0 0 12px rgba(31, 157, 106, 0.35);
+  /* Listening/active-but-not-live: MIDI/OSC enabled + listening, autosave pulse — sky, distinct from live green */
+  --semantic-listening: #38bdf8;
+  --semantic-listening-bg: rgba(56, 189, 248, 0.14);
+  --semantic-listening-border: rgba(56, 189, 248, 0.3);
+  /* Warning: missing media, ffmpeg unavailable, display disconnected */
+  --semantic-warning: #f7b538; /* = --warn xanthous */
+  --semantic-warning-bg: rgba(247, 181, 56, 0.14);
+  --semantic-warning-border: rgba(247, 181, 56, 0.32);
+  /* Error: NDI SDK not found, autosave failed, log error rows */
+  --semantic-error: #e11d48;
+  --semantic-error-bg: rgba(225, 29, 72, 0.12);
+  --semantic-error-border: rgba(225, 29, 72, 0.28);
+  /* Neutral/idle */
+  --semantic-neutral: #94a3b8;
+  --semantic-neutral-bg: rgba(148, 163, 184, 0.08);
+  --semantic-idle: #64748b;
+
+  /* Spacing scale — generous, consistent */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Motion — subtle, purposeful */
+  --motion-fast: 150ms;
+  --motion-normal: 200ms;
+  --motion-slow: 250ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, 0, 1);
+
+  /* Radius + shadow for warm/bold cards */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.22);
+}
+
 * {
   box-sizing: border-box;
 }

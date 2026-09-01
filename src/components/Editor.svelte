@@ -793,7 +793,7 @@
         </select>
       </label>
 
-      <div class="output-status">
+      <div class="output-status" class:live={!!(appState?.output.visible && project?.live)}>
         {#if appState?.output.visible}
           {#if project?.live}
             Live on display
@@ -1002,12 +1002,77 @@
     overflow-y: auto;
   }
 
+  /* Phase 1 — Output panel is the representative screen for the warm/bold
+     design system. Only this panel is rethemed; the rest of the app keeps
+     existing tokens. Chrome stays on Inter/system stack; Output slide text
+     stays on system fallback per font-not-found failure mode. */
   .output-panel {
     border-right: none;
     border-left: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    background: linear-gradient(
+      180deg,
+      var(--panel) 0%,
+      var(--brand-green-900) 100%
+    );
+  }
+
+  /* Semantic status — color carries meaning */
+  .output-panel .output-status {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--semantic-neutral);
+    background: var(--semantic-neutral-bg);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    padding: var(--space-2) var(--space-3);
+    transition:
+      color var(--motion-normal) var(--ease-standard),
+      background var(--motion-normal) var(--ease-standard),
+      border-color var(--motion-normal) var(--ease-standard);
+  }
+  .output-panel .output-status:has(.not-shown) {
+    color: var(--semantic-idle);
+    background: var(--semantic-neutral-bg);
+    border-color: var(--border);
+  }
+  /* Live — Output shown + slide live: green dot convention extended */
+  .output-panel .output-status.live {
+    color: var(--semantic-live);
+    background: var(--semantic-live-bg);
+    border-color: var(--semantic-live-border);
+    box-shadow: var(--semantic-live-glow);
+  }
+
+  /* Buttons in Output panel — subtle warm/bold feedback */
+  .output-panel button.ghost {
+    border-radius: var(--radius-md);
+    transition:
+      background var(--motion-fast) var(--ease-standard),
+      border-color var(--motion-fast) var(--ease-standard),
+      color var(--motion-fast) var(--ease-standard),
+      transform var(--motion-fast) var(--ease-standard),
+      box-shadow var(--motion-fast) var(--ease-standard);
+  }
+  .output-panel button.ghost:hover {
+    background: var(--panel-2);
+    border-color: var(--brand-slate-400);
+    transform: translateY(-1px);
+  }
+  .output-panel button.ghost:active {
+    transform: translateY(0);
+  }
+  .output-panel button.show-output {
+    border-color: var(--semantic-live-border);
+    color: var(--semantic-live);
+    background: var(--semantic-live-bg);
+  }
+  .output-panel button.show-output:hover {
+    background: rgba(31, 157, 106, 0.2);
+    box-shadow: var(--semantic-live-glow);
   }
 
   .section-title {
@@ -1161,8 +1226,19 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--live);
+    background: var(--semantic-live);
     flex: none;
+    animation: live-pulse 1800ms var(--ease-out) infinite alternate;
+    box-shadow: var(--semantic-live-glow);
+  }
+
+  @keyframes live-pulse {
+    from {
+      box-shadow: 0 0 0 0 rgba(31, 157, 106, 0.35);
+    }
+    to {
+      box-shadow: 0 0 0 6px rgba(31, 157, 106, 0);
+    }
   }
 
   .delete {

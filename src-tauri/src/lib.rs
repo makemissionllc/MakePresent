@@ -14,7 +14,15 @@ mod windows;
 use logging::Level;
 use project::{persist, read_library, read_session, recover_or_seed, write_library, write_session};
 use state::AppState;
-use tauri::Manager;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
+
+/// Set to `true` the moment the user chooses "Quit" from the system tray. When
+/// set, the application really exits; otherwise `ExitRequested` is prevented so
+/// closing the Editor keeps the Output/Stage (and the process) alive.
+static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Diagnostic: snapshot every live window's label, visibility, focus, inner
 /// position and size. Called at startup and again a couple of seconds in so a
@@ -78,11 +86,130 @@ fn finalize(app: &tauri::AppHandle) {
     state.logger.log(Level::Info, "app: exited cleanly");
 }
 
+/// Bring the Editor window back to the foreground, recreating it if it was
+/// destroyed. Once visible, re-broadcast state so the Output/Stage (and any
+/// connected Stage-Display clients) resync to the latest project.
+fn show_editor(app: &tauri::AppHandle) {
+    let editor = match crate::windows::ensure_editor(app) {
+        Ok(w) => w,
+        Err(e) => {
+            app.state::<AppState>()
+                .logger
+                .log(Level::Error, &format!("tray: could not open editor: {e}"));
+            return;
+        }
+    };
+    let _ = editor.unminimize();
+    let _ = editor.show();
+    let _ = editor.set_focus();
+    // Re-sync every view to the current state (idempotent when nothing changed).
+    let _ = crate::commands::snapshot_and_emit(app);
+}
+
+/// Set by the tray "Quit" action so the real exit path proceeds; harmless
+/// otherwise.
+fn quit_app(app: &tauri::AppHandle) {
+    crate::windows::set_shutting_down();
+    QUIT_REQUESTED.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
+/// Menu id shared between the tray menu item and the left-click handler.
+fn handle_tray_action(app: &tauri::AppHandle, id: &str) {
+    match id {
+        "open_editor" => show_editor(app),
+        "quit" => quit_app(app),
+        _ => {}
+    }
+}
+
+/// Put the Open Editor / Quit menu on the (config-defined) system tray icon.
+/// The icon itself is created automatically from `tauri.conf.json` -> `app.trayIcon`;
+/// here we attach the menu and the app-level menu/tray event handlers (registered
+/// on the builder) do the rest.
+fn setup_tray(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let open = match MenuItem::with_id(app, "open_editor", "Open Editor", true, None::<&str>) {
+        Ok(i) => i,
+        Err(e) => {
+            state
+                .logger
+                .log(Level::Error, &format!("tray: failed to build menu item: {e}"));
+            return;
+        }
+    };
+    let quit = match MenuItem::with_id(app, "quit", "Quit MakePresent", true, None::<&str>) {
+        Ok(i) => i,
+        Err(e) => {
+            state
+                .logger
+                .log(Level::Error, &format!("tray: failed to build menu item: {e}"));
+            return;
+        }
+    };
+    let menu = match Menu::with_items(app, &[&open, &quit]) {
+        Ok(m) => m,
+        Err(e) => {
+            state
+                .logger
+                .log(Level::Error, &format!("tray: failed to build menu: {e}"));
+            return;
+        }
+    };
+    // Attach the menu to the config-created tray ("main" id) if present.
+    match app.tray_by_id("main") {
+        Some(tray) => match tray.set_menu(Some(menu)) {
+            Ok(()) => state
+                .logger
+                .log(Level::Info, "tray: system tray menu attached"),
+            Err(e) => state
+                .logger
+                .log(Level::Error, &format!("tray: failed to set tray menu: {e}")),
+        },
+        None => state
+            .logger
+            .log(Level::Info, "tray: config tray not yet created — events still wired"),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        .on_window_event(|window, event| {
+            // Persistent renderers: closing the Editor must NOT take the whole
+            // app down. Intercept the close request, log it, and hide the
+            // editor instead — the process (and any Output/Stage windows) stay
+            // alive, and the user brings the editor back from the tray.
+            if window.label() == crate::windows::EDITOR_WINDOW {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    let app_handle = window.app_handle();
+                    let st = app_handle.state::<AppState>();
+                    st.logger.log(
+                        Level::Info,
+                        "editor: close requested — hiding window; app keeps running in tray",
+                    );
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
+        .on_menu_event(|app_handle, event| {
+            handle_tray_action(app_handle, event.id.as_ref());
+        })
+        .on_tray_icon_event(|tray, event| {
+            // Left-click (or touch) on the icon toggles/reopens the editor, so
+            // it is reachable even without opening the tray menu.
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                handle_tray_action(tray.app_handle(), "open_editor");
+            }
+        })
         .setup(|app| {
             // `setup` runs on the GUI main thread. Mark it so `windows::run_on_main`
             // can detect re-entrant calls (stage restore, nested ensure_*) and run
@@ -95,6 +222,12 @@ pub fn run() {
             let state = app.state::<AppState>();
             state.logger.open(data_dir.clone());
             state.logger.log(Level::Info, "app: started");
+
+            // Persistent-renderer lifecycle: install the tray icon (always
+            // staying alive) and, when the Editor's close button is pressed,
+            // hide instead of destroy so the Output/Stage keep running and the
+            // editor can be reopened from the tray.
+            setup_tray(app.handle());
 
             // Diagnostic logging for startup windows:
             log_window_state(app.handle(), &state, "windows: startup");
@@ -410,8 +543,16 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
-        if let tauri::RunEvent::Exit = event {
+        if let RunEvent::Exit = event {
             finalize(app_handle);
+        } else if let RunEvent::ExitRequested { api, .. } = event {
+            // Keep the process alive in the background (tray) unless the user
+            // explicitly chose Quit — that way closing the Editor (which we
+            // already hide instead of destroy) or losing every window never
+            // silently kills a live service.
+            if !QUIT_REQUESTED.load(Ordering::SeqCst) {
+                api.prevent_exit();
+            }
         }
     });
 }

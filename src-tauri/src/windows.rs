@@ -64,9 +64,63 @@ fn output_url() -> WebviewUrl {
     }
 }
 
+fn editor_url() -> WebviewUrl {
+    #[cfg(debug_assertions)]
+    {
+        WebviewUrl::External("http://localhost:1420".parse().expect("valid dev URL"))
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        WebviewUrl::App("index.html".into())
+    }
+}
+
 pub fn editor_window(app: &AppHandle) -> Result<WebviewWindow, String> {
     app.get_webview_window(EDITOR_WINDOW)
         .ok_or_else(|| "Editor window not found".to_string())
+}
+
+/// Recreate the Editor window if it has gone away (e.g. collapsed by the OS or
+/// force-destroyed). Used by the tray "Open Editor" action so the process can
+/// keep running in the background and still bring the editor back on demand.
+pub fn ensure_editor(app: &AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(window) = app.get_webview_window(EDITOR_WINDOW) {
+        return Ok(window);
+    }
+    let state = app.state::<AppState>();
+    state.logger.log(
+        Level::Info,
+        "windows: editor window missing — recreating from tray",
+    );
+    let app_main = app.clone();
+    run_on_main(app, &state, "ensure_editor", move || {
+        match WebviewWindow::builder(&app_main, EDITOR_WINDOW, editor_url())
+            .title("MakePresent - Editor")
+            .inner_size(1280.0, 800.0)
+            .min_inner_size(960.0, 600.0)
+            .center()
+            .visible(true)
+            .build()
+        {
+            Ok(window) => {
+                app_main.state::<AppState>().logger.log(
+                    Level::Info,
+                    &format!(
+                        "windows: editor window recreated successfully ({})",
+                        describe_window(&window)
+                    ),
+                );
+                Ok(window)
+            }
+            Err(e) => {
+                app_main.state::<AppState>().logger.log(
+                    Level::Error,
+                    &format!("windows: FAILED to recreate editor window: {e}"),
+                );
+                Err(format!("failed to recreate editor window: {e}"))
+            }
+        }
+    })
 }
 
 /// Diagnostic: compact one-line description of a window's visibility, focus,

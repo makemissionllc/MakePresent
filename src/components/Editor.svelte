@@ -945,66 +945,7 @@
           <span class="browse-toggle">{browseCollapsed ? "▸ Show" : "▾ Hide"}</span>
         </button>
         {#if !browseCollapsed}
-          <div class="browse-body">
-            <label>
-              Translation
-              <select value={selectedBibleId ?? ""} onchange={onBrowseBibleChange} disabled={bibles.length === 0}>
-                {#each bibles as b}
-                  <option value={b.id}>{b.name} ({b.bookCount})</option>
-                {/each}
-              </select>
-            </label>
-            {#if browseError}
-              <p class="browse-error">{browseError}</p>
-            {/if}
-            {#if browseLoading}
-              <span class="media-spinner" style="align-self:center; margin: 8px 0;"></span>
-            {/if}
-            <div class="browse-books">
-              {#each bibleBooks as book}
-                <button
-                  class="browse-book"
-                  class:active={book === selectedBook}
-                  onclick={() => onBrowseBookSelect(book)}
-                >
-                  {book}
-                </button>
-              {/each}
-            </div>
-            {#if selectedBook}
-              <div class="browse-chapters">
-                <span class="field-label">{selectedBook} — Chapters</span>
-                <div class="chapter-grid">
-                  {#each chapterNumbers as ch}
-                    <button
-                      class="chapter-pill"
-                      class:active={ch === selectedChapter}
-                      onclick={() => onBrowseChapterSelect(ch)}
-                    >
-                      {ch}
-                    </button>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-            {#if chapterVerses.length > 0}
-              <ul class="browse-verses">
-                {#each chapterVerses as v}
-                  <li>
-                    <button
-                      class="browse-verse"
-                      draggable="true"
-                      ondragstart={(e) => onScriptureDragStart(e, `${selectedBook} ${selectedChapter}:${v.verse}`, v.text)}
-                      onclick={() => insertBrowseVerse(v)}
-                    >
-                      <span class="verse-num">{v.verse}</span>
-                      <span class="verse-text">{v.text}</span>
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
+          <p class="browse-hint">Browsing as full-width panel below — click a verse to add as slide (drag secondary).</p>
         {/if}
       </div>
 
@@ -1283,6 +1224,72 @@
       </label>
     </aside>
   </div>
+
+  {#if !browseCollapsed}
+    <div class="browse-dock" role="region" aria-label="Browse Scripture">
+      <div class="browse-dock-left">
+        <label>
+          Translation
+          <select value={selectedBibleId ?? ""} onchange={onBrowseBibleChange} disabled={bibles.length === 0}>
+            {#each bibles as b}
+              <option value={b.id}>{b.name} ({b.bookCount})</option>
+            {/each}
+          </select>
+        </label>
+        {#if browseError}
+          <p class="browse-error">{browseError}</p>
+        {/if}
+        <div class="browse-books">
+          {#each bibleBooks as book}
+            <button class="browse-book" class:active={book === selectedBook} onclick={() => onBrowseBookSelect(book)}>{book}</button>
+          {/each}
+        </div>
+      </div>
+      <div class="browse-dock-middle">
+        {#if selectedBook}
+          <div class="browse-chapters">
+            <span class="field-label">{selectedBook} — Chapters</span>
+            <div class="chapter-grid">
+              {#each chapterNumbers as ch}
+                <button class="chapter-pill" class:active={ch === selectedChapter} onclick={() => onBrowseChapterSelect(ch)}>{ch}</button>
+              {/each}
+            </div>
+          </div>
+        {:else}
+          <p class="browse-placeholder">Select a book to see chapters</p>
+        {/if}
+        {#if browseLoading}
+          <span class="media-spinner" style="align-self:center; margin: 8px 0;"></span>
+        {/if}
+      </div>
+      <div class="browse-dock-right">
+        {#if chapterVerses.length > 0}
+          <ul class="browse-verses">
+            {#each chapterVerses as v}
+              <li>
+                <button
+                  class="browse-verse"
+                  draggable="true"
+                  ondragstart={(e) => onScriptureDragStart(e, `${selectedBook} ${selectedChapter}:${v.verse}`, v.text)}
+                  onclick={() => insertBrowseVerse(v)}
+                >
+                  <span class="verse-num">{v.verse}</span>
+                  <span class="verse-text">{v.text}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {:else if selectedChapter}
+          <p class="browse-placeholder">No verses</p>
+        {:else if selectedBook}
+          <p class="browse-placeholder">Select a chapter to see verses — click a verse to add as slide (drag secondary)</p>
+        {:else}
+          <p class="browse-placeholder">Select a book and chapter to browse verses. Click a verse to add as slide.</p>
+        {/if}
+      </div>
+      <button class="browse-dock-close" onclick={() => (browseCollapsed = true)} title="Hide browse panel">× Hide</button>
+    </div>
+  {/if}
 </div>
 {/if}
 
@@ -1970,15 +1977,6 @@
     font-size: 12px;
     color: var(--text-dim);
   }
-  .browse-body {
-    padding: 10px 12px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    border-top: 1px solid var(--border);
-    max-height: 420px;
-    overflow-y: auto;
-  }
   .browse-error {
     color: var(--danger);
     font-size: 12px;
@@ -2075,6 +2073,105 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  .browse-hint {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin: 6px 0 0;
+    line-height: 1.4;
+    font-style: italic;
+  }
+
+  /* Bottom-docked full-width Browse panel — pushes main content up, not overlay */
+  .browse-dock {
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    min-height: 260px;
+    max-height: 38vh;
+    overflow: hidden;
+    position: relative;
+  }
+  .browse-dock-left {
+    width: 220px;
+    min-width: 180px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-right: 1px solid var(--border);
+    padding-right: 16px;
+    overflow-y: auto;
+  }
+  .browse-dock-middle {
+    width: 280px;
+    min-width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-right: 1px solid var(--border);
+    padding-right: 16px;
+    overflow-y: auto;
+  }
+  .browse-dock-right {
+    flex: 1;
+    min-width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+  }
+  .browse-dock .browse-books {
+    max-height: none;
+    flex: 1;
+    min-height: 120px;
+  }
+  .browse-dock .browse-verses {
+    max-height: none;
+    flex: 1;
+    min-height: 120px;
+  }
+  .browse-placeholder {
+    color: var(--text-dim);
+    font-size: 12px;
+    padding: 12px;
+    text-align: center;
+    font-style: italic;
+  }
+  .browse-dock-close {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .browse-dock-close:hover {
+    background: var(--panel-2);
+    color: var(--text);
+  }
+
+  @media (max-width: 960px) {
+    .browse-dock {
+      flex-direction: column;
+      max-height: 50vh;
+      overflow-y: auto;
+    }
+    .browse-dock-left,
+    .browse-dock-middle {
+      width: 100%;
+      min-width: 0;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+      padding-right: 0;
+      padding-bottom: 12px;
+    }
+  }
+
   .library-verse-row {
     margin-left: 8px;
   }

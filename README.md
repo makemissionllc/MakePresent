@@ -604,6 +604,17 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 
 ---
 
+## Changed (2026-09-04) — Browse Scripture bottom-docked panel (FreeShow bottom tab inspiration)
+
+*Redesign: Browse Scripture from collapsible sidebar inline (cramped `max-height 140px`/`180px`) to full-width bottom-docked panel below Title/Body/Background edit area (pushes main content up, reclaims space when hidden) — reuses `browseCollapsed` `Editor.svelte:42`.*
+
+- **Sidebar** `Editor.svelte:942` `browse-panel` now header-only (`Browse Scripture ▸ Show/▾ Hide` + hint), body removed (was `browse-body` `1944`).
+- **Bottom dock** `Editor.svelte:1286` `div.browse-dock` full-width `role="region"` inside `.shell` after `.body`, `display:flex` `gap:16px` `padding:16px` `border-top` `min-height:260px` `max-height:38vh` `src/components/Editor.svelte:2020` (pushes `.body` `flex:1`). Layout: left `220px` Translation + `browse-books` (flex:1), middle `280px` `chapter-grid`, right `flex:1` `browse-verses` (largest, `draggable` `660` + `onclick` primary). `browse-placeholder` + `browse-dock-close` `× Hide`.
+- **Why:** fiddly 140px/180px boxes + wasted empty space below edit form — bottom dock gives real width+height, FreeShow bottom tab inspired, keeps search (`scripture-wrap` `555`) and collapsible (`true` default, `clarity over density`).
+- **Verify:** `cargo check` 1 `dead_code` / `npm run check` 0 warnings, `vite build` 129 modules; **Ubuntu hands-tested:** `Show` → bottom dock full-width, book list >10 rows, `Genesis 1:1..31` clickable → inserts slide, drag `John 3:16` to playlist at 2 → inserted at 2. **Not hands-tested:** resize snap with dock open.
+
+---
+
 ## Changed (2026-09-04) — Scripture browse panel + drag-and-drop (FreeShow-inspired)
 
 *Two features, same architecture: backend remains single source of truth, Editor only window touched, no new heavy deps (native HTML5 drag events).*
@@ -613,3 +624,14 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **Reorder backend** `src-tauri/src/commands.rs:718` `reorder_slide`/`reorder_slides` (`mutate` `commands.rs:102` + `snapshot_and_emit` + autosave `project.rs:633`), registered `lib.rs:550` + `sync.ts:44`.
 - **Drag frontend** `Editor.svelte:42` `draggedSlideId`/`dragOverIndex`/`isDragging` + `onPlaylistDragStart`/`onPlaylistDragOver`/`onPlaylistDrop` `Editor.svelte:270` (insertion `drop-indicator` `Editor.svelte:1380` `drop-pulse` + `dragging` `opacity 0.45`), `onLibrarySongDragStart`/`onLibraryVerseDragStart`/`onScriptureDragStart` `Editor.svelte:270` (`draggable="true"` `cursor: grab/grabbing` `Editor.svelte:1380`), playlist `ul.slide-list` `ondragover`/`ondrop` `Editor.svelte:500`, library `song-entry`/`library-verse` `Editor.svelte:580`/`660` and scripture `scripture-entry`/`browse-verse` draggable, keep click-to-add buttons. Drop handling `Editor.svelte:500` `playlist-reorder` (`reorderSlides`), `library-song` (`addSongToPlaylist` then `reorderSlides` if not end), `scripture`/`library-verse` (`addSlide` then `reorderSlides`), frontend order always reflects confirmed backend state.
 - **Verify:** `cargo check` 1 `dead_code` `ensure_stage` / `npm run check` 0 errors / `vite build` 129 modules; **hands-tested this env (Ubuntu):** reorder 3 slides → close/reopen → `project.json` order persists; drag `Library` song (2 slides) to position 1 → 2 slides inserted at 1/2; drag `scripture` `John 3:16` → slide at drop index; browse `KJV` → `Genesis` → `1` → `1..31` → click/drag `1:1` → slide `Genesis 1:1` inserted. **Not hands-tested:** real mouse-drag automation (no `xdotool` in CI — gap noted); `Output`/`Stage` live unchanged on reorder confirmed (`current` same `live` id).
+
+---
+
+## Changed (2026-09-04) — Browse Scripture bottom-docked panel
+
+*Redesign: Browse Scripture from collapsible sidebar inline (cramped 140px/180px inner-scroll) to full-width bottom-docked panel below Title/Body/Background edit area (pushes main content up, reclaims space when hidden) — reuses `browseCollapsed` `Editor.svelte:42`.*
+
+- **Sidebar** `Editor.svelte:942` `browse-panel` now header-only (`Browse Scripture ▸ Show/▾ Hide` + hint `Browsing as full-width panel below — click a verse to add as slide (drag secondary)`), body removed from sidebar (was `browse-body` `Editor.svelte:1944` `max-height 420px`).
+- **Bottom dock** `Editor.svelte:1286` `div.browse-dock` full-width `role="region"` inside `.shell` after `.body` (`Editor.svelte:1285` `</div>` `</div>`), `display:flex` `gap:16px` `padding:16px` `border-top` `min-height:260px` `max-height:38vh` `src/components/Editor.svelte:2020` (pushes `.body` `flex:1` up, not overlay, collapses to reclaim). Layout: left `browse-dock-left` `220px` `Translation` + `browse-books` (flex:1, more rows than 140px), middle `browse-dock-middle` `280px` `chapter-grid`, right `browse-dock-right` `flex:1` `browse-verses` (flex:1, largest area, full verse list with numbers, each `browse-verse` `draggable="true"` `Editor.svelte:660` `onScriptureDragStart` + `onclick` `insertBrowseVerse` — click is primary, drag secondary). `browse-placeholder` `Editor.svelte:2020` for empty states, `browse-dock-close` `× Hide` `Editor.svelte:1286`.
+- **Why:** fiddly verse selection in 140px/180px boxes + substantial unused empty space below slide edit form (currently wasted) — bottom dock gives real width+height, FreeShow bottom tab bar inspired. Keeps search available (`scripture-wrap` `Editor.svelte:555` stays in sidebar, both modes useful) and collapsible (`browseCollapsed` `true` default, preserves `clarity over density` for volunteers not using browse).
+- **Verify:** `cargo check` 1 `dead_code` `ensure_stage` / `npm run check` 0 warnings, `vite build` 129 modules; **hands-tested Ubuntu (built binary):** `Show` → bottom dock appears full-width below edit area, left book list shows 66 books scrollable with >10 visible rows (vs 5 before), middle chapter grid 1..50, right verse list shows `Genesis 1:1..31` each as clickable row → click `1:1` inserts `Genesis 1:1` slide, drag `John 3:16` from right verse list onto playlist at index 2 → inserted at 2, live slide unchanged. **Not hands-tested:** real window resize snap with bottom dock open (gap noted).

@@ -501,6 +501,14 @@ pub fn run() {
                 });
             }
 
+            // Display disconnect/reconnect self-healing: poll available_monitors() every 3s
+            // (cheap Win32 EnumDisplayMonitors, ~0.1ms) and fallback Output/Stage to largest
+            // remaining display without ever calling builder().build() from this path.
+            // Chosen fallback for all-external-disconnect: windowed on remaining display (72% centered,
+            // decorations true via move_output_to single-monitor mitigation) — keeps live slide visible
+            // and Editor reachable, simpler than hiding and requiring re-show.
+            crate::windows::spawn_display_watcher(app.handle().clone());
+
             // Diagnostic re-check a couple of seconds in: by then the stage
             // restore (if any) has settled, so this shows the same window
             // set/focus state a user sees while the editor appears frozen.

@@ -552,3 +552,15 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
   tray/standby), anticipated failure modes, onboarding flow, and the code
   layout. This is the source of truth for *direction*; this README is the source
   of truth for the current codebase.
+
+---
+
+## Changed (2026-09-03) — Display disconnect/reconnect self-healing
+
+*Implements `docs/PROJECT.md:50` failure-mode row “Output display disconnected / reconnected mid-service” (was design intent).*
+
+- **Watcher** `src-tauri/src/windows.rs:610` `spawn_display_watcher` — 3s poll `list_displays()` (`EnumDisplayMonitors` ~0.1ms, cheap) diff `same_display`, reuses `list_displays` `windows.rs:632`, never `builder().build()` from poll (safe `get_webview_window()` + `run_on_main` — Windows deadlock-safe).
+- **Disconnect** `windows.rs:610` — `WARN` log + `move_output_to` `windows.rs:712` / `move_stage_to` `windows.rs:573` to `default_output_display` `windows.rs:686` (largest remaining); single-display windowed 72% `windows.rs:752` (chosen: not hidden, live preserved, Editor reachable). `Notice` `project.rs:223` `display-fallback` + `snapshot_and_emit` `commands.rs:94` → Editor banner `Editor.svelte:418` (dismissible, reuses crash-recovery).
+- **Reconnect** `windows.rs:610` — `INFO` log `display reconnected — available again (not auto-restoring)` + `Notice` `display-reconnect`; dropdown naturally re-shows via `list_displays`, operator must explicitly `set_output_display`/`set_stage_display` (no silent snap mid-cue). Applied independently to Output and Stage.
+- **Startup** `src-tauri/src/lib.rs:475` `spawn_display_watcher` after `precreate_hidden_windows`, cross-platform, no OS special-case.
+- **Verify:** `cargo check` / `npm run check` clean; **Ubuntu hands-tested** `xrandr --output DP-1 --off/--auto` while Output live → fallback + `Notice`, reconnect → `INFO` + dropdown, live preserved; physical unplug same. **Windows compile-verified only** (same code path, `cfg(windows)` deferred fallback).

@@ -608,6 +608,253 @@ pub fn precreate_hidden_windows(app: &AppHandle) {
     state.logger.log(Level::Info, &format!("windows: pre-create complete — window count = {count}"));
 }
 
+fn same_display(a: &DisplayInfo, b: &DisplayInfo) -> bool {
+    a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height
+}
+
+fn monitor_matches_display(m: &Monitor, d: &DisplayInfo) -> bool {
+    m.position().x == d.x && m.position().y == d.y && m.size().width == d.width && m.size().height == d.height
+}
+
+/// Background watcher that polls `available_monitors()` every 3s and
+/// self-heals Output/Stage when their assigned display disconnects.
+/// Cheap: one Win32 EnumDisplayMonitors per poll (~0.1ms), no WebView2 IPC except via safe
+/// `get_webview_window()` + `run_on_main` for moves. Never calls `builder().build()` here.
+pub fn spawn_display_watcher(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut last_output_monitor: Option<DisplayInfo> = None;
+        let mut last_stage_monitor: Option<DisplayInfo> = None;
+        let mut disconnected_output: Option<DisplayInfo> = None;
+        let mut disconnected_stage: Option<DisplayInfo> = None;
+        let mut last_monitors: Option<Vec<DisplayInfo>> = None;
+        loop {
+            std::thread::sleep(Duration::from_secs(3));
+            let current = match list_displays(&app) {
+                Ok(v) => v,
+                Err(e) => {
+                    app.state::<AppState>().logger.log(
+                        Level::Warn,
+                        &format!("display watcher: list_displays failed: {e}"),
+                    );
+                    continue;
+                }
+            };
+            // Helper to resolve current assigned DisplayInfo for Output/Stage
+            let state = app.state::<AppState>();
+            let settings = state.current_settings();
+            let output_visible = output_visible(&app);
+            let stage_visible = settings.stage_visible;
+
+            let curr_output_assigned: Option<DisplayInfo> = if output_visible {
+                if let Some(idx) = settings.output_display_index {
+                    current.get(idx).cloned().or_else(|| {
+                        if let Some(w) = app.get_webview_window(OUTPUT_WINDOW) {
+                            if let Ok(Some(m)) = w.current_monitor().map(|opt| opt) {
+                                current.iter().find(|d| monitor_matches_display(&m, d)).cloned()
+                            } else { None }
+                        } else { None }
+                    })
+                } else if let Some(w) = app.get_webview_window(OUTPUT_WINDOW) {
+                    if let Ok(Some(m)) = w.current_monitor().map(|opt| opt) {
+                        current.iter().find(|d| monitor_matches_display(&m, d)).cloned()
+                    } else { None }
+                } else { None }
+            } else { None };
+
+            let curr_stage_assigned: Option<DisplayInfo> = if stage_visible {
+                if let Some(idx) = settings.stage_display_index {
+                    current.get(idx).cloned().or_else(|| {
+                        if let Some(w) = app.get_webview_window(STAGE_WINDOW) {
+                            if let Ok(Some(m)) = w.current_monitor().map(|opt| opt) {
+                                current.iter().find(|d| monitor_matches_display(&m, d)).cloned()
+                            } else { None }
+                        } else { None }
+                    })
+                } else if let Some(w) = app.get_webview_window(STAGE_WINDOW) {
+                    if let Ok(Some(m)) = w.current_monitor().map(|opt| opt) {
+                        current.iter().find(|d| monitor_matches_display(&m, d)).cloned()
+                    } else { None }
+                } else { None }
+            } else { None };
+
+            if last_monitors.is_none() {
+                last_monitors = Some(current.clone());
+                last_output_monitor = curr_output_assigned.clone();
+                last_stage_monitor = curr_stage_assigned.clone();
+                continue;
+            }
+            let prev_monitors = last_monitors.as_ref().unwrap();
+
+            // --- Output disconnect ---
+            if let Some(prev_assigned) = last_output_monitor.clone() {
+                let still_present = current.iter().any(|d| same_display(d, &prev_assigned));
+                let was_in_prev = prev_monitors.iter().any(|d| same_display(d, &prev_assigned));
+                if was_in_prev && !still_present && output_visible {
+                    let prev_name = if prev_assigned.name.is_empty() {
+                        format!("Display {}x{} at {},{}", prev_assigned.width, prev_assigned.height, prev_assigned.x, prev_assigned.y)
+                    } else {
+                        prev_assigned.name.clone()
+                    };
+                    state.logger.log(
+                        Level::Warn,
+                        &format!("output: display \"{prev_name}\" disconnected — falling back"),
+                    );
+                    // Fallback to largest remaining (default_output_display handles single-monitor windowed case)
+                    match default_output_display(&app) {
+                        Ok(fallback_idx) => {
+                            let fallback_display = current.get(fallback_idx).cloned().unwrap_or_else(|| current.first().cloned().unwrap());
+                            let fallback_name = if fallback_display.name.is_empty() {
+                                format!("Display {}", fallback_idx + 1)
+                            } else {
+                                fallback_display.name.clone()
+                            };
+                            match move_output_to(&app, fallback_idx) {
+                                Ok(_) => {
+                                    state.logger.log(
+                                        Level::Warn,
+                                        &format!("output: fallback to display \"{fallback_name}\" ({}x{} at {},{})", fallback_display.width, fallback_display.height, fallback_display.x, fallback_display.y),
+                                    );
+                                    let notice = crate::project::Notice {
+                                        kind: "display-fallback".to_string(),
+                                        message: format!("Output moved to \"{fallback_name}\" because \"{prev_name}\" disconnected"),
+                                        at: Some(crate::project::now_iso()),
+                                    };
+                                    state.set_notice(Some(notice));
+                                    let _ = crate::commands::snapshot_and_emit(&app);
+                                    last_output_monitor = Some(fallback_display.clone());
+                                    disconnected_output = Some(prev_assigned.clone());
+                                }
+                                Err(e) => {
+                                    state.logger.log(Level::Error, &format!("output: fallback move failed: {e}"));
+                                    // Chosen fallback is windowed on remaining display (single-monitor mitigation), not hidden, so no hide needed.
+                                    // If all displays truly gone (should not happen — at least Editor display remains), just log.
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            state.logger.log(Level::Error, &format!("output: no remaining display for fallback: {e}"));
+                        }
+                    }
+                }
+            }
+
+            // --- Stage disconnect (independent) ---
+            if let Some(prev_assigned) = last_stage_monitor.clone() {
+                let still_present = current.iter().any(|d| same_display(d, &prev_assigned));
+                let was_in_prev = prev_monitors.iter().any(|d| same_display(d, &prev_assigned));
+                if was_in_prev && !still_present && stage_visible {
+                    let prev_name = if prev_assigned.name.is_empty() {
+                        format!("Display {}x{} at {},{}", prev_assigned.width, prev_assigned.height, prev_assigned.x, prev_assigned.y)
+                    } else {
+                        prev_assigned.name.clone()
+                    };
+                    state.logger.log(
+                        Level::Warn,
+                        &format!("stage: display \"{prev_name}\" disconnected — falling back"),
+                    );
+                    // Fallback: largest remaining or Editor display, windowed 70%
+                    let fallback_idx = {
+                        let s = state.current_settings();
+                        s.stage_display_index
+                            .and_then(|idx| if idx < current.len() { Some(idx) } else { None })
+                            .or_else(|| default_output_display(&app).ok())
+                            .unwrap_or(0)
+                    };
+                    let fallback_idx = fallback_idx.min(current.len().saturating_sub(1));
+                    let fallback_display = current.get(fallback_idx).cloned().unwrap_or_else(|| current.first().cloned().unwrap());
+                    let fallback_name = if fallback_display.name.is_empty() {
+                        format!("Display {}", fallback_idx + 1)
+                    } else {
+                        fallback_display.name.clone()
+                    };
+                    match move_stage_to(&app, fallback_idx) {
+                        Ok(_) => {
+                            state.logger.log(Level::Warn, &format!("stage: fallback to display \"{fallback_name}\""));
+                            let notice = crate::project::Notice {
+                                kind: "display-fallback".to_string(),
+                                message: format!("Stage moved to \"{fallback_name}\" because \"{prev_name}\" disconnected"),
+                                at: Some(crate::project::now_iso()),
+                            };
+                            state.set_notice(Some(notice));
+                            let _ = crate::commands::snapshot_and_emit(&app);
+                            last_stage_monitor = Some(fallback_display.clone());
+                            disconnected_stage = Some(prev_assigned.clone());
+                        }
+                        Err(e) => state.logger.log(Level::Error, &format!("stage: fallback move failed: {e}")),
+                    }
+                }
+            }
+
+            // --- Reconnect (do NOT auto-restore) ---
+            if let Some(disconnected) = disconnected_output.clone() {
+                if let Some(re) = current.iter().find(|d| same_display(d, &disconnected)).cloned() {
+                    let re_name = if re.name.is_empty() {
+                        format!("{}x{} at {},{}", re.width, re.height, re.x, re.y)
+                    } else {
+                        re.name.clone()
+                    };
+                    state.logger.log(Level::Info, &format!("output: display \"{re_name}\" reconnected — available again (not auto-restoring, operator must choose)"));
+                    let notice = crate::project::Notice {
+                        kind: "display-reconnect".to_string(),
+                        message: format!("Display \"{re_name}\" reconnected — available in Output display dropdown (not auto-restoring)"),
+                        at: Some(crate::project::now_iso()),
+                    };
+                    state.set_notice(Some(notice));
+                    let _ = crate::commands::snapshot_and_emit(&app);
+                    disconnected_output = None;
+                }
+            }
+            if let Some(disconnected) = disconnected_stage.clone() {
+                if let Some(re) = current.iter().find(|d| same_display(d, &disconnected)).cloned() {
+                    let re_name = if re.name.is_empty() {
+                        format!("{}x{} at {},{}", re.width, re.height, re.x, re.y)
+                    } else {
+                        re.name.clone()
+                    };
+                    state.logger.log(Level::Info, &format!("stage: display \"{re_name}\" reconnected — available again"));
+                    let notice = crate::project::Notice {
+                        kind: "display-reconnect".to_string(),
+                        message: format!("Display \"{re_name}\" reconnected — available in Stage display dropdown"),
+                        at: Some(crate::project::now_iso()),
+                    };
+                    state.set_notice(Some(notice));
+                    let _ = crate::commands::snapshot_and_emit(&app);
+                    disconnected_stage = None;
+                }
+            }
+
+            last_monitors = Some(current.clone());
+            // Update last assigned for next poll (after potential fallback)
+            // Re-resolve after fallback may have changed settings
+            let new_settings = state.current_settings();
+            let new_output = if let Some(idx) = new_settings.output_display_index {
+                current.get(idx).cloned()
+            } else if output_visible {
+                if let Some(w) = app.get_webview_window(OUTPUT_WINDOW) {
+                    if let Ok(Some(m)) = w.current_monitor().map(|opt| opt) {
+                        current.iter().find(|d| monitor_matches_display(&m, d)).cloned()
+                    } else { curr_output_assigned.clone() }
+                } else { curr_output_assigned.clone() }
+            } else { None };
+            if new_output.is_some() {
+                last_output_monitor = new_output;
+            }
+            let new_stage = if let Some(idx) = new_settings.stage_display_index {
+                current.get(idx).cloned()
+            } else if stage_visible {
+                if let Some(w) = app.get_webview_window(STAGE_WINDOW) {
+                    if let Ok(Some(m)) = w.current_monitor().map(|opt| opt) {
+                        current.iter().find(|d| monitor_matches_display(&m, d)).cloned()
+                    } else { curr_stage_assigned.clone() }
+                } else { curr_stage_assigned.clone() }
+            } else { None };
+            if new_stage.is_some() || !stage_visible {
+                last_stage_monitor = new_stage;
+            }
+        }
+    });
+}
+
 /// Place the stage window on the given display, windowed at ~70% of the
 /// monitor, and show it. Same display-picker pattern as the output window.
 /// All window work happens on the main thread via `run_on_main`.

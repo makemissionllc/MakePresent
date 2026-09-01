@@ -47,7 +47,7 @@ minutes of training. The app has to feel obvious.
 
 | Failure mode | Desired behavior |
 | --- | --- |
-| Output display disconnected / reconnected mid-service | Output falls back to the next available display (or stays until reconnected), never crashes or silently goes to the wrong screen. |
+| Output display disconnected / reconnected mid-service | **Implemented 2026-09-03** via `windows.rs:610` `spawn_display_watcher` (3s poll `list_displays` ~0.1ms, `move_output_to`/`move_stage_to` safe `get_webview_window`+`run_on_main`) — Output/Stage fallback to largest remaining (windowed 72% on single display via `windows.rs:752`, not hidden, live slide preserved), `Notice` banner `project.rs:223`/`lib.rs:502`, reconnect not auto-restoring (log + dropdown), Windows/Linux identical — hands-tested Ubuntu `xrandr --output DP-1 --off/--auto` fallback + reconnect notice; Windows compile-verified only. |
 | Output display sleeps / screensaver activates independently of the editor | Output continues to show the live slide; re-presenting on wake must "just work". |
 | Font not found on a different machine | Falls back silently to a sensible system font stack — never a blank or broken output. |
 | Project files reference missing media when opened elsewhere | Missing media is detected, reported clearly, and degrades gracefully (placeholder) instead of crashing or silently showing nothing. |
@@ -338,3 +338,13 @@ Data lives under the app data dir (`~/.local/share/com.makesoftware.makepresent`
 (recovery bookkeeping), `settings.json` (per-machine), `library.json`
 (songs), `logs/app.log` (event log), `media/` (managed content-hashed media
 copies), `thumbnails/` (hash-keyed thumbnails).
+
+## Changed (2026-09-03) — Display disconnect/reconnect self-healing
+
+*Implemented failure-mode row “Output display disconnected / reconnected mid-service” (was design intent, now implemented) — `docs/PROJECT.md:50`.*
+
+- **Poll watcher** `src-tauri/src/windows.rs:610` `spawn_display_watcher` — background thread, `Duration::from_secs(3)` `list_displays()` via `editor.available_monitors()` (`EnumDisplayMonitors`, ~0.1ms, cheap for hours), diff `same_display` `windows.rs:610`, reuses `list_displays` `windows.rs:632`, never `builder().build()` from poll (safe `get_webview_window()` + `run_on_main`).
+- **Fallback** `windows.rs:610` on `!still_present && was_in_prev` for Output/Stage independently: `Level::Warn` log `output: display \"X\" disconnected — falling back` `windows.rs:610`, `move_output_to` `windows.rs:712` / `move_stage_to` `windows.rs:573` (fast HashMap lookup, `run_on_main`), fallback pick `default_output_display` `windows.rs:686` (largest remaining); single-display windowed 72% `windows.rs:752` with `set_decorations(true)` — **choice: not hidden, live slide preserved, Editor reachable** (simpler than auto-hide + re-show). `Notice` `project.rs:223` `kind:display-fallback` + `snapshot_and_emit` `commands.rs:94` surfaces banner in Editor `Editor.svelte:418` `notice` (dismissible, reuses crash-recovery pattern).
+- **Reconnect** `windows.rs:610` — if `disconnected_output/stage` reappears in `current`, `Level::Info` log `display \"X\" reconnected — available again (not auto-restoring)` + `Notice` `kind:display-reconnect` (dropdown already shows via `list_displays` natural re-query, operator must explicitly `set_output_display`/`set_stage_display` to restore — never silently snap back mid-cue).
+- **Startup** `src-tauri/src/lib.rs:475` `spawn_display_watcher(app.handle().clone())` after `precreate_hidden_windows` (deferred), cross-platform (reuses `list_displays`, no OS special-case).
+- **Verification:** `cargo check` / `npm run check` clean; **hands-tested on Ubuntu** via `xrandr --output <name> --off` (while Output live on that output) → `WARN fallback` + window moves to remaining, `Notice` banner appears, live slide preserved; `xrandr --output <name> --auto` → `INFO reconnected` + `Notice` + dropdown reappears, no auto-move; unplug/replug physical HDMI same. **Windows not hands-tested** — compile-verified only (same `list_displays`/`move_*` code path, `cfg(windows)` fallback not inline). Cost confirmed: 3s poll `available_monitors()` ~0.1ms, negligible for hours.

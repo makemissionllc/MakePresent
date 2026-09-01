@@ -290,28 +290,37 @@ pub fn run() {
                 state.apply_settings(settings);
             }
 
-            // NDI: restore the broadcast if it was left enabled (the sender
-            // runs on its own thread; only the NDI-installed machine starts it).
-            let ndi_on = state.current_settings().ndi_enabled;
-            if ndi_on {
-                match state.broadcaster.start(crate::broadcast::NDI_SOURCE_NAME) {
-                    Ok(()) => state.logger.log(
-                        Level::Info,
-                        &format!(
-                            "ndi: restored broadcast — source \"{}\"",
-                            crate::broadcast::NDI_SOURCE_NAME
-                        ),
-                    ),
-                    Err(e) => state.logger.log(
-                        Level::Warn,
-                        &format!("ndi: restored state was enabled but could not start: {e}"),
-                    ),
-                }
-            }
-            if !state.broadcaster.is_active() {
-                state
-                    .logger
-                    .log(Level::Info, &format!("ndi: broadcast off (looks for {})", crate::broadcast::lib_filename()));
+            // NDI: restore the broadcast if it was left enabled. Wrapped in a
+            // spawned thread so slow LoadLibraryExW (antivirus scanning the DLL) cannot
+            // block the main thread pump before the event loop is fully running.
+            // Graceful failure when DLL missing is preserved.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let st = handle.state::<AppState>();
+                    let ndi_on = st.current_settings().ndi_enabled;
+                    if ndi_on {
+                        match st.broadcaster.start(crate::broadcast::NDI_SOURCE_NAME) {
+                            Ok(()) => st.logger.log(
+                                Level::Info,
+                                &format!(
+                                    "ndi: restored broadcast — source \"{}\" (off-main-thread LoadLibraryExW)",
+                                    crate::broadcast::NDI_SOURCE_NAME
+                                ),
+                            ),
+                            Err(e) => st.logger.log(
+                                Level::Warn,
+                                &format!("ndi: restored state was enabled but could not start: {e}"),
+                            ),
+                        }
+                    }
+                    if !st.broadcaster.is_active() {
+                        st.logger.log(
+                            Level::Info,
+                            &format!("ndi: broadcast off (looks for {})", crate::broadcast::lib_filename()),
+                        );
+                    }
+                });
             }
 
             // MIDI: restore the listener if a device was left selected. The

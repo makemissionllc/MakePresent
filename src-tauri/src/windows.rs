@@ -83,44 +83,82 @@ pub fn editor_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 /// Recreate the Editor window if it has gone away (e.g. collapsed by the OS or
 /// force-destroyed). Used by the tray "Open Editor" action so the process can
 /// keep running in the background and still bring the editor back on demand.
+///
+/// Close-to-tray uses `window.hide()` (`lib.rs:194` `prevent_close` + `hide`), so the webview
+/// is *not* destroyed — this `builder().build()` path is dead code in normal use. On Windows
+/// it is still guarded with the same deferred-never-inline fallback as Output/Stage for safety.
 pub fn ensure_editor(app: &AppHandle) -> Result<WebviewWindow, String> {
     if let Some(window) = app.get_webview_window(EDITOR_WINDOW) {
         return Ok(window);
     }
     let state = app.state::<AppState>();
-    state.logger.log(
-        Level::Info,
-        "windows: editor window missing — recreating from tray",
-    );
-    let app_main = app.clone();
-    run_on_main(app, &state, "ensure_editor", move || {
-        match WebviewWindow::builder(&app_main, EDITOR_WINDOW, editor_url())
-            .title("MakePresent - Editor")
-            .inner_size(1280.0, 800.0)
-            .min_inner_size(960.0, 600.0)
-            .center()
-            .visible(true)
-            .build()
-        {
-            Ok(window) => {
-                app_main.state::<AppState>().logger.log(
+    // Should be dead code (hide, not destroy), but guard anyway.
+    #[cfg(windows)]
+    {
+        state.logger.log(
+            Level::Error,
+            "windows: ensure_editor FALLBACK triggered — Editor window was not found/hidden but missing! Scheduling deferred build (Windows inline deadlock avoidance, close-to-tray is hide() so this should be dead code).",
+        );
+        let app_for_run = app.clone();
+        let app_for_build = app.clone();
+        let _ = app_for_run.run_on_main_thread(move || {
+            mark_as_main_thread();
+            let r = WebviewWindow::builder(&app_for_build, EDITOR_WINDOW, editor_url())
+                .title("MakePresent - Editor")
+                .inner_size(1280.0, 800.0)
+                .min_inner_size(960.0, 600.0)
+                .center()
+                .visible(true)
+                .build();
+            match r {
+                Ok(w) => app_for_build.state::<AppState>().logger.log(
                     Level::Info,
-                    &format!(
-                        "windows: editor window recreated successfully ({})",
-                        describe_window(&window)
-                    ),
-                );
-                Ok(window)
-            }
-            Err(e) => {
-                app_main.state::<AppState>().logger.log(
+                    &format!("windows: deferred fallback Editor recreated ({})", describe_window(&w)),
+                ),
+                Err(e) => app_for_build.state::<AppState>().logger.log(
                     Level::Error,
-                    &format!("windows: FAILED to recreate editor window: {e}"),
-                );
-                Err(format!("failed to recreate editor window: {e}"))
+                    &format!("windows: deferred fallback Editor FAILED: {e}"),
+                ),
             }
-        }
-    })
+        });
+        return Err("editor window not pre-created/hidden — deferred build scheduled (retry)".to_string());
+    }
+    #[cfg(not(windows))]
+    {
+        state.logger.log(
+            Level::Info,
+            "windows: editor window missing — recreating from tray",
+        );
+        let app_main = app.clone();
+        return run_on_main(app, &state, "ensure_editor", move || {
+            match WebviewWindow::builder(&app_main, EDITOR_WINDOW, editor_url())
+                .title("MakePresent - Editor")
+                .inner_size(1280.0, 800.0)
+                .min_inner_size(960.0, 600.0)
+                .center()
+                .visible(true)
+                .build()
+            {
+                Ok(window) => {
+                    app_main.state::<AppState>().logger.log(
+                        Level::Info,
+                        &format!(
+                            "windows: editor window recreated successfully ({})",
+                            describe_window(&window)
+                        ),
+                    );
+                    Ok(window)
+                }
+                Err(e) => {
+                    app_main.state::<AppState>().logger.log(
+                        Level::Error,
+                        &format!("windows: FAILED to recreate editor window: {e}"),
+                    );
+                    Err(format!("failed to recreate editor window: {e}"))
+                }
+            }
+        });
+    }
 }
 
 /// Diagnostic: compact one-line description of a window's visibility, focus,

@@ -536,9 +536,9 @@ All `#[tauri::command]` + live paths scanned for synchronous Windows OS calls th
 
 | Rank | Area | Risk |
 |---|---|---|
-| 1 | `windows.rs:86` `ensure_editor` (`builder().build()` via tray `show_editor` inline) | **MEDIUM** — rare tray recreation, not `invoke()`, but still inline on main |
+| 1 | `windows.rs:86` `ensure_editor` (`builder().build()` via tray `show_editor`) | **RESOLVED 2026-09-02** — now `#[cfg(windows)]` deferred `windows.rs:86`/`lib.rs:194` `hide()` dead-code guarded, same as Output/Stage |
 | 2 | `windows.rs:129` `describe_window` IPC (`is_visible` etc. in `log_window_state` worker) | **LOW** — diagnostic only, `snapshot()` no longer uses IPC |
-| 3-10 | `list_displays` Win32 `EnumDisplayMonitors`, `move_*` `set_*`/`show` (now fast after pre-create), `midi.rs:76` WinMM, `osc.rs:55`/`network.rs:126` already off-thread (`spawn` + `join` ≤1s), `broadcast.rs:147` `LoadLibraryExW` on worker (setup main at startup only), `tray` static (no runtime `set_menu` from handlers), `dialog` modal expected + already `spawn_blocking` | **LOW / FALSE POSITIVE** — on worker/thread, not main loop; not WebView2 deadlock class |
+| 3-10 | `list_displays` Win32 `EnumDisplayMonitors`, `move_*` `set_*`/`show` (now fast after pre-create), `midi.rs:76` WinMM, `osc.rs:55`/`network.rs:126` already off-thread, `broadcast.rs:147`→`lib.rs:293` off-main-thread `spawn` **RESOLVED 2026-09-02**, `tray` static, `dialog` already `spawn_blocking` | **LOW / FALSE POSITIVE** (broadcast now resolved) — on worker/thread, not main loop |
 
 Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Blocking Audit.
 

@@ -175,6 +175,15 @@ fn setup_tray(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Second instance attempted to start — focus existing Editor instead.
+            // Reuses tray-restore path (safe get_webview_window + show/unminimize/focus, never builder().build() inline on Windows).
+            app.state::<AppState>().logger.log(
+                Level::Info,
+                "app: duplicate launch attempt blocked, focused existing window",
+            );
+            show_editor(app);
+        }))
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .on_window_event(|window, event| {

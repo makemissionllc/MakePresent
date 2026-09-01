@@ -564,3 +564,14 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **Reconnect** `windows.rs:610` — `INFO` log `display reconnected — available again (not auto-restoring)` + `Notice` `display-reconnect`; dropdown naturally re-shows via `list_displays`, operator must explicitly `set_output_display`/`set_stage_display` (no silent snap mid-cue). Applied independently to Output and Stage.
 - **Startup** `src-tauri/src/lib.rs:475` `spawn_display_watcher` after `precreate_hidden_windows`, cross-platform, no OS special-case.
 - **Verify:** `cargo check` / `npm run check` clean; **Ubuntu hands-tested** `xrandr --output DP-1 --off/--auto` while Output live → fallback + `Notice`, reconnect → `INFO` + dropdown, live preserved; physical unplug same. **Windows compile-verified only** (same code path, `cfg(windows)` deferred fallback).
+
+---
+
+## Changed (2026-09-03) — Single-instance lock (Phase 4 gap)
+
+*Closes gap where two `makepresent` processes could run simultaneously, both autosaving `project.json` `project.rs:633` and double-binding `stage-network` `network.rs:126` / MIDI `midi.rs:76` / NDI `broadcast.rs:147` / OSC `osc.rs:55`.*
+
+- **Plugin** `src-tauri/Cargo.toml:21` `tauri-plugin-single-instance = "2"` (`2.4.4`), registered **first** `src-tauri/src/lib.rs:177` `Builder::default().plugin(single_instance::init(|app,_args,_cwd|{ show_editor(app) })).plugin(dialog::init())` per Tauri docs — second instance never reaches `setup`.
+- **Second launch:** `lib.rs:177` `init` closure logs `INFO app: duplicate launch attempt blocked, focused existing window` `logging.rs:98` (visible `Settings > Logs` `commands.rs:1257`) + reuses `show_editor` `lib.rs:92` / `windows.rs:83` `ensure_editor` `get_webview_window` + `unminimize`/`show`/`set_focus` (Windows `#[cfg(windows)]` deferred fallback, but `hide()` not destroy `lib.rs:194` so dead code). No `builder().build()` from this path — deadlock-safe.
+- **Clean exit:** Second process `ExitCode 0` after notifying first; **no** `project.json` touch, **no** `spawn_autosave` `lib.rs:460`, `verify_on_startup` `lib.rs:472`, `spawn_display_watcher` `lib.rs:475`, NDI `lib.rs:293`, MIDI/OSC/Network — verified via `logs/app.log:831` single `duplicate blocked` line, no duplicate `ndi: broadcast`/`midi: listening`/`stage-server` from blocked instance.
+- **Verify:** `cargo build` `1m27s` / `cargo check` 1 `dead_code` `ensure_stage` / `npm run check` 0 errors; **Windows hands-tested** `Start-Process makepresent.exe` (first `PID 20460` `window count=3`), second `Start-Process makepresent.exe second` → `PID 33804` `HasExited True ExitCode 0` in 2s, `Get-Process makepresent` 2→3→2 (only first persists), `Select-String` confirms blocked log. **Unverified in env:** actual Editor focus animation (headless `Hidden`); will verify manually on real Windows (tray `show_editor` already verified `lib.rs:201`).

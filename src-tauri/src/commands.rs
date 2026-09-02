@@ -1,8 +1,8 @@
 use crate::logging::{Level, LogEntry};
 use crate::project::{
     is_first_run, now_iso, Background, BroadcastView, ClientState, Library, LibrarySlide,
-    BoxGeometry, LibrarySong, Look, OutputView, PlaylistTemplate, Positioning, Project, Settings,
-    Slide, StageView, TemplateItem, TextPosition, Transition, write_settings,
+    BoxGeometry, LibrarySong, Look, OutputView, Overlay, PlaylistTemplate, Positioning, Project,
+    Settings, Slide, StageView, TemplateItem, TextPosition, Transition, write_settings,
 };
 use crate::scripture::ScriptureMatch;
 use crate::state::AppState;
@@ -75,6 +75,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
         stage_network_enabled: settings.stage_network_enabled,
         stage_network_port: settings.stage_network_port,
         stage_message: state.stage_message.read().unwrap().clone(),
+        overlay: state.overlay.read().unwrap().clone(),
     };
 
     // Keep connected phones/tablets in lock-step with the desktop windows: after
@@ -1492,6 +1493,79 @@ pub fn clear_stage_message(app: AppHandle) -> Result<ClientState, String> {
     app.state::<AppState>().bump_stage_message();
     if had {
         log(&app, Level::Info, "stage_message: cleared");
+    }
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Overlay layer for Output — independent of main slide/background, lower-third / logo.
+/// Background at bottom, main slide in middle, overlay on top via z-index. Each layer independently toggleable.
+#[tauri::command]
+pub fn set_overlay(
+    app: AppHandle,
+    text: String,
+    background: Option<Background>,
+) -> Result<ClientState, String> {
+    let trimmed = text.trim().to_string();
+    if trimmed.is_empty() && background.is_none() {
+        return Err("overlay must have text or image".to_string());
+    }
+    if trimmed.len() > 500 {
+        return Err("overlay text must be 500 characters or fewer".to_string());
+    }
+    let overlay = Overlay {
+        id: Uuid::new_v4().to_string(),
+        text: trimmed.clone(),
+        background,
+        visible: true,
+    };
+    {
+        let state = app.state::<AppState>();
+        let mut o = state.overlay.write().unwrap();
+        *o = Some(overlay);
+    }
+    log(&app, Level::Info, &format!("overlay: set \"{}\"", trimmed));
+    Ok(snapshot_and_emit(&app))
+}
+
+#[tauri::command]
+pub fn set_overlay_visible(app: AppHandle, visible: bool) -> Result<ClientState, String> {
+    let has_overlay = {
+        let state = app.state::<AppState>();
+        let o = state.overlay.read().unwrap();
+        o.is_some()
+    };
+    if !has_overlay {
+        return Err("no overlay to show/hide — set one first".to_string());
+    }
+    {
+        let state = app.state::<AppState>();
+        let mut o = state.overlay.write().unwrap();
+        if let Some(ref mut ov) = *o {
+            ov.visible = visible;
+        }
+    }
+    log(
+        &app,
+        Level::Info,
+        &format!("overlay: {}", if visible { "shown" } else { "hidden" }),
+    );
+    Ok(snapshot_and_emit(&app))
+}
+
+#[tauri::command]
+pub fn clear_overlay(app: AppHandle) -> Result<ClientState, String> {
+    let had = {
+        let state = app.state::<AppState>();
+        let o = state.overlay.read().unwrap();
+        o.is_some()
+    };
+    {
+        let state = app.state::<AppState>();
+        let mut o = state.overlay.write().unwrap();
+        *o = None;
+    }
+    if had {
+        log(&app, Level::Info, "overlay: cleared");
     }
     Ok(snapshot_and_emit(&app))
 }

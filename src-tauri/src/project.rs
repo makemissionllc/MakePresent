@@ -450,6 +450,9 @@ pub struct ClientState {
     /// Targeted stage-only message (nursery alerts, countdowns, operator notes).
     /// Separate from `Project.live` — changing it never affects Output.
     pub stage_message: Option<String>,
+    /// Independent overlay layer for Output — lower-third / logo on top of background+main.
+    /// `None` = no overlay, `Some` with `visible=false` = hidden but content preserved.
+    pub overlay: Option<Overlay>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -574,6 +577,36 @@ impl LibrarySong {
         }
     }
 
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Overlay {
+    pub id: String,
+    pub text: String,
+    #[serde(default)]
+    pub background: Option<Background>,
+    pub visible: bool,
+}
+
+#[allow(dead_code)]
+impl Overlay {
+    pub fn new_text(text: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            text,
+            background: None,
+            visible: true,
+        }
+    }
+    pub fn new_image(bg: Background) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            text: String::new(),
+            background: Some(bg),
+            visible: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

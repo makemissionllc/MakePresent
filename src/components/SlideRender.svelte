@@ -3,6 +3,7 @@
   import type { Look, Slide } from "../lib/types";
   import { fitText } from "../lib/fitText";
   import { hasChords, stripChords, parseChordLine } from "../lib/chords";
+  import type { Overlay } from "../lib/types";
 
   interface Props {
     slide: Slide;
@@ -11,9 +12,11 @@
     showBackground?: boolean;
     /** When true, Stage renders ChordPro bracketed chords as stacked band-view; Output always strips */
     isStage?: boolean;
+    /** Independent overlay layer for Output (lower-third / logo) — background at z0, main at z1, overlay at z2 */
+    overlay?: Overlay | null;
   }
 
-  let { slide, look, showText = true, showBackground = true, isStage = false }: Props = $props();
+  let { slide, look, showText = true, showBackground = true, isStage = false, overlay = null }: Props = $props();
 
   const effectiveShowBackground = $derived(showBackground && look.showBackground);
   const effectiveShowText = $derived(showText);
@@ -119,6 +122,34 @@
         {isStage ? slide.body : stripChords(slide.body)}
       </p>
     {/if}
+  {/if}
+  {#if overlay?.visible}
+    <div class="overlay-layer" style:z-index={2}>
+      {#if overlay.background?.type === "image"}
+        <img
+          class="overlay-media"
+          src={convertFileSrc(overlay.background.path)}
+          alt=""
+          draggable="false"
+          onerror={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      {:else if overlay.background?.type === "video"}
+        <video
+          class="overlay-media"
+          src={convertFileSrc(overlay.background.path)}
+          autoplay
+          loop
+          muted
+          playsinline
+          preload="auto"
+        ></video>
+      {/if}
+      {#if overlay.text}
+        <div class="overlay-text">{overlay.text}</div>
+      {/if}
+    </div>
   {/if}
 </div>
 
@@ -259,4 +290,45 @@
     line-height: 1.15;
   }
   .chord:empty { min-height: 0; }
+
+  /* Overlay layer — independent of main slide/background, lower-third / logo.
+     Background at z0, main at z1, overlay at z2 via inline z-index.
+     Toggled via overlay.visible without affecting main slide. */
+  .overlay-layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .overlay-media {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: 18vh;
+    object-fit: cover;
+    z-index: 0;
+  }
+  .overlay-text {
+    position: relative;
+    z-index: 1;
+    background: rgba(0, 0, 0, 0.72);
+    color: white;
+    padding: 1.2vh 3vw;
+    font-family: var(--font-body);
+    font-size: clamp(1rem, 2.8vmin, 1.8rem);
+    font-weight: 600;
+    text-align: center;
+    max-width: 90%;
+    border-radius: 6px;
+    margin-bottom: 3vh;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    white-space: pre-wrap;
+  }
 </style>

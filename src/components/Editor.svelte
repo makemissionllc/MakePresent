@@ -4,7 +4,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
   import { api, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, PlaylistTemplate, ScriptureMatch, Slide } from "../lib/types";
+  import type { Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, PlaylistTemplate, ScriptureMatch, Slide } from "../lib/types";
   import { isMedia } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
@@ -121,6 +121,11 @@
   // Stage message (nursery alerts, countdowns, operator notes) — stage-only, never Output
   let stageMessageDraft = $state("");
   let stageMessageDuration = $state("");
+
+  // Overlay for Output — independent lower-third / logo, stage_message-like but for main Output
+  let overlayTextDraft = $state("");
+  let overlayBackgroundDraft = $state<Background | null>(null);
+  let overlayImporting = $state(false);
 
   // Draft copies for responsive editing — typing updates these immediately
   // while the backend save is debounced so the input never resets mid-keystroke.
@@ -1333,6 +1338,76 @@
     }
   }
 
+  async function setOverlay(): Promise<void> {
+    const text = overlayTextDraft.trim();
+    const bg = overlayBackgroundDraft;
+    if (!text && !bg) {
+      errorMsg = "Overlay must have text or image";
+      return;
+    }
+    try {
+      errorMsg = null;
+      appState = await api.setOverlay(text, bg);
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
+  async function showOverlay(): Promise<void> {
+    try {
+      errorMsg = null;
+      if (!appState?.overlay) {
+        await setOverlay();
+      } else {
+        appState = await api.setOverlayVisible(true);
+      }
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
+  async function hideOverlay(): Promise<void> {
+    try {
+      errorMsg = null;
+      appState = await api.setOverlayVisible(false);
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
+  async function clearOverlay(): Promise<void> {
+    try {
+      errorMsg = null;
+      appState = await api.clearOverlay();
+      overlayTextDraft = "";
+      overlayBackgroundDraft = null;
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
+  async function pickOverlayImage(): Promise<void> {
+    try {
+      errorMsg = null;
+      const picked = await open({ multiple: false, filters: MEDIA_FILTERS });
+      if (typeof picked !== "string") return;
+      overlayImporting = true;
+      try {
+        const asset = await api.importMedia(picked);
+        overlayBackgroundDraft = asset.background;
+      } finally {
+        overlayImporting = false;
+      }
+    } catch (e) {
+      overlayImporting = false;
+      errorMsg = String(e);
+    }
+  }
+
+  function removeOverlayBackground(): void {
+    overlayBackgroundDraft = null;
+  }
+
   onMount(() => {
     let unSub: () => void = () => {};
     let unAuto: () => void = () => {};
@@ -2002,6 +2077,7 @@
               look={outputPreviewLook}
               showText={project?.showText ?? true}
               showBackground={project?.showBackground ?? true}
+              overlay={appState?.overlay ?? null}
             />
           {:else}
             <div class="preview-empty">No slide</div>
@@ -2144,6 +2220,52 @@
           <button class="ghost" onclick={() => void clearStageMessage()} title="Clear Stage banner">Clear</button>
         </div>
         <span class="field-hint">Red flashing banner on Stage only — never on Output. Optional duration auto-clears.</span>
+      </div>
+
+      <div class="stage-message-panel">
+        <span class="field-label">Overlays — Output only (never Stage)</span>
+        {#if appState?.overlay}
+          <div class="stage-message-current">
+            <span class="stage-message-text">{appState.overlay.text || "(image)"} — {appState.overlay.visible ? "Visible" : "Hidden"}</span>
+            <span class="live-dot" style:background={appState.overlay.visible ? "var(--semantic-live, #1f9d6a)" : "var(--semantic-idle, #64748b)"}></span>
+          </div>
+        {/if}
+        <div class="stage-message-row">
+          <input
+            type="text"
+            placeholder="Lower-third text…"
+            bind:value={overlayTextDraft}
+            onkeydown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void setOverlay();
+              }
+            }}
+          />
+        </div>
+        {#if overlayBackgroundDraft && isMedia(overlayBackgroundDraft)}
+          <div class="overlay-preview" style="display:flex; gap:8px; align-items:center; font-size:11px;">
+            <span
+              class="media-thumb"
+              style:background-image={`url('${fileUrl(overlayBackgroundDraft.thumb)}')`}
+              style:width="44px"
+              style:height="28px"
+              aria-hidden="true"
+            ></span>
+            <span>{overlayBackgroundDraft.type === "video" ? "Video" : "Image"} overlay ready</span>
+            <button class="ghost" onclick={() => removeOverlayBackground()} title="Remove image">×</button>
+          </div>
+        {/if}
+        <div class="stage-message-actions">
+          <button class="ghost" onclick={() => void pickOverlayImage()} disabled={overlayImporting} title="Pick image/video for overlay">
+            {overlayImporting ? "…" : "Image…"}
+          </button>
+          <button class="ghost" onclick={() => void setOverlay()} title="Set overlay (visible)">Set</button>
+          <button class="ghost" onclick={() => void showOverlay()} title="Show overlay">Show</button>
+          <button class="ghost" onclick={() => void hideOverlay()} title="Hide overlay">Hide</button>
+          <button class="ghost" onclick={() => void clearOverlay()} title="Clear overlay">Clear</button>
+        </div>
+        <span class="field-hint">Lower-third / logo on Output only — background (z0), main (z1), overlay (z2). Video keeps playing when overlay toggles.</span>
       </div>
     </aside>
   </div>

@@ -236,4 +236,12 @@ export const api = {
     }),
 
   clearStageMessage: () => invoke<ClientState>("clear_stage_message"),
+
+  setOverlay: (text: string, background?: Background | null) =>
+    invoke<ClientState>("set_overlay", { text, background: background ?? null }),
+
+  setOverlayVisible: (visible: boolean) =>
+    invoke<ClientState>("set_overlay_visible", { visible }),
+
+  clearOverlay: () => invoke<ClientState>("clear_overlay"),
 };

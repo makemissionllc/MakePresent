@@ -663,6 +663,9 @@ pub fn run() {
             commands::set_song_arrangement,
             commands::set_stage_message,
             commands::clear_stage_message,
+            commands::set_overlay,
+            commands::set_overlay_visible,
+            commands::clear_overlay,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

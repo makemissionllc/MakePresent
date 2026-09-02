@@ -41,6 +41,7 @@
 
   const showText = $derived(project?.showText ?? true);
   const showBackground = $derived(project?.showBackground ?? true);
+  const overlay = $derived(appState?.overlay ?? null);
 
   // The on-deck slide comes straight from state (the backend decides who is
   // "likely next"). Its media is preloaded here — in the window that will
@@ -142,6 +143,35 @@
     {/if}
   {/if}
 
+  {#if overlay?.visible}
+    <div class="overlay-layer" style:z-index={2}>
+      {#if overlay.background?.type === "image"}
+        <img
+          class="overlay-media"
+          src={convertFileSrc(overlay.background.path)}
+          alt=""
+          draggable="false"
+          onerror={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      {:else if overlay.background?.type === "video"}
+        <video
+          class="overlay-media"
+          src={convertFileSrc(overlay.background.path)}
+          autoplay
+          loop
+          muted
+          playsinline
+          preload="auto"
+        ></video>
+      {/if}
+      {#if overlay.text}
+        <div class="overlay-text">{overlay.text}</div>
+      {/if}
+    </div>
+  {/if}
+
   {#if onDeck && onDeck.background.type === "video"}
     <video
       class="preloader"
@@ -218,5 +248,43 @@
     opacity: 0.01;
     pointer-events: none;
     /* keep it reachable by the layout engine so WebKit actually fetches it */
+  }
+
+  .overlay-layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .overlay-media {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: 18vh;
+    object-fit: cover;
+    z-index: 0;
+  }
+  .overlay-text {
+    position: relative;
+    z-index: 1;
+    background: rgba(0, 0, 0, 0.72);
+    color: white;
+    padding: 1.2vh 3vw;
+    font-family: var(--font-body);
+    font-size: clamp(1rem, 2.8vmin, 1.8rem);
+    font-weight: 600;
+    text-align: center;
+    max-width: 90%;
+    border-radius: 6px;
+    margin-bottom: 3vh;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    white-space: pre-wrap;
   }
 </style>

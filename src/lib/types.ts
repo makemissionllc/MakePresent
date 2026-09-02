@@ -147,6 +147,7 @@ export interface ClientState {
   stageNetworkEnabled: boolean;
   stageNetworkPort: number;
   stageMessage: string | null;
+  overlay: Overlay | null;
 }
 
 export interface StageNetworkInfo {
@@ -192,6 +193,13 @@ export interface LibrarySong {
   arrangement: string[];
   /** Deprecated flat list — retained for one-time migration, not present in new saves */
   slides?: LibrarySlide[] | null;
+}
+
+export interface Overlay {
+  id: string;
+  text: string;
+  background: Background | null;
+  visible: boolean;
 }
 
 export interface ServicePresetItem {

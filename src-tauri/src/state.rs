@@ -3,7 +3,7 @@ use crate::logging::Logger;
 use crate::midi::MidiListener;
 use crate::network::NetworkServer;
 use crate::osc::OscListener;
-use crate::project::{Library, Notice, Project, Settings};
+use crate::project::{Library, Notice, Overlay, Project, Settings};
 use crate::scripture::ScriptureIndex;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -41,6 +41,10 @@ pub struct AppState {
     pub stage_message: RwLock<Option<String>>,
     /// Generation for stage-message auto-expire timers (like auto_advance_gen).
     pub stage_message_gen: AtomicU64,
+    /// Independent overlay layer for Output — lower-third / logo, shown on top of
+    /// background + main slide. Separate from `Project.live`; toggling never
+    /// affects main slide. `None` = no overlay, `Some` with `visible=false` = hidden but content preserved.
+    pub overlay: RwLock<Option<Overlay>>,
 }
 
 impl Default for AppState {
@@ -61,6 +65,7 @@ impl Default for AppState {
             auto_advance_gen: AtomicU64::new(0),
             stage_message: RwLock::new(None),
             stage_message_gen: AtomicU64::new(0),
+            overlay: RwLock::new(None),
         }
     }
 }

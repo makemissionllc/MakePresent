@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 // ---------------------------------------------------------------------------
@@ -663,6 +663,50 @@ pub fn merge_persisted(existing: &mut Vec<RawBook>, added: Vec<RawBook>) {
             existing.push(raw);
         }
     }
+}
+
+/// The folder where raw OpenLP/Zefania XML files can be dropped directly
+/// (alternative to the Import button). This is `data_dir/bibles/` — e.g.
+/// `%APPDATA%\com.makesoftware.makepresent\bibles\` on Windows,
+/// `~/.local/share/com.makesoftware.makepresent/bibles/` on Linux.
+pub fn bibles_folder(data_dir: &Path) -> PathBuf {
+    data_dir.join("bibles")
+}
+
+/// Scan `data_dir/bibles/*.xml` for raw Bible files dropped there directly.
+/// Returns `(parsed_books, Vec<(filename, error)>)` for WARN logging.
+/// Handles missing folder gracefully (not an error).
+pub fn scan_bibles_folder(data_dir: &Path) -> (Vec<RawBook>, Vec<(String, String)>) {
+    let folder = bibles_folder(data_dir);
+    let mut ok = Vec::new();
+    let mut errs = Vec::new();
+    let entries = match std::fs::read_dir(&folder) {
+        Ok(e) => e,
+        Err(_) => return (ok, errs),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase() == "xml")
+            .unwrap_or(false)
+        {
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown.xml")
+                .to_string();
+            match std::fs::read_to_string(&path) {
+                Ok(xml) => match parse_openlp_xml(&xml) {
+                    Ok(books) => ok.extend(books),
+                    Err(e) => errs.push((filename, e)),
+                },
+                Err(e) => errs.push((filename, e.to_string())),
+            }
+        }
+    }
+    (ok, errs)
 }
 
 /// Flatten nested book data into the same `ScriptureMatch` records the bundled

@@ -432,10 +432,62 @@ pub fn run() {
                                 );
                                 // Fold in any Bibles the user imported in an
                                 // earlier session so they stay searchable.
+                                // Also scan data_dir/bibles/*.xml for raw files dropped directly
+                                // (alternative to Import button) — logs WARN for malformed.
                                 if let Ok(data_dir) = data_dir {
+                                    let bibles_dir = scripture::bibles_folder(&data_dir);
+                                    if !bibles_dir.exists() {
+                                        let _ = std::fs::create_dir_all(&bibles_dir);
+                                        st.logger.log(
+                                            Level::Info,
+                                            &format!(
+                                                "scripture: created bibles folder at {} — place OpenLP XML files there or use Import button",
+                                                bibles_dir.display()
+                                            ),
+                                        );
+                                    }
                                     let imported = scripture::load_imported_books(&data_dir);
-                                    if !imported.is_empty() {
-                                        let verses = scripture.merge_books(imported);
+                                    let mut to_merge = imported;
+                                    let (scanned, errs) = scripture::scan_bibles_folder(&data_dir);
+                                    for (fname, err) in errs {
+                                        st.logger.log(
+                                            Level::Warn,
+                                            &format!(
+                                                "scripture: malformed Bible file \"{fname}\" in {} — {err} (expected OpenLP/Zefania XML)",
+                                                bibles_dir.display()
+                                            ),
+                                        );
+                                    }
+                                    if !scanned.is_empty() {
+                                        let distinct_scanned: std::collections::HashSet<String> =
+                                            scanned.iter().map(|b| b.book.clone()).collect();
+                                        st.logger.log(
+                                            Level::Info,
+                                            &format!(
+                                                "scripture: found {} books ({} distinct) from {} XML file(s) dropped in {}",
+                                                scanned.len(),
+                                                distinct_scanned.len(),
+                                                scanned.len(),
+                                                bibles_dir.display()
+                                            ),
+                                        );
+                                        let mut persisted = scripture::load_imported_books(&data_dir);
+                                        let before = persisted.len();
+                                        scripture::merge_persisted(&mut persisted, scanned.clone());
+                                        if persisted.len() != before {
+                                            let _ = scripture::save_imported_books(&data_dir, &persisted);
+                                            st.logger.log(
+                                                Level::Info,
+                                                &format!(
+                                                    "scripture: auto-imported {} new books from dropped XML files",
+                                                    persisted.len() - before
+                                                ),
+                                            );
+                                        }
+                                        to_merge.extend(scanned);
+                                    }
+                                    if !to_merge.is_empty() {
+                                        let verses = scripture.merge_books(to_merge);
                                         st.logger.log(
                                             Level::Info,
                                             &format!(
@@ -575,6 +627,7 @@ pub fn run() {
             commands::get_book_list,
             commands::get_chapter,
             commands::list_chapters,
+            commands::get_bibles_folder,
             commands::list_midi_devices,
             commands::set_midi_enabled,
             commands::set_midi_device,

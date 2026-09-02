@@ -161,6 +161,8 @@ export const api = {
   listChapters: (bibleId: string, book: string) =>
     invoke<number[]>("list_chapters", { bibleId, book }),
 
+  getBiblesFolder: () => invoke<string>("get_bibles_folder"),
+
   reorderSlide: (slideId: string, newIndex: number) =>
     invoke<ClientState>("reorder_slide", { slideId, newIndex }),
 

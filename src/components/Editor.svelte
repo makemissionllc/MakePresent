@@ -64,6 +64,7 @@
   let browseCollapsed = $state(true);
   let browseLoading = $state(false);
   let browseError = $state<string | null>(null);
+  let biblesFolder = $state<string>("");
 
   // Drag-and-drop state (native HTML5, no library)
   let draggedSlideId = $state<string | null>(null);
@@ -822,6 +823,7 @@
         api.listDisplays().then((d) => { if (!cancelled) displays = d; }).catch((e: unknown) => { if (!cancelled) errorMsg = String(e); });
         api.getLibrary().then((l) => { if (!cancelled) library = l; }).catch((e: unknown) => { if (!cancelled) errorMsg = String(e); });
         void loadBibles();
+        api.getBiblesFolder().then((p) => { if (!cancelled) biblesFolder = p; }).catch(() => {});
       }
     })();
 
@@ -1011,14 +1013,17 @@
               Look up “{scriptureQuery.trim()}” on bible-api.com
             </button>
           {/if}
-          <button
-            class="add scripture-import"
-            disabled={scriptureBusy}
-            onclick={() => void importOpenlpFile()}
-          >
-            Import OpenLP Bible…
-          </button>
-          {#if scriptureStatus}
+        <button
+          class="add scripture-import"
+          disabled={scriptureBusy}
+          onclick={() => void importOpenlpFile()}
+        >
+          Import OpenLP Bible…
+        </button>
+        {#if biblesFolder}
+          <p class="bibles-folder-hint">Or place OpenLP XML files directly in:<br><code>{biblesFolder}</code></p>
+        {/if}
+        {#if scriptureStatus}
             <p class="scripture-status">{scriptureStatus}</p>
           {/if}
         </div>
@@ -1937,6 +1942,25 @@
     margin: 6px 0 0;
     font-size: 12px;
     color: var(--text-dim);
+  }
+
+  .bibles-folder-hint {
+    margin: 8px 0 0;
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.4;
+    word-break: break-all;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 8px;
+  }
+
+  .bibles-folder-hint code {
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    word-break: break-all;
   }
 
   .song-list {

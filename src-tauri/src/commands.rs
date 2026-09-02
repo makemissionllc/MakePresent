@@ -1566,6 +1566,59 @@ pub async fn lookup_api_scripture(
 #[tauri::command]
 pub fn list_bibles(app: AppHandle) -> Vec<BibleInfo> {
     let state = app.state::<AppState>();
+    let data_dir = state.app_data_dir();
+    // Ensure bibles folder exists and scan for dropped XML files (refresh without restart)
+    let bibles_dir = crate::scripture::bibles_folder(&data_dir);
+    if !bibles_dir.exists() {
+        let _ = std::fs::create_dir_all(&bibles_dir);
+        state.logger.log(
+            Level::Info,
+            &format!(
+                "scripture: bibles folder not found — created at {} (place OpenLP XML files there or use Import button)",
+                bibles_dir.display()
+            ),
+        );
+    }
+    let (scanned, errs) = crate::scripture::scan_bibles_folder(&data_dir);
+    for (fname, err) in errs {
+        state.logger.log(
+            Level::Warn,
+            &format!(
+                "scripture: malformed Bible file \"{fname}\" in {} — {err} (expected OpenLP/Zefania XML)",
+                bibles_dir.display()
+            ),
+        );
+    }
+    // Auto-merge any newly dropped XML files so they appear without restart
+    if !scanned.is_empty() {
+        let mut persisted = crate::scripture::load_imported_books(&data_dir);
+        let before = persisted.len();
+        crate::scripture::merge_persisted(&mut persisted, scanned.clone());
+        if persisted.len() != before {
+            let _ = crate::scripture::save_imported_books(&data_dir, &persisted);
+            state.logger.log(
+                Level::Info,
+                &format!(
+                    "scripture: auto-imported {} new books from dropped XML files in {}",
+                    persisted.len() - before,
+                    bibles_dir.display()
+                ),
+            );
+            // Also merge into live index so browse works immediately
+            if let Some(idx) = state.scripture.write().unwrap().as_mut() {
+                let verses = idx.merge_books(scanned.clone());
+                state.logger.log(
+                    Level::Info,
+                    &format!(
+                        "scripture: live index updated with {} verses from dropped files (now {} books)",
+                        verses,
+                        idx.book_count()
+                    ),
+                );
+            }
+        }
+    }
+
     let mut out = Vec::new();
     if let Some(idx) = state.scripture.read().unwrap().as_ref() {
         out.push(BibleInfo {
@@ -1574,9 +1627,12 @@ pub fn list_bibles(app: AppHandle) -> Vec<BibleInfo> {
             book_count: idx.book_count(),
         });
     }
-    let imported = crate::scripture::load_imported_books(&state.app_data_dir());
-    if !imported.is_empty() {
-        let distinct: std::collections::HashSet<String> = imported.iter().map(|b| b.book.clone()).collect();
+    let imported = crate::scripture::load_imported_books(&data_dir);
+    // Count distinct books across persisted + scanned (in case scanned not yet persisted due to error)
+    let mut all_books = imported;
+    all_books.extend(scanned);
+    if !all_books.is_empty() {
+        let distinct: std::collections::HashSet<String> = all_books.iter().map(|b| b.book.clone()).collect();
         out.push(BibleInfo {
             id: "imported".to_string(),
             name: "Imported Bibles".to_string(),
@@ -1584,7 +1640,6 @@ pub fn list_bibles(app: AppHandle) -> Vec<BibleInfo> {
         });
     }
     if out.is_empty() {
-        // Fallback: at least report KJV even if index not yet loaded
         out.push(BibleInfo {
             id: "kjv".to_string(),
             name: "King James Version".to_string(),
@@ -1592,6 +1647,12 @@ pub fn list_bibles(app: AppHandle) -> Vec<BibleInfo> {
         });
     }
     out
+}
+
+#[tauri::command]
+pub fn get_bibles_folder(app: AppHandle) -> String {
+    let data_dir = app.state::<AppState>().app_data_dir();
+    crate::scripture::bibles_folder(&data_dir).display().to_string()
 }
 
 #[tauri::command]
@@ -1604,9 +1665,11 @@ pub fn get_book_list(app: AppHandle, bible_id: String) -> Result<Vec<String>, St
             Ok(idx.ordered_book_names())
         }
         "imported" => {
-            let imported = crate::scripture::load_imported_books(&state.app_data_dir());
+            let mut imported = crate::scripture::load_imported_books(&state.app_data_dir());
+            let (scanned, _) = crate::scripture::scan_bibles_folder(&state.app_data_dir());
+            imported.extend(scanned);
             if imported.is_empty() {
-                return Err("no imported Bibles found".to_string());
+                return Err("no imported Bibles found — place OpenLP XML files in bibles folder or use Import button".to_string());
             }
             let mut seen = std::collections::HashSet::new();
             let mut out = Vec::new();
@@ -1639,9 +1702,11 @@ pub fn get_chapter(
             Ok(verses.into_iter().map(|(verse, text)| ChapterVerse { verse, text }).collect())
         }
         "imported" => {
-            let imported = crate::scripture::load_imported_books(&state.app_data_dir());
+            let mut imported = crate::scripture::load_imported_books(&state.app_data_dir());
+            let (scanned, _) = crate::scripture::scan_bibles_folder(&state.app_data_dir());
+            imported.extend(scanned);
             if imported.is_empty() {
-                return Err("no imported Bibles found".to_string());
+                return Err("no imported Bibles found — place OpenLP XML files in bibles folder or use Import button".to_string());
             }
             for b in imported {
                 if b.book.to_lowercase() == book.to_lowercase() {
@@ -1679,9 +1744,11 @@ pub fn list_chapters(app: AppHandle, bible_id: String, book: String) -> Result<V
                 .ok_or_else(|| format!("book {book} not found in KJV"))
         }
         "imported" => {
-            let imported = crate::scripture::load_imported_books(&state.app_data_dir());
+            let mut imported = crate::scripture::load_imported_books(&state.app_data_dir());
+            let (scanned, _) = crate::scripture::scan_bibles_folder(&state.app_data_dir());
+            imported.extend(scanned);
             if imported.is_empty() {
-                return Err("no imported Bibles found".to_string());
+                return Err("no imported Bibles found — place OpenLP XML files in bibles folder or use Import button".to_string());
             }
             for b in imported {
                 if b.book.to_lowercase() == book.to_lowercase() {

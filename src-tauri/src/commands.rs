@@ -433,6 +433,7 @@ pub fn add_song_to_playlist(app: AppHandle, song_id: String) -> Result<ClientSta
                 id: Uuid::new_v4().to_string(),
                 library_id: Some(song.id.clone()),
                 library_slide_id: Some(slide.id.clone()),
+                name: Some(slide.title.clone()),
                 title: slide.title.clone(),
                 body: slide.body.clone(),
                 background: song.default_background.clone(),
@@ -627,6 +628,16 @@ fn advance(app: &AppHandle, delta: isize) -> Result<ClientState, String> {
             Ok(snapshot(app))
         }
     }
+}
+
+#[tauri::command]
+pub fn next_slide(app: AppHandle) -> Result<ClientState, String> {
+    advance(&app, 1)
+}
+
+#[tauri::command]
+pub fn prev_slide(app: AppHandle) -> Result<ClientState, String> {
+    advance(&app, -1)
 }
 
 /// Per-project Output transition: "cut" (default) or "fade".
@@ -999,6 +1010,7 @@ pub fn save_template(app: AppHandle, name: String) -> Result<Vec<PlaylistTemplat
             .slides
             .iter()
             .map(|s| TemplateItem {
+                name: s.name.clone(),
                 title: s.title.clone(),
                 body: s.body.clone(),
                 background: s.background.clone(),
@@ -1017,6 +1029,7 @@ pub fn save_template(app: AppHandle, name: String) -> Result<Vec<PlaylistTemplat
             .slides
             .iter()
             .map(|s| TemplateItem {
+                name: s.name.clone(),
                 title: s.title.clone(),
                 body: s.body.clone(),
                 background: s.background.clone(),
@@ -1057,6 +1070,7 @@ pub fn load_template(app: AppHandle, template_id: String) -> Result<ClientState,
             id: Uuid::new_v4().to_string(),
             library_id: it.library_id.clone(),
             library_slide_id: it.library_slide_id.clone(),
+            name: it.name.clone().or_else(|| Some(it.title.clone())),
             title: it.title.clone(),
             body: it.body.clone(),
             background: it.background.clone(),
@@ -1100,12 +1114,16 @@ pub fn add_slide(
     app: AppHandle,
     title: Option<String>,
     body: Option<String>,
+    name: Option<String>,
 ) -> Result<ClientState, String> {
+    let title_val = title.unwrap_or_else(|| "New Slide".to_string());
+    let name_val = name.or_else(|| Some(title_val.clone()));
     let slide = Slide {
         id: Uuid::new_v4().to_string(),
         library_id: None,
         library_slide_id: None,
-        title: title.unwrap_or_else(|| "New Slide".to_string()),
+        name: name_val,
+        title: title_val,
         body: body.unwrap_or_default(),
         background: Background::default(),
         auto_advance_secs: None,
@@ -1132,6 +1150,7 @@ pub fn update_slide(
     body: Option<String>,
     background: Option<Background>,
     auto_advance_secs: Option<Option<u64>>,
+    name: Option<String>,
 ) -> Result<ClientState, String> {
     // Validate duration before mutating so we can give a clear error.
     if let Some(Some(secs)) = auto_advance_secs {
@@ -1166,6 +1185,14 @@ pub fn update_slide(
             match inner {
                 Some(secs) if secs > 0 => slide.auto_advance_secs = Some(secs),
                 _ => slide.auto_advance_secs = None,
+            }
+        }
+        if let Some(name) = name {
+            let trimmed = name.trim().to_string();
+            if trimmed.is_empty() {
+                slide.name = None;
+            } else {
+                slide.name = Some(trimmed);
             }
         }
         Ok(())

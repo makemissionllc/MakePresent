@@ -56,6 +56,10 @@ export const api = {
   setLiveSlide: (slideId: string) =>
     invoke<ClientState>("set_live_slide", { slideId }),
 
+  nextSlide: () => invoke<ClientState>("next_slide"),
+
+  prevSlide: () => invoke<ClientState>("prev_slide"),
+
   clearOutput: () => invoke<ClientState>("clear_output"),
 
   clearText: () => invoke<ClientState>("clear_text"),
@@ -64,12 +68,12 @@ export const api = {
 
   newProject: () => invoke<ClientState>("new_project"),
 
-  addSlide: (title?: string, body?: string) =>
-    invoke<ClientState>("add_slide", { title, body }),
+  addSlide: (title?: string, body?: string, name?: string) =>
+    invoke<ClientState>("add_slide", { title, body, name }),
 
   updateSlide: (
     slideId: string,
-    patch: { title?: string; body?: string; background?: Background; autoAdvanceSecs?: number | null },
+    patch: { title?: string; body?: string; background?: Background; autoAdvanceSecs?: number | null; name?: string },
   ) => invoke<ClientState>("update_slide", { slideId, ...patch }),
 
   deleteSlide: (slideId: string) =>

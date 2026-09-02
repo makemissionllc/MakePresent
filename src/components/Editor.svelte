@@ -12,6 +12,7 @@
   import SongEditorModal from "./SongEditorModal.svelte";
   import ProjectHub from "../lib/components/ProjectHub.svelte";
   import GlobalSearch from "./GlobalSearch.svelte";
+  import LookEditorView from "./LookEditorView.svelte";
 
   const PALETTE = [
     "#1a1a24",
@@ -129,13 +130,31 @@
 
   // Draft copies for responsive editing — typing updates these immediately
   // while the backend save is debounced so the input never resets mid-keystroke.
+  let draftName = $state("");
   let draftTitle = $state("");
   let draftBody = $state("");
   let draftAutoAdvance = $state("");
   let draftId: string | null = $state(null);
+  let nameTimer: ReturnType<typeof setTimeout> | null = null;
   let titleTimer: ReturnType<typeof setTimeout> | null = null;
   let bodyTimer: ReturnType<typeof setTimeout> | null = null;
   let autoAdvanceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function slideDisplayName(slide: Slide | null): string {
+    if (!slide) return "Untitled";
+    const n = (slide.name ?? "").trim();
+    if (n) return n;
+    const t = slide.title.trim();
+    if (t) return t;
+    return "Untitled";
+  }
+
+  // Grid/detail toggle — grid is primary workspace, detail is reached via click
+  let showDetail = $state(false);
+  let detailFromGrid = $state(false);
+
+  // Central workspace view — slides (grid) vs looks (dedicated visual editor)
+  let centralView = $state<"slides" | "looks">("slides");
 
   const project = $derived(appState?.project ?? null);
   const notice = $derived(
@@ -185,11 +204,12 @@
   });
   const isStageOnAir = $derived(!!appState?.stage.visible);
 
-  // Keep draftTitle/draftBody/draftAutoAdvance in sync when selection changes — only when the
+  // Keep draftName/draftTitle/draftBody/draftAutoAdvance in sync when selection changes — only when the
   // underlying slide identity changes, so mid-edit keystrokes are never clobbered.
   $effect(() => {
     const s = selected;
     if (!s) {
+      draftName = "";
       draftTitle = "";
       draftBody = "";
       draftAutoAdvance = "";
@@ -198,9 +218,11 @@
     }
     if (draftId !== s.id) {
       draftId = s.id;
+      draftName = s.name ?? "";
       draftTitle = s.title;
       draftBody = s.body;
       draftAutoAdvance = s.autoAdvanceSecs != null ? String(s.autoAdvanceSecs) : "";
+      if (nameTimer) clearTimeout(nameTimer);
       if (titleTimer) clearTimeout(titleTimer);
       if (bodyTimer) clearTimeout(bodyTimer);
       if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
@@ -225,6 +247,17 @@
   function goLive(slide: Slide): void {
     selectedId = slide.id;
     void run(() => api.setLiveSlide(slide.id));
+  }
+
+  function openDetail(slide: Slide): void {
+    selectedId = slide.id;
+    showDetail = true;
+    detailFromGrid = true;
+  }
+
+  function closeDetail(): void {
+    showDetail = false;
+    detailFromGrid = false;
   }
 
   function clearOutput(): void {
@@ -873,6 +906,14 @@
     libraryDragActive = false;
   }
 
+  function commitName(id: string, value: string): void {
+    if (draftId !== id || !selected || selected.id !== id) return;
+    void api
+      .updateSlide(id, { name: value })
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
   function commitTitle(id: string, value: string): void {
     if (draftId !== id || !selected || selected.id !== id) return;
     void api
@@ -947,6 +988,20 @@
       titleTimer = null;
     }
     commitTitle(draftId, formatted);
+  }
+
+  function onNameInput(value: string): void {
+    draftName = value;
+    if (!draftId) return;
+    const id = draftId;
+    if (nameTimer) clearTimeout(nameTimer);
+    nameTimer = setTimeout(() => commitName(id, value), 180);
+  }
+
+  function flushName(): void {
+    if (nameTimer) clearTimeout(nameTimer);
+    nameTimer = null;
+    if (draftId) commitName(draftId, draftName);
   }
 
   function onTitleInput(value: string): void {
@@ -1291,15 +1346,37 @@
     }
   }
 
+  function isTextInputFocused(): boolean {
+    const el = document.activeElement as HTMLElement | null;
+    if (!el) return false;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select") return true;
+    if (el.isContentEditable) return true;
+    return false;
+  }
+
   function handleGlobalKeydown(e: KeyboardEvent): void {
     const isK = e.key.toLowerCase() === "k";
     const mod = e.ctrlKey || e.metaKey;
     if (mod && isK) {
       e.preventDefault();
       globalSearchOpen = !globalSearchOpen;
-    } else if (e.key === "Escape" && globalSearchOpen) {
+      return;
+    }
+    if (e.key === "Escape" && globalSearchOpen) {
       e.preventDefault();
       globalSearchOpen = false;
+      return;
+    }
+    if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && !isTextInputFocused()) {
+      // Reuse existing next/previous logic — same path as triggers/UI clicks
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        void api.nextSlide().then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
+      } else {
+        e.preventDefault();
+        void api.prevSlide().then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
+      }
     }
   }
 
@@ -1512,6 +1589,7 @@
       if (unFileDrop2) unFileDrop2();
       window.removeEventListener("keydown", handleGlobalKeydown);
       if (scriptureTimer) clearTimeout(scriptureTimer);
+      if (nameTimer) clearTimeout(nameTimer);
       if (titleTimer) clearTimeout(titleTimer);
       if (bodyTimer) clearTimeout(bodyTimer);
       if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
@@ -1580,7 +1658,12 @@
             &times;
           </button>
         </div>
-      {/if}
+        {/if}
+
+      <div class="workspace-switch">
+        <button class="ws-btn" class:active={centralView === "slides"} onclick={() => (centralView = "slides")} title="Slide grid — primary workspace">Slides</button>
+        <button class="ws-btn" class:active={centralView === "looks"} onclick={() => (centralView = "looks")} title="Look editor — background, text style, layout">Looks</button>
+      </div>
 
       <div class="sidebar-section playlist-section" class:has-content={(project?.slides.length ?? 0) > 0}>
         <div class="section-title">Playlist</div>
@@ -1635,7 +1718,7 @@
                   style:background-size="cover"
                   style:background-position="center"
                 ></span>
-                <span class="slide-label">{slide.title || "Untitled"}</span>
+                <span class="slide-label">{slideDisplayName(slide)}</span>
                 {#if slide.autoAdvanceSecs != null}<span class="auto-badge" title="Auto-advance after {slide.autoAdvanceSecs}s">↻ {slide.autoAdvanceSecs}s</span>{/if}
                 {#if project?.live === slide.id}<span class="live-dot"></span>{/if}
               </button>
@@ -1895,10 +1978,32 @@
     </aside>
 
     <main class="editor">
-      {#if selected}
+      {#if centralView === "looks"}
+        <LookEditorView appState={appState} onUpdate={(s) => (appState = s)} onError={(m) => (errorMsg = m)} />
+      {:else if showDetail && selected}
+        <div class="detail-header">
+          <button class="ghost" onclick={() => closeDetail()} title="Back to grid">← Grid</button>
+          <span class="detail-title">{slideDisplayName(selected)} — Edit</span>
+          <span class="spacer"></span>
+          <button class="ghost" class:active={project?.live === selected.id} onclick={() => goLive(selected)} title="Go live on Output">Go Live</button>
+          <button class="ghost" onclick={() => closeDetail()}>Done</button>
+        </div>
         <div class="edit-window">
           <label>
-            Title
+            Slide name
+            <input
+              type="text"
+              value={draftName}
+              placeholder="e.g. Verse 1 — label under thumbnail (blank = follows Title)"
+              spellcheck="true"
+              lang="en"
+              oninput={(e) => onNameInput((e.target as HTMLInputElement).value)}
+              onblur={() => flushName()}
+            />
+            <span class="field-hint">Label shown in grid & playlist — not rendered on Output. Leave blank to follow Title.</span>
+          </label>
+          <label>
+            Title — on-screen
             <div class="title-row">
               <input
                 type="text"
@@ -2012,100 +2117,175 @@
           </label>
         </div>
       {:else}
-        <div class="empty">No slide selected. Add a slide to get started.</div>
+        <div class="grid-toolbar">
+          <span class="section-title" style="margin:0">Slides — {project?.slides.length ?? 0}</span>
+          <span class="spacer"></span>
+          <button class="ghost" onclick={() => addSlide()}>+ Add slide</button>
+        </div>
+        {#if (project?.slides.length ?? 0) === 0}
+          <div class="empty grid-empty">No slides yet. Add one to get started — it will appear here as a thumbnail.</div>
+        {:else}
+          <div
+            class="slide-grid"
+            role="region"
+            aria-label="Slides grid"
+            ondragover={(e) => {
+              if (isExternalFileDrag(e)) handleExternalDragOver(e);
+              else {
+                e.preventDefault();
+                if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0;
+              }
+            }}
+            ondrop={(e) => onPlaylistDrop(e)}
+            ondragleave={(e) => {
+              const rt = e.relatedTarget as HTMLElement | null;
+              if (!rt || !(e.currentTarget as HTMLElement).contains(rt)) {
+                dragOverIndex = null;
+                externalDragActive = false;
+              }
+            }}
+          >
+            {#each project?.slides ?? [] as slide, i (slide.id)}
+              {#if dragOverIndex === i}
+                <div class="grid-drop-indicator" aria-hidden="true"></div>
+              {/if}
+              <div
+                class="grid-cell"
+                class:selected={selectedId === slide.id}
+                class:live={project?.live === slide.id}
+                draggable="true"
+                role="group"
+                aria-label={slideDisplayName(slide)}
+                ondragstart={(e) => onPlaylistDragStart(e, slide, i)}
+                ondragover={(e) => onPlaylistDragOver(e, i)}
+                ondragend={onPlaylistDragEnd}
+                ondrop={(e) => onPlaylistDrop(e, i)}
+              >
+                <button class="grid-thumb" onclick={() => openDetail(slide)} title="Click to edit — {slideDisplayName(slide)}">
+                  <div class="grid-thumb-inner">
+                    {#if outputPreviewLook}
+                      <SlideRender
+                        slide={slide}
+                        look={outputPreviewLook}
+                        showText={true}
+                        showBackground={true}
+                        overlay={null}
+                      />
+                    {:else}
+                      <div class="grid-thumb-fallback">{slide.title || "Untitled"}</div>
+                    {/if}
+                  </div>
+                  {#if project?.live === slide.id}
+                    <span class="grid-live-badge">LIVE</span>
+                  {/if}
+                </button>
+                <div class="grid-label" title={slideDisplayName(slide)}>{slideDisplayName(slide)}</div>
+                <div class="grid-actions">
+                  <button class="ghost grid-go-live" onclick={() => goLive(slide)} title="Go live">Go Live</button>
+                  <button class="delete grid-delete" title="Delete slide" onclick={(e) => { e.stopPropagation(); deleteSlide(slide); }}>×</button>
+                </div>
+              </div>
+            {/each}
+            {#if dragOverIndex === (project?.slides.length ?? 0)}
+              <div class="grid-drop-indicator" aria-hidden="true"></div>
+            {/if}
+          </div>
+        {/if}
       {/if}
     </main>
 
     <aside class="sidebar output-panel">
-      <div class="section-title">Output</div>
+      <div class="output-sticky-top">
+        <div class="section-title">Output</div>
 
-      <label>
-        Display
-        <select
-          value={appState?.output.monitorIndex ?? ""}
-          onchange={onDisplayChange}
-          disabled={displays === null}
-        >
-          {#if displays === null}
-            <option value="" disabled>Loading displays…</option>
-          {:else if (displays?.length ?? 0) === 0}
-            <option value="" disabled>No displays found</option>
-          {/if}
-          {#each displays ?? [] as d}
-            <option value={d.index}>
-              {d.name || `Display ${d.index + 1}`} &middot; {d.width}&times;{d.height}{d.primary
-                ? " (primary)"
-                : ""}
-            </option>
-          {/each}
-        </select>
-      </label>
+        <label>
+          Display
+          <select
+            value={appState?.output.monitorIndex ?? ""}
+            onchange={onDisplayChange}
+            disabled={displays === null}
+          >
+            {#if displays === null}
+              <option value="" disabled>Loading displays…</option>
+            {:else if (displays?.length ?? 0) === 0}
+              <option value="" disabled>No displays found</option>
+            {/if}
+            {#each displays ?? [] as d}
+              <option value={d.index}>
+                {d.name || `Display ${d.index + 1}`} &middot; {d.width}&times;{d.height}{d.primary
+                  ? " (primary)"
+                  : ""}
+              </option>
+            {/each}
+          </select>
+        </label>
 
-      <button class="ghost" onclick={() => toggleFullscreen()}>
-        {appState?.output.fullscreen ? "Exit fullscreen" : "Go fullscreen"}
-      </button>
+        <button class="ghost" onclick={() => toggleFullscreen()}>
+          {appState?.output.fullscreen ? "Exit fullscreen" : "Go fullscreen"}
+        </button>
 
-      <label>
-        Transition
-        <select
-          value={project?.transition ?? "cut"}
-          onchange={onTransitionChange}
-        >
-          <option value="cut">Cut</option>
-          <option value="fade">Fade</option>
-        </select>
-      </label>
+        <label>
+          Transition
+          <select
+            value={project?.transition ?? "cut"}
+            onchange={onTransitionChange}
+          >
+            <option value="cut">Cut</option>
+            <option value="fade">Fade</option>
+          </select>
+        </label>
 
-      <label>
-        Output Look
-        <select
-          value={appState?.outputLookId ?? ""}
-          onchange={onOutputLookChange}
-        >
-          <option value="">Auto (Main)</option>
-          {#each appState?.looks ?? [] as lk (lk.id)}
-            <option value={lk.id}>{lk.name}</option>
-          {/each}
-        </select>
-      </label>
+        <label>
+          Output Look
+          <select
+            value={appState?.outputLookId ?? ""}
+            onchange={onOutputLookChange}
+          >
+            <option value="">Auto (Main)</option>
+            {#each appState?.looks ?? [] as lk (lk.id)}
+              <option value={lk.id}>{lk.name}</option>
+            {/each}
+          </select>
+        </label>
 
-      <div class="preview-row">
-        <div class="preview-box">
-          {#if outputPreviewSlide && outputPreviewLook}
-            <SlideRender
-              slide={outputPreviewSlide}
-              look={outputPreviewLook}
-              showText={project?.showText ?? true}
-              showBackground={project?.showBackground ?? true}
-              overlay={appState?.overlay ?? null}
-            />
+        <div class="preview-row">
+          <div class="preview-box">
+            {#if outputPreviewSlide && outputPreviewLook}
+              <SlideRender
+                slide={outputPreviewSlide}
+                look={outputPreviewLook}
+                showText={project?.showText ?? true}
+                showBackground={project?.showBackground ?? true}
+                overlay={appState?.overlay ?? null}
+              />
+            {:else}
+              <div class="preview-empty">No slide</div>
+            {/if}
+          </div>
+          <span class="on-air-badge" class:on={isOnAir} class:off={!isOnAir}>{isOnAir ? "ON AIR" : "OFF"}</span>
+        </div>
+
+        <div class="output-status" class:live={!!(appState?.output.visible && project?.live)}>
+          {#if appState?.output.visible}
+            {#if project?.live}
+              Live on display
+              {appState?.output.monitorName ||
+                (appState?.output.monitorIndex != null
+                  ? `#${appState.output.monitorIndex}`
+                  : "?")}
+            {:else}
+              Output is black (no live slide)
+            {/if}
           {:else}
-            <div class="preview-empty">No slide</div>
+            <span class="not-shown">Not shown yet</span> — the output appears here the first time a slide goes live.
           {/if}
         </div>
-        <span class="on-air-badge" class:on={isOnAir} class:off={!isOnAir}>{isOnAir ? "ON AIR" : "OFF"}</span>
-      </div>
 
-      <div class="output-status" class:live={!!(appState?.output.visible && project?.live)}>
-        {#if appState?.output.visible}
-          {#if project?.live}
-            Live on display
-            {appState?.output.monitorName ||
-              (appState?.output.monitorIndex != null
-                ? `#${appState.output.monitorIndex}`
-                : "?")}
-          {:else}
-            Output is black (no live slide)
-          {/if}
-        {:else}
-          <span class="not-shown">Not shown yet</span> — the output appears here the first time a slide goes live.
-        {/if}
-      </div>
-
-      <div class="clear-row">
-        <button class="ghost" onclick={() => clearOutput()} title="Clear both text and background (black)">Clear output</button>
-        <button class="ghost" onclick={() => clearText()} title="Hide text, keep background">Clear text</button>
-        <button class="ghost" onclick={() => clearBackground()} title="Hide background, keep text on black">Clear background</button>
+        <div class="clear-row">
+          <button class="ghost" onclick={() => clearOutput()} title="Clear both text and background (black)">Clear output</button>
+          <button class="ghost" onclick={() => clearText()} title="Hide text, keep background">Clear text</button>
+          <button class="ghost" onclick={() => clearBackground()} title="Hide background, keep text on black">Clear background</button>
+        </div>
       </div>
 
       {#if !appState?.output.visible}
@@ -2588,6 +2768,31 @@
     min-height: 0;
   }
 
+  .workspace-switch {
+    display: flex;
+    gap: 6px;
+    padding: 4px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .ws-btn {
+    flex: 1;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 6px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-dim);
+  }
+  .ws-btn.active {
+    background: var(--panel);
+    border-color: var(--accent);
+    color: var(--text);
+    box-shadow: 0 0 0 3px rgba(79,140,255,0.12);
+  }
+
   .sidebar-section {
     display: flex;
     flex-direction: column;
@@ -2640,6 +2845,19 @@
       var(--panel) 0%,
       var(--brand-green-900) 100%
     );
+    overflow-y: auto;
+  }
+  .output-sticky-top {
+    position: sticky;
+    top: -16px;
+    background: linear-gradient(180deg, var(--panel) 0%, var(--brand-green-900) 100%);
+    z-index: 3;
+    margin: -16px -16px 0;
+    padding: 12px 16px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
   }
 
   /* Semantic status — color carries meaning */
@@ -3124,6 +3342,152 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
+  }
+
+  .detail-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0 12px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 2;
+  }
+  .detail-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .grid-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 4px 0 12px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 1;
+  }
+  .slide-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+    align-content: start;
+    padding: 4px 2px 20px;
+  }
+  .grid-empty {
+    text-align: center;
+    padding: 40px 20px;
+  }
+  .grid-drop-indicator {
+    grid-column: 1 / -1;
+    height: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+    animation: drop-pulse 0.8s ease-in-out infinite alternate;
+  }
+  @keyframes drop-pulse {
+    from { opacity: 0.5; }
+    to { opacity: 1; }
+  }
+  .grid-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px;
+    transition: border-color var(--motion-fast, 150ms) var(--ease-standard, ease), transform var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
+  }
+  .grid-cell.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(79,140,255,0.15);
+  }
+  .grid-cell.live {
+    border-color: var(--live);
+    box-shadow: 0 0 0 3px rgba(31,157,106,0.2);
+  }
+  .grid-cell:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-soft, 0 4px 16px rgba(0,0,0,0.22));
+  }
+  .grid-thumb {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    padding: 0;
+    width: 100%;
+  }
+  .grid-thumb-inner {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+  .grid-thumb-inner :global(.slide-render) {
+    transform: scale(0.32);
+    transform-origin: top left;
+    width: 312%;
+    height: 312%;
+  }
+  .grid-thumb-fallback {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    color: var(--text-dim);
+    font-size: 11px;
+    padding: 8px;
+    text-align: center;
+  }
+  .grid-live-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: var(--live);
+    color: white;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    padding: 3px 6px;
+    border-radius: 4px;
+    line-height: 1;
+  }
+  .grid-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+    padding: 2px 4px;
+  }
+  .grid-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+  }
+  .grid-go-live {
+    font-size: 11px;
+    padding: 4px 8px;
+    flex: 1;
+  }
+  .grid-delete {
+    font-size: 14px;
+    padding: 4px 8px;
+    line-height: 1;
   }
 
   label {

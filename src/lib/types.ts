@@ -36,6 +36,8 @@ export interface Slide {
   id: string;
   libraryId: string | null;
   librarySlideId: string | null;
+  /** Display name for grid/playlist labels — distinct from on-screen `title`. None = follow title. */
+  name?: string | null;
   title: string;
   body: string;
   background: Background;
@@ -242,6 +244,7 @@ export interface Library {
 }
 
 export interface TemplateItem {
+  name?: string | null;
   title: string;
   body: string;
   background: Background;

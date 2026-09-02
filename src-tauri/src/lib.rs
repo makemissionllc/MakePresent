@@ -627,6 +627,8 @@ pub fn run() {
             commands::delete_library_song,
             commands::add_song_to_playlist,
             commands::set_live_slide,
+            commands::next_slide,
+            commands::prev_slide,
             commands::set_transition,
             commands::upsert_look,
             commands::delete_look,

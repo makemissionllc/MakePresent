@@ -70,6 +70,11 @@ pub struct Slide {
     /// The source verse/section id within that song.
     #[serde(default)]
     pub library_slide_id: Option<String>,
+    /// Display name for playlist/grid labels — distinct from `title` which is the
+    /// on-screen rendered title text. `None` means “follow title” (legacy slides
+    /// and new slides before an explicit name is set show `title` as label).
+    #[serde(default)]
+    pub name: Option<String>,
     pub title: String,
     pub body: String,
     pub background: Background,
@@ -79,6 +84,24 @@ pub struct Slide {
     /// and persistence cover it.
     #[serde(default)]
     pub auto_advance_secs: Option<u64>,
+}
+
+impl Slide {
+    /// Display label for playlist/grid: explicit `name` if set and non-empty,
+    /// otherwise the on-screen `title`, otherwise "Untitled".
+    pub fn display_name(&self) -> String {
+        if let Some(n) = &self.name {
+            let t = n.trim();
+            if !t.is_empty() {
+                return t.to_string();
+            }
+        }
+        let t = self.title.trim();
+        if !t.is_empty() {
+            return t.to_string();
+        }
+        "Untitled".to_string()
+    }
 }
 
 /// Where the slide text is placed within its frame.
@@ -276,6 +299,7 @@ impl Project {
                 id: Uuid::new_v4().to_string(),
                 library_id: None,
                 library_slide_id: None,
+                name: Some("Welcome to MakrStudio".to_string()),
                 title: "Welcome to MakrStudio".to_string(),
                 body: "This is the Phase 1 test slide.".to_string(),
                 background: Background::default(),
@@ -311,6 +335,7 @@ impl Project {
                     id: Uuid::new_v4().to_string(),
                     library_id: None,
                     library_slide_id: None,
+                    name: Some(it.title.clone()),
                     title: it.title.clone(),
                     body: it.content.clone().unwrap_or_default(),
                     background: Background::default(),
@@ -738,6 +763,8 @@ impl Default for Library {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateItem {
+    #[serde(default)]
+    pub name: Option<String>,
     pub title: String,
     pub body: String,
     pub background: Background,

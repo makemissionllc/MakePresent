@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
+  import { listen } from "@tauri-apps/api/event";
   import { api, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
   import type { BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, PlaylistTemplate, ScriptureMatch, Slide } from "../lib/types";
   import { isMedia } from "../lib/types";
@@ -73,6 +74,14 @@
   let isDragging = $state(false);
   let dragType = $state<string | null>(null);
   let dragPayload = $state<any>(null);
+
+  // External OS file drag-and-drop — images/videos create new media slides
+  let externalDragActive = $state(false);
+  let externalDragError = $state<string | null>(null);
+  const ALLOWED_EXTS = new Set([
+    ...MEDIA_FILTERS[0].extensions,
+    ...MEDIA_FILTERS[1].extensions,
+  ]);
 
   // Add song modal (reusable Modal, replaces window.prompt "localhost:1420 says")
   let showAddSongTitleModal = $state(false);
@@ -445,6 +454,11 @@
   }
 
   function onPlaylistDragOver(e: DragEvent, index: number): void {
+    // External OS files take precedence — show copy cursor even though isDragging is false
+    if (isExternalFileDrag(e)) {
+      handleExternalDragOver(e, index);
+      return;
+    }
     e.preventDefault();
     if (!isDragging) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -466,6 +480,17 @@
   function onPlaylistDrop(e: DragEvent, dropIndex?: number): void {
     e.preventDefault();
     e.stopPropagation();
+    // External OS files — use the existing media import pipeline (hash+copy+thumb)
+    // and create a new slide with that file as the background, same result as
+    // the “Add media” button. Must not silently fail on unsupported types.
+    if ((e.dataTransfer?.files?.length ?? 0) > 0) {
+      const target = dropIndex ?? dragOverIndex ?? project?.slides.length ?? 0;
+      void handleExternalFiles(e.dataTransfer!.files, target);
+      dragOverIndex = null;
+      isDragging = false;
+      externalDragActive = false;
+      return;
+    }
     if (!project) {
       errorMsg = "Project not loaded yet";
       dragOverIndex = null;
@@ -596,6 +621,134 @@
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = "copy";
       e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
+    }
+  }
+
+  // — External OS file drag-and-drop helpers (image/video → new slide with media background) —
+  function isExternalFileDrag(e: DragEvent): boolean {
+    const types = Array.from(e.dataTransfer?.types ?? []);
+    if (types.includes("Files")) return true;
+    return (e.dataTransfer?.files?.length ?? 0) > 0;
+  }
+
+  function getFileExt(name: string): string {
+    const dot = name.lastIndexOf(".");
+    return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
+  }
+
+  async function handleExternalFiles(
+    files: FileList | File[] | string[],
+    targetIdx: number,
+  ): Promise<void> {
+    const asArray = Array.isArray(files) ? files : Array.from(files as FileList);
+    const paths: string[] = [];
+    const unsupported: string[] = [];
+    for (const entry of asArray as any[]) {
+      // Tauri file-drop gives string paths; HTML5 DataTransfer gives File with .path
+      if (typeof entry === "string") {
+        const name = entry.split(/[\/\\]/).pop() ?? entry;
+        const ext = getFileExt(name);
+        if (!ALLOWED_EXTS.has(ext)) unsupported.push(name);
+        else paths.push(entry);
+        continue;
+      }
+      const f = entry as File & { path?: string };
+      const name: string = (f as any).name ?? "file";
+      const ext = getFileExt(name);
+      if (!ALLOWED_EXTS.has(ext)) {
+        unsupported.push(name);
+        continue;
+      }
+      const p: string | undefined = (f as any).path;
+      if (p && p.length > 0) paths.push(p);
+      else {
+        // No filesystem path exposed — fall back to name, will be rejected clearly by backend
+        // but surface an inline message here so it isn't silent.
+        unsupported.push(`${name} (no filesystem path — use Add media button)`);
+      }
+    }
+
+    if (unsupported.length > 0) {
+      const msg = `Unsupported file type: ${unsupported.join(", ")}. Supported: ${Array.from(ALLOWED_EXTS).join(", ")}`;
+      errorMsg = msg;
+      externalDragError = msg;
+      setTimeout(() => (externalDragError = null), 6000);
+      if (paths.length === 0) return;
+    } else {
+      externalDragError = null;
+    }
+
+    if (!project) {
+      errorMsg = "Project not loaded yet";
+      return;
+    }
+    const len = project.slides.length;
+    let insertIdx = Math.max(0, Math.min(targetIdx, len));
+    importingMedia = true;
+    try {
+      for (const p of paths) {
+        try {
+          const asset = await api.importMedia(p);
+          const base = p.split(/[\/\\]/).pop()?.replace(/\.[^/.]+$/, "") ?? "Media";
+          const createdState = await api.addSlide(base, "");
+          // last slide is the newly created one
+          const newId = createdState.project.slides.at(-1)?.id;
+          if (!newId) throw new Error("failed to create slide for media");
+          const updated = await api.updateSlide(newId, {
+            background: asset.background,
+          });
+          appState = updated;
+          // Move to insertion point if not already at end
+          if (insertIdx < (appState?.project.slides.length ?? 1) - 1) {
+            const ids = appState!.project.slides.map((x) => x.id);
+            const moved = ids.pop();
+            if (moved) {
+              ids.splice(insertIdx, 0, moved);
+              const reordered = await api.reorderSlides(ids);
+              appState = reordered;
+            }
+          }
+          insertIdx++;
+          errorMsg = null;
+        } catch (err) {
+          errorMsg = String(err);
+        }
+      }
+    } finally {
+      importingMedia = false;
+      dragOverIndex = null;
+      isDragging = false;
+      externalDragActive = false;
+      dragPayload = null;
+      draggedSlideId = null;
+      dragType = null;
+    }
+  }
+
+  function handleExternalDragOver(e: DragEvent, index?: number): void {
+    if (!isExternalFileDrag(e)) return;
+    e.preventDefault();
+    externalDragActive = true;
+    if (typeof index === "number") {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      if (rect.height > 0) {
+        const mid = rect.top + rect.height / 2;
+        dragOverIndex = e.clientY < mid ? index : index + 1;
+      } else {
+        dragOverIndex = index;
+      }
+    } else {
+      // hovering the list container — will resolve to end
+      if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0;
+    }
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleExternalDragLeave(e: DragEvent): void {
+    const related = e.relatedTarget as HTMLElement | null;
+    if (!related || !(e.currentTarget as HTMLElement).contains(related)) {
+      externalDragActive = false;
+      // Don't clear dragOverIndex here — leave it for the next dragover to recompute
     }
   }
 
@@ -932,7 +1085,39 @@
     let unSub: () => void = () => {};
     let unAuto: () => void = () => {};
     let unLib: () => void = () => {};
+    let unFileDrop: (() => void) | null = null;
+    let unFileDrop2: (() => void) | null = null;
     let cancelled = false;
+
+    // Tauri OS file-drop fallback — some platforms/window managers deliver
+    // desktop drops via `tauri://drag-drop` rather than HTML5 DataTransfer.files.
+    // This ensures the same media pipeline (hash+copy+thumb → new slide) runs.
+    void (async () => {
+      try {
+        unFileDrop = await listen("tauri://drag-drop", (event: any) => {
+          const raw = event.payload as any;
+          const paths: string[] = Array.isArray(raw) ? raw : (raw?.paths ?? []);
+          if (Array.isArray(paths) && paths.length > 0) {
+            const target = dragOverIndex ?? project?.slides.length ?? 0;
+            void handleExternalFiles(paths as any, target);
+            dragOverIndex = null;
+            externalDragActive = false;
+          }
+        });
+        unFileDrop2 = await listen("tauri://file-drop", (event: any) => {
+          const raw = event.payload as any;
+          const paths: string[] = Array.isArray(raw) ? raw : (raw?.paths ?? []);
+          if (Array.isArray(paths) && paths.length > 0) {
+            const target = dragOverIndex ?? project?.slides.length ?? 0;
+            void handleExternalFiles(paths as any, target);
+            dragOverIndex = null;
+            externalDragActive = false;
+          }
+        });
+      } catch {
+        // listen not available in browser preview — HTML5 path still works
+      }
+    })();
 
     void (async () => {
       const sub = await subscribeState((s) => {
@@ -976,9 +1161,12 @@
       unSub();
       unAuto();
       unLib();
+      if (unFileDrop) unFileDrop();
+      if (unFileDrop2) unFileDrop2();
       if (scriptureTimer) clearTimeout(scriptureTimer);
       if (titleTimer) clearTimeout(titleTimer);
       if (bodyTimer) clearTimeout(bodyTimer);
+      if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
     };
   });
 </script>
@@ -1042,12 +1230,23 @@
         <div class="section-title">Playlist</div>
         <ul
           class="slide-list"
-          class:drag-active={isDragging}
-          ondragover={(e) => { e.preventDefault(); if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0; }}
+          class:drag-active={isDragging || externalDragActive}
+          class:external-drag={externalDragActive}
+          ondragover={(e) => {
+            if (isExternalFileDrag(e)) {
+              handleExternalDragOver(e);
+            } else {
+              e.preventDefault();
+              if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0;
+            }
+          }}
           ondrop={(e) => onPlaylistDrop(e)}
           ondragleave={(e) => {
             const rt = e.relatedTarget as HTMLElement | null;
-            if (!rt || !(e.currentTarget as HTMLElement).contains(rt)) dragOverIndex = null;
+            if (!rt || !(e.currentTarget as HTMLElement).contains(rt)) {
+              dragOverIndex = null;
+              externalDragActive = false;
+            }
           }}
         >
           {#each project?.slides ?? [] as slide, i (slide.id)}
@@ -1104,6 +1303,36 @@
         <div class="template-actions">
           <button class="ghost template-btn" onclick={() => openSaveTemplate()} title="Save current playlist as a reusable template">Save as template</button>
           <button class="ghost template-btn" onclick={() => void openTemplatePicker()} title="Load a saved template into the playlist">Load template</button>
+        </div>
+        <div
+          class="external-drop-zone"
+          role="region"
+          aria-label="Drop media files here"
+          class:drag-active={externalDragActive}
+          ondragover={(e) => {
+            if (isExternalFileDrag(e)) {
+              e.preventDefault();
+              externalDragActive = true;
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+              if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0;
+            }
+          }}
+          ondragleave={(e) => handleExternalDragLeave(e)}
+          ondrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            externalDragActive = false;
+            const target = dragOverIndex ?? project?.slides.length ?? 0;
+            if ((e.dataTransfer?.files?.length ?? 0) > 0) {
+              void handleExternalFiles(e.dataTransfer!.files, target);
+            }
+            dragOverIndex = null;
+          }}
+        >
+          <span class="drop-zone-label">Drop images or videos here — creates a new slide</span>
+          {#if externalDragError}
+            <span class="drop-error" role="alert">{externalDragError}</span>
+          {/if}
         </div>
       </div>
 
@@ -2876,6 +3105,43 @@
     padding: 1px 6px;
     margin-left: 6px;
     background: var(--panel-2);
+  }
+
+  .external-drop-zone {
+    margin-top: 10px;
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    text-align: center;
+    background: var(--panel-2);
+    color: var(--text-dim);
+    font-size: 11px;
+    transition:
+      border-color 150ms ease,
+      background 150ms ease,
+      color 150ms ease;
+  }
+  .external-drop-zone.drag-active {
+    border-color: var(--accent);
+    background: rgba(79, 140, 255, 0.08);
+    color: var(--text);
+    box-shadow: 0 2px 10px rgba(79, 140, 255, 0.15);
+  }
+  .slide-list.external-drag {
+    outline: 1.5px dashed var(--accent);
+    outline-offset: 2px;
+    background: rgba(79, 140, 255, 0.04);
+  }
+  .drop-zone-label {
+    display: block;
+  }
+  .drop-error {
+    display: block;
+    margin-top: 6px;
+    color: var(--semantic-error, #e11d48);
+    font-size: 11px;
+    font-weight: 600;
+    word-break: break-word;
   }
 
   @keyframes spin {

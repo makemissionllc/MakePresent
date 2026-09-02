@@ -2,6 +2,8 @@
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { api, subscribeMidiMessage } from "../lib/sync";
   import type {
+    AudioDeviceInfo,
+    AudioStateView,
     BoxGeometry,
     ClientState,
     LogEntry,
@@ -23,7 +25,7 @@
 
   let { app: appState, onclose }: Props = $props();
 
-  let tab = $state<"general" | "looks" | "triggers" | "network" | "logs">("general");
+  let tab = $state<"general" | "looks" | "triggers" | "network" | "audio" | "logs">("general");
   let status = $state<{ kind: "ok" | "err"; text: string } | null>(null);
   let logs = $state<LogEntry[]>([]);
   let logsMsg = $state<string | null>(null);
@@ -513,6 +515,13 @@
   let networkPortDraft = $state<number>(1426);
   let networkPinDraft = $state<string>("");
 
+  // --- Audio (backing track) ---
+  let audioDevices = $state<AudioDeviceInfo[]>([]);
+  let audioDevicesMsg = $state<string | null>(null);
+  let audioVolumeDraft = $state<number>(1.0);
+  let audioMsg = $state<string | null>(null);
+  let audioErr = $state<string | null>(null);
+
   $effect(() => {
     if (tab !== "network") return;
     void refreshNetworkInfo();
@@ -582,6 +591,74 @@
     }
   }
 
+  // --- Audio (single backing track, not tied to slides) ---
+  async function refreshAudioDevices(): Promise<void> {
+    audioDevicesMsg = null;
+    try {
+      audioDevices = await api.listAudioDevices();
+    } catch (e) {
+      audioDevicesMsg = String(e);
+    }
+  }
+
+  function loadAudioFile(): void {
+    void (async () => {
+      audioErr = null;
+      audioMsg = null;
+      try {
+        const file = await openDialog({
+          multiple: false,
+          directory: false,
+          filters: [{ name: "Audio", extensions: ["mp3", "wav", "flac", "ogg", "m4a", "aac", "wma"] }],
+        });
+        if (!file) return;
+        const path = Array.isArray(file) ? file[0] : (file as string);
+        const st = await api.loadAudio(path);
+        appState = st;
+        audioMsg = `Loaded "${path.split(/[\/\\]/).pop()}"`;
+      } catch (e) {
+        audioErr = String(e);
+      }
+    })();
+  }
+
+  function playAudio(): void {
+    audioErr = null;
+    void api.playAudio().then((s) => (appState = s)).catch((e: unknown) => (audioErr = String(e)));
+  }
+  function pauseAudio(): void {
+    audioErr = null;
+    void api.pauseAudio().then((s) => (appState = s)).catch((e: unknown) => (audioErr = String(e)));
+  }
+  function stopAudio(): void {
+    audioErr = null;
+    void api.stopAudio().then((s) => (appState = s)).catch((e: unknown) => (audioErr = String(e)));
+  }
+  function setAudioVolume(v: number): void {
+    const vol = Math.max(0, Math.min(1.5, v));
+    audioVolumeDraft = vol;
+    void api
+      .setAudioVolume(vol)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (audioErr = String(e)));
+  }
+  function setAudioDevice(e: Event): void {
+    const id = (e.target as HTMLSelectElement).value;
+    const deviceId = id === "" ? null : id;
+    audioErr = null;
+    void api
+      .setAudioDevice(deviceId)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (audioErr = String(e)));
+  }
+
+  $effect(() => {
+    if (tab !== "audio") return;
+    void refreshAudioDevices();
+    // Sync draft volume with current state
+    audioVolumeDraft = appState?.audio?.volume ?? 1.0;
+  });
+
 </script>
 
 <div class="overlay">
@@ -604,6 +681,9 @@
       </button>
       <button class="tab" class:active={tab === "network"} onclick={() => (tab = "network")}>
         Network
+      </button>
+      <button class="tab" class:active={tab === "audio"} onclick={() => (tab = "audio")}>
+        Audio
       </button>
       <button class="tab" class:active={tab === "logs"} onclick={() => (tab = "logs")}>
         Logs
@@ -1222,6 +1302,71 @@
               <button onclick={setNetworkPin}>Apply PIN</button>
             </div>
           </section>
+        </div>
+      {:else if tab === "audio"}
+        <div class="panel-audio">
+          <p class="hint">
+            Single backing track — independent utility, not tied to slides. ONE track at a time,
+            routable to a specific output device, plays on its own thread (never blocks UI or Output).
+            Video backgrounds remain <strong>muted</strong> at all times (Phase 4: &lt;video muted&gt;) and never conflict.
+          </p>
+          {#if audioErr}
+            <p class="status err">{audioErr}</p>
+          {/if}
+          {#if audioMsg}
+            <p class="status">{audioMsg}</p>
+          {/if}
+
+          <section class="audio-section">
+            <h3>Output device</h3>
+            <p class="hint">Choose which speaker/headphones the track plays through, independent of system default. Stored in Settings.</p>
+            <div class="row">
+              <select value={appState?.audio?.deviceId ?? ""} onchange={setAudioDevice}>
+                <option value="">System default</option>
+                {#each audioDevices as dev (dev.id)}
+                  <option value={dev.id}>{dev.name} {dev.isDefault ? "(default)" : ""}</option>
+                {/each}
+              </select>
+              <button onclick={() => void refreshAudioDevices()}>Refresh</button>
+            </div>
+            {#if audioDevicesMsg}
+              <p class="status err">{audioDevicesMsg}</p>
+            {/if}
+            {#if audioDevices.length === 0}
+              <p class="hint">No output devices found — check system audio.</p>
+            {/if}
+          </section>
+
+          <section class="audio-section">
+            <h3>Track</h3>
+            <div class="row">
+              <button onclick={loadAudioFile}>Load track…</button>
+              <span class="audio-path">{appState?.audio?.currentPath?.split(/[\/\\]/).pop() ?? "No track loaded"}</span>
+              <span class="audio-status">{appState?.audio?.status ?? "stopped"}</span>
+            </div>
+            <div class="row">
+              <button onclick={playAudio} disabled={appState?.audio?.status === "playing"}>Play</button>
+              <button onclick={pauseAudio} disabled={appState?.audio?.status !== "playing"}>Pause</button>
+              <button onclick={stopAudio} disabled={appState?.audio?.status === "stopped" || !appState?.audio?.currentPath}>Stop</button>
+            </div>
+          </section>
+
+          <section class="audio-section">
+            <h3>Volume</h3>
+            <div class="row">
+              <input
+                type="range"
+                min="0"
+                max="1.5"
+                step="0.05"
+                value={audioVolumeDraft}
+                oninput={(e) => setAudioVolume(Number((e.target as HTMLInputElement).value))}
+              />
+              <span>{Math.round(audioVolumeDraft * 100)}%</span>
+            </div>
+          </section>
+
+          <p class="hint">Decode/playback runs entirely on its own thread — never blocks the main thread or introduces Windows deadlock patterns. Not tied to slides/playlist.</p>
         </div>
       {/if}
     </div>

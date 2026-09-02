@@ -3,6 +3,7 @@ use crate::logging::Logger;
 use crate::midi::MidiListener;
 use crate::network::NetworkServer;
 use crate::osc::OscListener;
+use crate::audio::AudioPlayer;
 use crate::project::{Library, Notice, Overlay, Project, Settings};
 use crate::scripture::ScriptureIndex;
 use std::path::PathBuf;
@@ -45,6 +46,9 @@ pub struct AppState {
     /// background + main slide. Separate from `Project.live`; toggling never
     /// affects main slide. `None` = no overlay, `Some` with `visible=false` = hidden but content preserved.
     pub overlay: RwLock<Option<Overlay>>,
+    /// Single-track backing audio player (rodio on cpal) — dedicated thread, not tied to slides.
+    /// ONE track at a time, routable to a specific output device, independent of system default.
+    pub audio: AudioPlayer,
 }
 
 impl Default for AppState {
@@ -66,6 +70,7 @@ impl Default for AppState {
             stage_message: RwLock::new(None),
             stage_message_gen: AtomicU64::new(0),
             overlay: RwLock::new(None),
+            audio: AudioPlayer::default(),
         }
     }
 }

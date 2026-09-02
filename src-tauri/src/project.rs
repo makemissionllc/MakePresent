@@ -395,6 +395,27 @@ pub struct StageView {
     pub monitor_name: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioStatus {
+    Stopped,
+    Playing,
+    Paused,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioStateView {
+    pub status: AudioStatus,
+    pub current_path: Option<String>,
+    pub volume: f32,
+    pub device_id: Option<String>,
+    #[serde(default)]
+    pub duration_secs: Option<u64>,
+    #[serde(default)]
+    pub position_secs: Option<u64>,
+}
+
 /// Runtime status of the NDI broadcast feed (not persisted; derived live).
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -453,6 +474,8 @@ pub struct ClientState {
     /// Independent overlay layer for Output — lower-third / logo on top of background+main.
     /// `None` = no overlay, `Some` with `visible=false` = hidden but content preserved.
     pub overlay: Option<Overlay>,
+    /// Single-track backing audio state (rodio on cpal) — ONE track at a time, not tied to slides.
+    pub audio: AudioStateView,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -830,6 +853,13 @@ pub struct Settings {
     /// accepted" (used by tests/automation only).
     #[serde(default)]
     pub stage_network_pin: String,
+    /// Stable id (cpal device name) of the selected audio output device for the single backing track.
+    /// `None` = system default. Stored in Settings, independent of system default.
+    #[serde(default)]
+    pub audio_output_device_id: Option<String>,
+    /// Volume for the backing track (0.0..1.5, 1.0 = 100%). Clamped at command layer.
+    #[serde(default = "default_audio_volume")]
+    pub audio_volume: f32,
 }
 
 fn default_osc_port() -> u16 {
@@ -838,6 +868,10 @@ fn default_osc_port() -> u16 {
 
 fn default_stage_port() -> u16 {
     crate::network::DEFAULT_STAGE_PORT
+}
+
+fn default_audio_volume() -> f32 {
+    1.0
 }
 
 impl Default for Settings {
@@ -862,6 +896,8 @@ impl Default for Settings {
             stage_network_enabled: false,
             stage_network_port: crate::network::DEFAULT_STAGE_PORT,
             stage_network_pin: String::new(),
+            audio_output_device_id: None,
+            audio_volume: default_audio_volume(),
         }
     }
 }

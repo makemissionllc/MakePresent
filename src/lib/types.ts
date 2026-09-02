@@ -148,6 +148,7 @@ export interface ClientState {
   stageNetworkPort: number;
   stageMessage: string | null;
   overlay: Overlay | null;
+  audio: AudioStateView;
 }
 
 export interface StageNetworkInfo {
@@ -193,6 +194,23 @@ export interface LibrarySong {
   arrangement: string[];
   /** Deprecated flat list — retained for one-time migration, not present in new saves */
   slides?: LibrarySlide[] | null;
+}
+
+export interface AudioDeviceInfo {
+  id: string;
+  name: string;
+  isDefault: boolean;
+}
+
+export type AudioStatus = "stopped" | "playing" | "paused";
+
+export interface AudioStateView {
+  status: AudioStatus;
+  currentPath: string | null;
+  volume: number;
+  deviceId: string | null;
+  durationSecs: number | null;
+  positionSecs: number | null;
 }
 
 export interface Overlay {

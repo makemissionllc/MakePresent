@@ -45,3 +45,7 @@ get_if_addrs = "0.5"
 # free of a system OpenSSL dependency.
 quick-xml = "0.37"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2"] }
+# Single-track backing audio (rodio on cpal) — dedicated thread, not tied to slides.
+# ONE track at a time, routable to a specific output device, independent of system default.
+cpal = "0.15"
+rodio = { version = "0.17", default-features = false, features = ["mp3", "wav", "flac", "vorbis"] }

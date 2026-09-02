@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AudioDeviceInfo,
+  AudioStateView,
   AutosaveEvent,
   BibleInfo,
   ChapterVerse,
@@ -244,4 +246,21 @@ export const api = {
     invoke<ClientState>("set_overlay_visible", { visible }),
 
   clearOverlay: () => invoke<ClientState>("clear_overlay"),
+
+  listAudioDevices: () => invoke<AudioDeviceInfo[]>("list_audio_devices"),
+
+  loadAudio: (path: string) => invoke<ClientState>("load_audio", { path }),
+
+  playAudio: () => invoke<ClientState>("play_audio"),
+
+  pauseAudio: () => invoke<ClientState>("pause_audio"),
+
+  stopAudio: () => invoke<ClientState>("stop_audio"),
+
+  setAudioVolume: (volume: number) => invoke<ClientState>("set_audio_volume", { volume }),
+
+  seekAudio: (secs: number) => invoke<ClientState>("seek_audio", { secs }),
+
+  setAudioDevice: (deviceId: string | null) =>
+    invoke<ClientState>("set_audio_device", { deviceId }),
 };

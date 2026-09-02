@@ -76,6 +76,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
         stage_network_port: settings.stage_network_port,
         stage_message: state.stage_message.read().unwrap().clone(),
         overlay: state.overlay.read().unwrap().clone(),
+        audio: state.audio.get_status(),
     };
 
     // Keep connected phones/tablets in lock-step with the desktop windows: after
@@ -1570,6 +1571,130 @@ pub fn clear_overlay(app: AppHandle) -> Result<ClientState, String> {
     Ok(snapshot_and_emit(&app))
 }
 
+// ---------------------------------------------------------------------------
+// Backing audio — single track, routable to specific device, not tied to slides
+// Dedicated thread (same isolation as MIDI/OSC), never blocks main, no deadlock
+// ---------------------------------------------------------------------------
+
+/// List cpal output devices (independent of system default) for the audio player.
+/// Uses `cpal::default_host().output_devices()` — same pattern as `list_displays` for video.
+#[tauri::command]
+pub fn list_audio_devices() -> Vec<crate::audio::AudioDeviceInfo> {
+    crate::audio::list_output_devices()
+}
+
+/// Load a local audio file (MP3/WAV/FLAC via rodio) into the single backing track.
+/// Does not auto-play; call `play_audio` to start. Replaces any previously loaded track.
+#[tauri::command]
+pub fn load_audio(app: AppHandle, path: String) -> Result<ClientState, String> {
+    let p = PathBuf::from(&path);
+    if !p.is_file() {
+        return Err(format!("audio file not found: {}", path));
+    }
+    let state = app.state::<AppState>();
+    state
+        .audio
+        .load(&p)
+        .map_err(|e| format!("failed to load audio: {e}"))?;
+    log(&app, Level::Info, &format!("audio: loaded \"{}\"", path));
+    Ok(snapshot_and_emit(&app))
+}
+
+#[tauri::command]
+pub fn play_audio(app: AppHandle) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    state
+        .audio
+        .play()
+        .map_err(|e| format!("audio play failed: {e}"))?;
+    log(&app, Level::Info, "audio: play");
+    Ok(snapshot_and_emit(&app))
+}
+
+#[tauri::command]
+pub fn pause_audio(app: AppHandle) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    state
+        .audio
+        .pause()
+        .map_err(|e| format!("audio pause failed: {e}"))?;
+    log(&app, Level::Info, "audio: pause");
+    Ok(snapshot_and_emit(&app))
+}
+
+#[tauri::command]
+pub fn stop_audio(app: AppHandle) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    state.audio.stop().map_err(|e| format!("audio stop failed: {e}"))?;
+    log(&app, Level::Info, "audio: stop");
+    Ok(snapshot_and_emit(&app))
+}
+
+#[tauri::command]
+pub fn set_audio_volume(app: AppHandle, volume: f32) -> Result<ClientState, String> {
+    if !volume.is_finite() || volume < 0.0 || volume > 1.5 {
+        return Err("volume must be between 0.0 and 1.5".to_string());
+    }
+    let state = app.state::<AppState>();
+    state
+        .audio
+        .set_volume(volume)
+        .map_err(|e| format!("audio volume failed: {e}"))?;
+    // Persist volume in Settings (same pattern as display/output device)
+    {
+        let mut settings = state.current_settings();
+        settings.audio_volume = volume;
+        state.apply_settings(settings.clone());
+        let _ = write_settings(&state.app_data_dir(), &settings);
+    }
+    log(&app, Level::Info, &format!("audio: volume {volume:.2}"));
+    Ok(snapshot_and_emit(&app))
+}
+
+#[tauri::command]
+pub fn seek_audio(app: AppHandle, secs: u64) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    state
+        .audio
+        .seek(secs)
+        .map_err(|e| format!("audio seek failed: {e}"))?;
+    log(&app, Level::Info, &format!("audio: seek {secs}s"));
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Select which cpal output device the backing track plays through, independent of system default.
+/// Stored in Settings (`audio_output_device_id`), same pattern as `output_display_index`.
+#[tauri::command]
+pub fn set_audio_device(app: AppHandle, device_id: Option<String>) -> Result<ClientState, String> {
+    // Validate device exists if Some (allow None = system default)
+    if let Some(ref id) = device_id {
+        let devices = crate::audio::list_output_devices();
+        if !devices.iter().any(|d| &d.id == id) {
+            return Err(format!("audio device \"{id}\" not found"));
+        }
+    }
+    let state = app.state::<AppState>();
+    state
+        .audio
+        .set_device(device_id.clone())
+        .map_err(|e| format!("audio device switch failed: {e}"))?;
+    {
+        let mut settings = state.current_settings();
+        settings.audio_output_device_id = device_id.clone();
+        state.apply_settings(settings.clone());
+        let _ = write_settings(&state.app_data_dir(), &settings);
+    }
+    log(
+        &app,
+        Level::Info,
+        &format!(
+            "audio: output device set to {}",
+            device_id.unwrap_or_else(|| "system default".to_string())
+        ),
+    );
+    Ok(snapshot_and_emit(&app))
+}
+
 /// Explicit "Show Output" action: create and show the output window on its
 /// configured (or auto-picked) display, without changing the live slide.
 #[tauri::command]
@@ -1692,6 +1817,8 @@ enum SettingsField {
     StageNetworkEnabled,
     StageNetworkPort,
     StageNetworkPin,
+    AudioDevice,
+    AudioVolume,
 }
 
 impl SettingsField {
@@ -1714,11 +1841,13 @@ impl SettingsField {
             SettingsField::StageNetworkEnabled => "Stage display on network",
             SettingsField::StageNetworkPort => "Stage display port",
             SettingsField::StageNetworkPin => "Stage display PIN",
+            SettingsField::AudioDevice => "Audio output device",
+            SettingsField::AudioVolume => "Audio volume",
         }
     }
 }
 
-fn settings_fields() -> [SettingsField; 17] {
+fn settings_fields() -> [SettingsField; 19] {
     [
         SettingsField::OutputDisplay,
         SettingsField::OutputFullscreen,
@@ -1737,6 +1866,8 @@ fn settings_fields() -> [SettingsField; 17] {
         SettingsField::StageNetworkEnabled,
         SettingsField::StageNetworkPort,
         SettingsField::StageNetworkPin,
+        SettingsField::AudioDevice,
+        SettingsField::AudioVolume,
     ]
 }
 
@@ -1779,6 +1910,12 @@ fn changed_settings(old: &Settings, new: &Settings) -> Vec<String> {
             }
             SettingsField::StageNetworkPin => {
                 new.stage_network_pin != old.stage_network_pin
+            }
+            SettingsField::AudioDevice => {
+                new.audio_output_device_id != old.audio_output_device_id
+            }
+            SettingsField::AudioVolume => {
+                (new.audio_volume - old.audio_volume).abs() > f32::EPSILON
             }
         };
         if differs {
@@ -2729,6 +2866,8 @@ mod tests {
             stage_network_enabled: false,
             stage_network_port: 1426,
             stage_network_pin: String::new(),
+            audio_output_device_id: None,
+            audio_volume: 1.0,
         }
     }
 

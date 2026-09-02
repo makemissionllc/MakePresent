@@ -1,3 +1,4 @@
+mod audio;
 mod commands;
 mod broadcast;
 mod logging;
@@ -71,6 +72,8 @@ fn finalize(app: &tauri::AppHandle) {
     state.osc.stop();
     // Stop the local-network stage server (closes any connected phones).
     state.network.stop();
+    // Stop backing audio (dedicated thread, single track)
+    state.audio.shutdown();
 
     let data_dir = state.app_data_dir();
     {
@@ -380,6 +383,26 @@ pub fn run() {
                 state.logger.log(Level::Info, "osc: listener disabled");
             }
 
+            // Backing audio: restore selected output device and volume (single track, not tied to slides)
+            // Dedicated thread, never blocks main, routable to specific device independent of system default
+            {
+                let audio_cfg = state.current_settings();
+                if let Some(device_id) = audio_cfg.audio_output_device_id.clone() {
+                    let _ = state.audio.set_device(Some(device_id.clone()));
+                    state.logger.log(
+                        Level::Info,
+                        &format!("audio: restored output device '{}'", device_id),
+                    );
+                } else {
+                    state.logger.log(Level::Info, "audio: using system default output device");
+                }
+                let _ = state.audio.set_volume(audio_cfg.audio_volume);
+                state.logger.log(
+                    Level::Info,
+                    &format!("audio: volume restored to {:.0}%", audio_cfg.audio_volume * 100.0),
+                );
+            }
+
             // Stage Network: restore the local WebSocket server if it was left
             // enabled, and broadcast the current state once it is up so a phone
             // that connects immediately has something to render.
@@ -666,6 +689,14 @@ pub fn run() {
             commands::set_overlay,
             commands::set_overlay_visible,
             commands::clear_overlay,
+            commands::list_audio_devices,
+            commands::load_audio,
+            commands::play_audio,
+            commands::pause_audio,
+            commands::stop_audio,
+            commands::set_audio_volume,
+            commands::seek_audio,
+            commands::set_audio_device,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

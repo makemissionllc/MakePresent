@@ -262,6 +262,8 @@ fn make_live(app: &AppHandle, slide_id: &str) -> Result<ClientState, String> {
             .ok_or_else(|| format!("slide {slide_id} not found"))?;
         project.live = Some(slide_id.to_string());
         project.selected = Some(slide_id.to_string());
+        project.show_text = true;
+        project.show_background = true;
         project.modified_at = now_iso();
         slide.title
     };
@@ -291,11 +293,43 @@ fn do_clear_output(app: &AppHandle) -> Result<ClientState, String> {
     {
         let mut project = state.project.write().unwrap();
         project.live = None;
+        project.show_text = true;
+        project.show_background = true;
         project.modified_at = now_iso();
     }
     state.request_save();
     log(app, Level::Info, "output: cleared (black)");
     let snap = snapshot(app);
+    let _ = app.emit("state", &snap);
+    Ok(snap)
+}
+
+#[tauri::command]
+pub fn clear_text(app: AppHandle) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    {
+        let mut project = state.project.write().unwrap();
+        project.show_text = false;
+        project.modified_at = now_iso();
+    }
+    state.request_save();
+    log(&app, Level::Info, "output: text cleared (background kept)");
+    let snap = snapshot(&app);
+    let _ = app.emit("state", &snap);
+    Ok(snap)
+}
+
+#[tauri::command]
+pub fn clear_background(app: AppHandle) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    {
+        let mut project = state.project.write().unwrap();
+        project.show_background = false;
+        project.modified_at = now_iso();
+    }
+    state.request_save();
+    log(&app, Level::Info, "output: background cleared (text on black)");
+    let snap = snapshot(&app);
     let _ = app.emit("state", &snap);
     Ok(snap)
 }

@@ -55,6 +55,10 @@ export const api = {
 
   clearOutput: () => invoke<ClientState>("clear_output"),
 
+  clearText: () => invoke<ClientState>("clear_text"),
+
+  clearBackground: () => invoke<ClientState>("clear_background"),
+
   newProject: () => invoke<ClientState>("new_project"),
 
   addSlide: (title?: string, body?: string) =>

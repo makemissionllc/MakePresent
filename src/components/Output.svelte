@@ -39,6 +39,9 @@
     return looks.find((l) => l.name === "Main") ?? looks[0]!;
   });
 
+  const showText = $derived(project?.showText ?? true);
+  const showBackground = $derived(project?.showBackground ?? true);
+
   // The on-deck slide comes straight from state (the backend decides who is
   // "likely next"). Its media is preloaded here — in the window that will
   // actually play it — so a cut to it starts instantly instead of decoding
@@ -120,7 +123,7 @@
         class:gpu={crossfading}
         style:opacity={inOpacity}
       >
-        <SlideRender slide={shown} {look} />
+        <SlideRender slide={shown} {look} {showText} {showBackground} />
       </div>
     {/if}
   {:else if !leaving}
@@ -134,7 +137,7 @@
         class:gpu={crossfading}
         style:opacity={outOpacity}
       >
-        <SlideRender slide={leaving} {look} />
+        <SlideRender slide={leaving} {look} {showText} {showBackground} />
       </div>
     {/if}
   {/if}

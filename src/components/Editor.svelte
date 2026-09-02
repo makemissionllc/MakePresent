@@ -183,6 +183,20 @@
     void run(() => api.clearOutput());
   }
 
+  function clearText(): void {
+    void api
+      .clearText()
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
+  function clearBackground(): void {
+    void api
+      .clearBackground()
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
   async function addSlide(): Promise<void> {
     try {
       errorMsg = null;
@@ -1275,7 +1289,12 @@
       <div class="preview-row">
         <div class="preview-box">
           {#if outputPreviewSlide && outputPreviewLook}
-            <SlideRender slide={outputPreviewSlide} look={outputPreviewLook} />
+            <SlideRender
+              slide={outputPreviewSlide}
+              look={outputPreviewLook}
+              showText={project?.showText ?? true}
+              showBackground={project?.showBackground ?? true}
+            />
           {:else}
             <div class="preview-empty">No slide</div>
           {/if}
@@ -1297,6 +1316,12 @@
         {:else}
           <span class="not-shown">Not shown yet</span> — the output appears here the first time a slide goes live.
         {/if}
+      </div>
+
+      <div class="clear-row">
+        <button class="ghost" onclick={() => clearOutput()} title="Clear both text and background (black)">Clear output</button>
+        <button class="ghost" onclick={() => clearText()} title="Hide text, keep background">Clear text</button>
+        <button class="ghost" onclick={() => clearBackground()} title="Hide background, keep text on black">Clear background</button>
       </div>
 
       {#if !appState?.output.visible}
@@ -1336,7 +1361,12 @@
       <div class="preview-row">
         <div class="preview-box">
           {#if stagePreviewSlide && stagePreviewLook}
-            <SlideRender slide={stagePreviewSlide} look={stagePreviewLook} />
+            <SlideRender
+              slide={stagePreviewSlide}
+              look={stagePreviewLook}
+              showText={project?.showText ?? true}
+              showBackground={project?.showBackground ?? true}
+            />
           {:else}
             <div class="preview-empty">No slide</div>
           {/if}
@@ -1759,6 +1789,19 @@
     background: var(--semantic-error-bg);
     color: var(--semantic-error);
     border-color: var(--semantic-error-border);
+  }
+
+  .clear-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 4px 0;
+  }
+  .clear-row button {
+    flex: 1 1 auto;
+    min-width: 80px;
+    font-size: 12px;
+    padding: 6px 8px;
   }
 
   /* Buttons in Output panel — subtle warm/bold feedback */

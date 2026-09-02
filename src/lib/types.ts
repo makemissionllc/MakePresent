@@ -77,6 +77,10 @@ export interface Project {
   slides: Slide[];
   looks: Look[];
   live: string | null;
+  showText: boolean;
+  showBackground: boolean;
+  selected?: string | null;
+  aspectRatio?: string;
   transition: Transition;
   modifiedAt: string;
 }

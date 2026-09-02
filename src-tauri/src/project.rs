@@ -239,6 +239,10 @@ pub struct Project {
     #[serde(default)]
     pub looks: Vec<Look>,
     pub live: Option<String>,
+    #[serde(default = "default_true")]
+    pub show_text: bool,
+    #[serde(default = "default_true")]
+    pub show_background: bool,
     /// The slide currently selected/being-armed in the editor (used to decide
     /// which media the Output preloads "on deck").
     #[serde(default)]
@@ -252,6 +256,7 @@ pub struct Project {
 }
 
 fn default_aspect() -> String { "16:9".to_string() }
+fn default_true() -> bool { true }
 
 impl Project {
     pub fn new(name: &str) -> Self {
@@ -269,6 +274,8 @@ impl Project {
             }],
             looks: vec![Look::main_default(), Look::stage_default()],
             live: None,
+            show_text: true,
+            show_background: true,
             selected: None,
             transition: Transition::Cut,
             aspect_ratio: default_aspect(),

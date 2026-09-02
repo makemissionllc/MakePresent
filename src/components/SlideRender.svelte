@@ -6,9 +6,14 @@
   interface Props {
     slide: Slide;
     look: Look;
+    showText?: boolean;
+    showBackground?: boolean;
   }
 
-  let { slide, look }: Props = $props();
+  let { slide, look, showText = true, showBackground = true }: Props = $props();
+
+  const effectiveShowBackground = $derived(showBackground && look.showBackground);
+  const effectiveShowText = $derived(showText);
 
   function solidColor(s: Slide): string {
     return s.background.type === "solid" ? s.background.color : "#000000";
@@ -17,21 +22,21 @@
 
 <div
   class="slide-render"
-  class:no-bg={!look.showBackground}
+  class:no-bg={!effectiveShowBackground}
   class:absolute={look.positioning === "absolute"}
   class:pos-top={look.textPosition === "top"}
   class:pos-center={look.textPosition === "center"}
   class:pos-bottom={look.textPosition === "bottom"}
   use:fitText={{
     mode: look.positioning === "absolute" ? "absolute" : "auto",
-    deps: `${look.titleSize}:${look.bodySize}:${look.textPosition}:${look.positioning}:${look.titleFont}:${look.bodyFont}`,
+    deps: `${look.titleSize}:${look.bodySize}:${look.textPosition}:${look.positioning}:${look.titleFont}:${look.bodyFont}:${effectiveShowText}:${effectiveShowBackground}`,
   }}
   style:--look-title-size={`${look.titleSize}px`}
   style:--look-body-size={`${look.bodySize}px`}
-  style:background-color={look.showBackground ? solidColor(slide) : "transparent"}
+  style:background-color={effectiveShowBackground ? solidColor(slide) : "transparent"}
   style:color={look.textColor}
 >
-  {#if look.showBackground}
+  {#if effectiveShowBackground}
     {#if slide.background.type === "image"}
       <img
         class="slide-background media-layer"
@@ -54,7 +59,7 @@
       ></video>
     {/if}
   {/if}
-  {#if slide.title}
+  {#if effectiveShowText && slide.title}
     <h1
       class="look-title"
       data-role="title"
@@ -68,7 +73,7 @@
       {slide.title}
     </h1>
   {/if}
-  {#if slide.body}
+  {#if effectiveShowText && slide.body}
     <p
       class="look-body"
       data-role="body"

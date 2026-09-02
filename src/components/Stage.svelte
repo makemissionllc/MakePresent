@@ -21,6 +21,9 @@
     return looks.find((l) => l.name === "Stage") ?? looks[0]!;
   });
 
+  const showText = $derived(appState?.project?.showText ?? true);
+  const showBackground = $derived(appState?.project?.showBackground ?? true);
+
   onMount(() => {
     let un: () => void = () => {};
     let clock: number | undefined;
@@ -52,7 +55,7 @@
 <div class="stage">
   <section class="current">
     {#if current && look}
-      <SlideRender {look} slide={current} />
+      <SlideRender {look} slide={current} {showText} {showBackground} />
     {:else if current}
       <p class="placeholder">{current.body || current.title}</p>
     {:else}

@@ -601,6 +601,8 @@ pub fn run() {
             commands::set_ndi_look,
             commands::set_ndi_enabled,
             commands::clear_output,
+            commands::clear_text,
+            commands::clear_background,
             commands::new_project,
             commands::add_slide,
             commands::update_slide,

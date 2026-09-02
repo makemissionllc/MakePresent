@@ -2,18 +2,22 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import type { Look, Slide } from "../lib/types";
   import { fitText } from "../lib/fitText";
+  import { hasChords, stripChords, parseChordLine } from "../lib/chords";
 
   interface Props {
     slide: Slide;
     look: Look;
     showText?: boolean;
     showBackground?: boolean;
+    /** When true, Stage renders ChordPro bracketed chords as stacked band-view; Output always strips */
+    isStage?: boolean;
   }
 
-  let { slide, look, showText = true, showBackground = true }: Props = $props();
+  let { slide, look, showText = true, showBackground = true, isStage = false }: Props = $props();
 
   const effectiveShowBackground = $derived(showBackground && look.showBackground);
   const effectiveShowText = $derived(showText);
+  const shouldShowChords = $derived(isStage && hasChords(slide.body));
 
   function solidColor(s: Slide): string {
     return s.background.type === "solid" ? s.background.color : "#000000";
@@ -70,22 +74,51 @@
       style:height={`${look.titleBox.height}%`}
       style:z-index={look.titleBox.zIndex}
     >
-      {slide.title}
+      {stripChords(slide.title)}
     </h1>
   {/if}
   {#if effectiveShowText && slide.body}
-    <p
-      class="look-body"
-      data-role="body"
-      style:font-family={look.bodyFont}
-      style:left={`${look.bodyBox.x}%`}
-      style:top={`${look.bodyBox.y}%`}
-      style:width={`${look.bodyBox.width}%`}
-      style:height={`${look.bodyBox.height}%`}
-      style:z-index={look.bodyBox.zIndex}
-    >
-      {slide.body}
-    </p>
+    {#if shouldShowChords}
+      <div
+        class="look-body chord-body"
+        data-role="body"
+        style:font-family={look.bodyFont}
+        style:left={`${look.bodyBox.x}%`}
+        style:top={`${look.bodyBox.y}%`}
+        style:width={`${look.bodyBox.width}%`}
+        style:height={`${look.bodyBox.height}%`}
+        style:z-index={look.bodyBox.zIndex}
+      >
+        {#each slide.body.split("\n") as line}
+          {#if line.trim() === ""}
+            <div class="chord-line empty-line"><br /></div>
+          {:else}
+            {@const segments = parseChordLine(line)}
+            <div class="chord-line">
+              {#each segments as seg}
+                <span class="chord-segment">
+                  <span class="chord">{seg.chord ?? ""}</span>
+                  <span class="lyric">{seg.lyric}</span>
+                </span>
+              {/each}
+            </div>
+          {/if}
+        {/each}
+      </div>
+    {:else}
+      <p
+        class="look-body"
+        data-role="body"
+        style:font-family={look.bodyFont}
+        style:left={`${look.bodyBox.x}%`}
+        style:top={`${look.bodyBox.y}%`}
+        style:width={`${look.bodyBox.width}%`}
+        style:height={`${look.bodyBox.height}%`}
+        style:z-index={look.bodyBox.zIndex}
+      >
+        {isStage ? slide.body : stripChords(slide.body)}
+      </p>
+    {/if}
   {/if}
 </div>
 
@@ -180,4 +213,50 @@
     white-space: pre-wrap;
     text-shadow: 0 2px 20px rgba(0, 0, 0, 0.4);
   }
+
+  /* Stage — ChordPro stacked band view: chord above lyric, left-aligned to its word.
+     Uses simple inline-flex per segment; no canvas measurement needed beyond fitText's
+     existing scrollHeight check (reuses fitText patterns). For proportional fonts,
+     left-edge alignment is visually correct; more sophisticated per-glyph measurement
+     would only be needed for sub-pixel justification, flagged as future if needed. */
+  .chord-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35em;
+    align-items: center;
+    white-space: pre-wrap;
+  }
+  .slide-render.pos-top .chord-body { align-items: flex-start; }
+  .slide-render.pos-bottom .chord-body { align-items: flex-end; }
+  .chord-line {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0;
+    line-height: 1.1;
+    width: 100%;
+  }
+  .slide-render.pos-top .chord-line { justify-content: flex-start; }
+  .slide-render.pos-bottom .chord-line { justify-content: flex-end; }
+  .chord-segment {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    vertical-align: bottom;
+  }
+  .chord {
+    font-size: 0.52em;
+    font-weight: 800;
+    color: #fbbf24;
+    line-height: 1;
+    min-height: 0.9em;
+    white-space: pre;
+    text-shadow: 0 1px 10px rgba(0, 0, 0, 0.6);
+    letter-spacing: 0.02em;
+  }
+  .lyric {
+    white-space: pre;
+    line-height: 1.15;
+  }
+  .chord:empty { min-height: 0; }
 </style>

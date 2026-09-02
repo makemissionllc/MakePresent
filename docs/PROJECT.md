@@ -546,3 +546,13 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Types** `types.ts:184` `LibrarySong { blocks: Record<string,LibrarySlide>, arrangement: string[], slides? }`.**
 - **Tests** `project.rs:998` 3 migration tests (preserve Amazing Grace, seed, duplicate). `cargo test` 53 passed.**
 - **Verify:** `npm run check` 0/0, `cargo check` 2 `dead_code`, `cargo test` 53 passed.**
+
+## Changed (2026-09-02) - ChordPro chord notation for Stage Display (band-view)
+
+*Add ChordPro chord notation support for the Stage Display (band-view monitor), building on the existing `.cho` parser. Backend keeps raw `[G]` text; frontend strips per-view (Output clean, Stage stacked).*
+
+- **Backend `song_import.rs:335` `parse_cho` now keeps raw `[G]` (was `strip_chords` at storage, now `current_block.push(line.trim())` + fallback keeps raw) — strip only at render time per-view. Test `song_import.rs:658` updated to assert raw contains `[G]` and `strip_chords` removes it. `strip_chords` now `#[allow(dead_code)]` (only used in tests). No new deps.**
+- **Frontend `src/lib/chords.ts:1` new**: `hasChords`/`stripChords`/`parseChordLine`/`parseChordBody` (bracket state machine, handles `[G/B]`). Simple inline-flex per segment left-edge alignment — reuses `fitText` scrollHeight, no canvas needed; flagged that per-glyph `measureText` would only be needed for justified text.
+- **SlideRender `SlideRender.svelte:1`** `isStage?:boolean` + `shouldShowChords = isStage && hasChords(slide.body)`; title `stripChords`; body: if `shouldShowChords` ? `<div chord-body>` with `split(\"\n\")` ? `parseChordLine` ? `chord-segment` (`chord` `0.52em` `#fbbf24` above `lyric`), else `<p>` with `isStage ? body : stripChords(body)`. CSS `.chord-body`/`.chord-line`/`.chord-segment`.
+- **Stage `Stage.svelte:1`** `import stripChords` + `<SlideRender isStage={true}>` + next preview `stripChords`; `Editor.svelte:2032` stage preview `isStage={true}` (output preview remains clean). Automatic: plain slides without `[`/`]` render unchanged.
+- **Verify:** `[G]Amazing [C]grace…` chorus ? Output clean, Stage stacked. `npm run check` 0/0, `cargo check` 2 `dead_code`.

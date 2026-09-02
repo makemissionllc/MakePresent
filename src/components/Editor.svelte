@@ -2035,6 +2035,7 @@
               look={stagePreviewLook}
               showText={project?.showText ?? true}
               showBackground={project?.showBackground ?? true}
+              isStage={true}
             />
           {:else}
             <div class="preview-empty">No slide</div>

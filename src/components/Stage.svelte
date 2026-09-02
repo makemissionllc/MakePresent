@@ -4,6 +4,7 @@
   import type { ClientState, Look } from "../lib/types";
   import { fitText } from "../lib/fitText";
   import SlideRender from "./SlideRender.svelte";
+  import { stripChords } from "../lib/chords";
 
   let appState = $state<ClientState | null>(null);
   let currentTime = $state("--:--:--");
@@ -55,7 +56,7 @@
 <div class="stage">
   <section class="current">
     {#if current && look}
-      <SlideRender {look} slide={current} {showText} {showBackground} />
+      <SlideRender {look} slide={current} {showText} {showBackground} isStage={true} />
     {:else if current}
       <p class="placeholder">{current.body || current.title}</p>
     {:else}
@@ -68,7 +69,7 @@
       <span class="next-label">NEXT</span>
       {#if next}
         <div class="next-body-wrap" use:fitText>
-          <p class="next-body" data-role="body">{next.body || next.title}</p>
+          <p class="next-body" data-role="body">{stripChords(next.body) || stripChords(next.title)}</p>
         </div>
       {:else}
         <p class="placeholder">Nothing queued</p>

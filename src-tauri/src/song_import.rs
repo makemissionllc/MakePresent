@@ -386,21 +386,20 @@ fn parse_cho(path: &Path) -> Result<ParsedSong, String> {
             }
             continue; // directive line not part of lyrics
         }
-        // Strip chords: [C], [G/B], [Am7] etc.
-        let stripped = strip_chords(line);
-        if stripped.trim().is_empty() {
+        // Keep raw ChordPro line (with [G] etc.) — strip only at render time per-view
+        // so the same stored content serves Output (clean) and Stage (stacked) differently
+        if line.trim().is_empty() {
             continue;
         }
-        current_block.push(stripped.trim().to_string());
+        current_block.push(line.trim().to_string());
     }
     if !current_block.is_empty() {
         body_blocks.push(current_block.join("\n"));
     }
 
     if body_blocks.is_empty() {
-        // Fallback: if no blocks were formed, try stripping chords from entire file as one slide
-        let stripped = strip_chords(&content);
-        let cleaned = stripped
+        // Fallback: if no blocks were formed, use raw content as one slide (keep chords)
+        let cleaned = content
             .lines()
             .map(|l| l.trim())
             .filter(|l| !l.is_empty() && !l.starts_with('{'))
@@ -436,6 +435,7 @@ fn parse_cho(path: &Path) -> Result<ParsedSong, String> {
     })
 }
 
+#[allow(dead_code)]
 fn strip_chords(s: &str) -> String {
     let mut out = String::new();
     let mut in_bracket = false;
@@ -664,8 +664,13 @@ mod tests {
         let song = parse_cho(&p).unwrap();
         assert_eq!(song.title, "Amazing Grace");
         assert_eq!(song.slides.len(), 2);
-        assert!(!song.slides[0].body.contains('['));
-        assert!(song.slides[0].body.contains("Amazing grace"));
+        // Stored raw should keep chords for Stage (render-time strip only)
+        assert!(song.slides[0].body.contains('['));
+        assert!(song.slides[0].body.contains("[G]Amazing"));
+        // Render-time stripping for Output should remove them
+        let stripped = strip_chords(&song.slides[0].body);
+        assert!(!stripped.contains('['));
+        assert!(stripped.contains("Amazing grace"));
     }
 
     #[test]

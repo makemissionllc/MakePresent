@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { PRESETS, presetGradient } from "../lib/presets";
+  import { PRESETS } from "../lib/presets";
   import type { ServicePreset } from "../lib/types";
 
   interface Props {
@@ -88,7 +88,6 @@
               <button
                 class="card"
                 class:selected={preset.id === selectedId}
-                style:background={presetGradient(preset.id)}
                 onclick={() => (selectedId = preset.id)}
                 aria-pressed={preset.id === selectedId}
               >
@@ -187,12 +186,13 @@
 <style>
   .hub-overlay{position:fixed; inset:0; z-index:70; display:flex; align-items:center; justify-content:center; background:rgba(5,10,20,0.72); backdrop-filter: blur(6px);}
   .hub{width:min(1180px,96vw); max-height:92vh; background:var(--panel); border:1px solid var(--border); border-radius:16px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 24px 80px rgba(0,0,0,0.6);}
-  .hub-head{display:flex; align-items:center; justify-content:space-between; padding:18px 20px; border-bottom:1px solid var(--border); background: linear-gradient(135deg, #0f2b4a 0%, #1f3a2f 100%);}
+  .hub-head{display:flex; align-items:center; justify-content:space-between; padding:18px 20px; border-bottom:1px solid var(--border); background:var(--panel-2);}
   .brand{display:flex; gap:12px; align-items:center; color:white;}
   .logo{width:40px; height:40px; border-radius:10px; display:grid; place-items:center; background: var(--accent); font-weight:800; letter-spacing:0.06em;}
   .brand h1{margin:0; font-family:var(--font-display); font-size:16px; text-transform:uppercase; letter-spacing:0.06em; color:white;}
   .brand p{margin:2px 0 0; font-size:11px; color:rgba(255,255,255,0.7);}
-  .close{width:32px; height:32px; border-radius:8px; background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.2); color:white; font-size:18px;}
+  .close{width:32px; height:32px; border-radius:8px; background:rgba(255,255,255,0.08); border:1px solid var(--border); color:var(--text); font-size:18px; cursor:pointer; transition:all var(--motion-fast) var(--ease-standard);}
+  .close:hover{background:rgba(255,255,255,0.12); color:var(--accent);}
   .hub-body{display:grid; grid-template-columns: 1fr 340px; gap:0; min-height:0; flex:1; overflow:hidden;}
   @media (max-width:900px){ .hub-body{grid-template-columns:1fr;} .inspector{border-left:none; border-top:1px solid var(--border);} }
   .gallery{padding:18px; overflow:auto; background: var(--panel-2); min-height:0;}
@@ -201,9 +201,9 @@
   .recent-hint{font-size:11px; color:var(--text-dim);}
   .grid{display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px;}
   @media (max-width:640px){ .grid{grid-template-columns:1fr;} }
-  .card{position:relative; text-align:left; padding:14px; border-radius:12px; border:2px solid transparent; color:white; min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden;}
+  .card{position:relative; text-align:left; padding:14px; border-radius:12px; border:2px solid transparent; color:white; min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; background:var(--panel-2);}
   .card.selected{border-color: var(--accent); box-shadow:0 0 0 3px rgba(79,140,255,0.25);}
-  .card-badge{position:absolute; top:10px; right:10px; font-size:9px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; background:rgba(0,0,0,0.35); padding:3px 7px; border-radius:999px; color:white;}
+  .card-badge{position:absolute; top:10px; right:10px; font-size:9px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; background:rgba(0,0,0,0.4); padding:3px 7px; border-radius:999px; color:var(--text-dim); backdrop-filter:blur(2px);}
   .card-icon{font-size:22px; margin-top:6px;}
   .card-title{font-family:var(--font-display); font-size:13px; font-weight:700; line-height:1.2; color:white;}
   .card-desc{font-size:11px; color:rgba(255,255,255,0.85); line-height:1.35;}
@@ -233,8 +233,10 @@
   .ptitle{flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .pref{font-size:10px; color:var(--accent);}
   .inspector-actions{display:flex; gap:8px; margin-top:auto; padding-top:6px;}
-  button{border:1px solid var(--border); border-radius:6px; background:var(--panel-2); color:var(--text); padding:7px 12px; font-size:13px; font-weight:500;}
+  button{border:1px solid var(--border); border-radius:6px; background:var(--panel-2); color:var(--text); padding:7px 12px; font-size:13px; font-weight:500; cursor:pointer; transition:all var(--motion-fast) var(--ease-standard);}
+  button:hover{background:var(--panel); border-color:var(--accent);}
   button.ghost{background:transparent;}
+  button.ghost:hover{background:rgba(255,255,255,0.05);}
   button.primary{background:var(--accent); border-color:var(--accent); color:white; flex:1;}
-  button.primary:hover{transform:translateY(-1px);}
+  button.primary:hover{background:var(--accent); filter:brightness(1.1); transform:translateY(-1px);}
 </style>

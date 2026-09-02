@@ -875,7 +875,7 @@
   {/if}
 
   <div class="body">
-    <aside class="sidebar">
+        <aside class="sidebar">
       {#if welcome}
         <div class="welcome">
           <div>
@@ -892,138 +892,138 @@
         </div>
       {/if}
 
-      <div class="sidebar-section playlist">
-      <div class="section-title">Playlist</div>
-      <ul
-        class="slide-list"
-        class:drag-active={isDragging}
-        ondragover={(e) => { e.preventDefault(); if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0; }}
-        ondrop={(e) => onPlaylistDrop(e)}
-        ondragleave={(e) => {
-          const rt = e.relatedTarget as HTMLElement | null;
-          if (!rt || !(e.currentTarget as HTMLElement).contains(rt)) dragOverIndex = null;
-        }}
-      >
-        {#each project?.slides ?? [] as slide, i (slide.id)}
-          {#if dragOverIndex === i}
-            <li class="drop-indicator" aria-hidden="true"></li>
-          {/if}
-          <li
-            draggable="true"
-            class:dragging={draggedSlideId === slide.id}
-            class:drag-over={dragOverIndex === i}
-            ondragstart={(e) => onPlaylistDragStart(e, slide, i)}
-            ondragover={(e) => onPlaylistDragOver(e, i)}
-            ondragend={onPlaylistDragEnd}
-            ondrop={(e) => onPlaylistDrop(e, i)}
-          >
-            <button
-              class:active={project?.live === slide.id}
-              class="slide-entry"
-              onclick={() => goLive(slide)}
-              draggable="false"
-            >
-              <span
-                class="swatch"
-                style:background-color={slide.background.type === "solid"
-                  ? slide.background.color
-                  : "#000"}
-                style:background-image={isMedia(slide.background)
-                  ? `url('${fileUrl(slide.background.thumb)}')`
-                  : "none"}
-                style:background-size="cover"
-                style:background-position="center"
-              ></span>
-              <span class="slide-label">{slide.title || "Untitled"}</span>
-              {#if project?.live === slide.id}<span class="live-dot"></span>{/if}
-            </button>
-            <button
-              class="delete"
-              title="Delete slide"
-              onclick={(e) => {
-                e.stopPropagation();
-                deleteSlide(slide);
-              }}
-            >
-              &times;
-            </button>
-          </li>
-        {/each}
-        {#if dragOverIndex === (project?.slides.length ?? 0)}
-          <li class="drop-indicator" aria-hidden="true"></li>
-        {/if}
-      </ul>
-      <button class="add" onclick={() => addSlide()}>+ Add slide</button>
-      </div>
-
-      <div class="sidebar-section scripture">
-      <div class="section-title scripture-title">Add Scripture</div>
-      <div class="scripture-wrap">
-        <input
-          type="text"
-          class="search"
-          placeholder="e.g. John 3:16, psalm 23, jn 1"
-          value={scriptureQuery}
-          oninput={onScriptureInput}
-          onkeydown={onScriptureKeydown}
-          onfocus={() => {
-            if (scriptureResults.length > 0) scriptureOpen = true;
+      <div class="sidebar-section playlist-section" class:has-content={(project?.slides.length ?? 0) > 0}>
+        <div class="section-title">Playlist</div>
+        <ul
+          class="slide-list"
+          class:drag-active={isDragging}
+          ondragover={(e) => { e.preventDefault(); if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0; }}
+          ondrop={(e) => onPlaylistDrop(e)}
+          ondragleave={(e) => {
+            const rt = e.relatedTarget as HTMLElement | null;
+            if (!rt || !(e.currentTarget as HTMLElement).contains(rt)) dragOverIndex = null;
           }}
-          onblur={() => {
-            setTimeout(() => {
-              scriptureOpen = false;
-            }, 150);
-          }}
-        />
-        {#if scriptureLoading}
-          <span class="scripture-loading" aria-hidden="true">
-            <span class="media-spinner"></span>
-          </span>
-        {/if}
-        {#if scriptureOpen}
-          <ul class="scripture-list">
-            {#each scriptureResults as match, i (match.reference)}
-              <li>
-                <button
-                  class:active={i === scriptureIdx}
-                  class="scripture-entry"
-                  draggable="true"
-                  ondragstart={(e) => onScriptureDragStart(e, match.reference, match.text)}
-                  onmousedown={(e) => {
-                    e.preventDefault();
-                    selectScripture(match);
-                  }}
-                  title="Drag to playlist • Click to add"
-                >
-                  <span class="scripture-ref">{match.reference}</span>
-                  <span class="scripture-preview">{match.text}</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-        {#if scriptureQuery.trim() && !scriptureLoading && scriptureResults.length === 0 && looksLikeReference(scriptureQuery)}
-          <button
-            class="add scripture-fallback"
-            disabled={scriptureBusy}
-            onclick={() => fetchApiScripture(scriptureQuery)}
-          >
-            Look up “{scriptureQuery.trim()}” on bible-api.com
-          </button>
-        {/if}
-        <button
-          class="add scripture-import"
-          disabled={scriptureBusy}
-          onclick={() => void importOpenlpFile()}
         >
-          Import OpenLP Bible…
-        </button>
-        {#if scriptureStatus}
-          <p class="scripture-status">{scriptureStatus}</p>
-        {/if}
+          {#each project?.slides ?? [] as slide, i (slide.id)}
+            {#if dragOverIndex === i}
+              <div class="drop-indicator" aria-hidden="true"></div>
+            {/if}
+            <li
+              draggable="true"
+              class:dragging={draggedSlideId === slide.id}
+              class:drag-over={dragOverIndex === i}
+              ondragstart={(e) => onPlaylistDragStart(e, slide, i)}
+              ondragover={(e) => onPlaylistDragOver(e, i)}
+              ondragend={onPlaylistDragEnd}
+              ondrop={(e) => onPlaylistDrop(e, i)}
+            >
+              <button
+                class:active={project?.live === slide.id}
+                class="slide-entry"
+                onclick={() => goLive(slide)}
+                draggable="false"
+              >
+                <span
+                  class="swatch"
+                  style:background-color={slide.background.type === "solid"
+                    ? slide.background.color
+                    : "#000"}
+                  style:background-image={isMedia(slide.background)
+                    ? `url('${fileUrl(slide.background.thumb)}')`
+                    : "none"}
+                  style:background-size="cover"
+                  style:background-position="center"
+                ></span>
+                <span class="slide-label">{slide.title || "Untitled"}</span>
+                {#if project?.live === slide.id}<span class="live-dot"></span>{/if}
+              </button>
+              <button
+                class="delete"
+                title="Delete slide"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  deleteSlide(slide);
+                }}
+              >
+                &times;
+              </button>
+            </li>
+          {/each}
+          {#if dragOverIndex === (project?.slides.length ?? 0)}
+            <div class="drop-indicator" aria-hidden="true"></div>
+          {/if}
+        </ul>
+        <button class="add" onclick={() => addSlide()}>+ Add slide</button>
       </div>
 
-      <!-- Scripture Browse Panel — FreeShow-inspired, collapsible, keeps search available -->
+      <div class="sidebar-section scripture-section" class:has-content={scriptureOpen || scriptureQuery.trim().length > 0} class:active={scriptureOpen}>
+        <div class="section-title scripture-title">Add Scripture</div>
+        <div class="scripture-wrap">
+          <input
+            type="text"
+            class="search"
+            placeholder="e.g. John 3:16, psalm 23, jn 1"
+            value={scriptureQuery}
+            oninput={onScriptureInput}
+            onkeydown={onScriptureKeydown}
+            onfocus={() => {
+              if (scriptureResults.length > 0) scriptureOpen = true;
+            }}
+            onblur={() => {
+              setTimeout(() => {
+                scriptureOpen = false;
+              }, 150);
+            }}
+          />
+          {#if scriptureLoading}
+            <span class="scripture-loading" aria-hidden="true">
+              <span class="media-spinner"></span>
+            </span>
+          {/if}
+          {#if scriptureOpen}
+            <ul class="scripture-list">
+              {#each scriptureResults as match, i (match.reference)}
+                <li>
+                  <button
+                    class:active={i === scriptureIdx}
+                    class="scripture-entry"
+                    draggable="true"
+                    ondragstart={(e) => onScriptureDragStart(e, match.reference, match.text)}
+                    onmousedown={(e) => {
+                      e.preventDefault();
+                      selectScripture(match);
+                    }}
+                    title="Drag to playlist • Click to add"
+                  >
+                    <span class="scripture-ref">{match.reference}</span>
+                    <span class="scripture-preview">{match.text}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          {#if scriptureQuery.trim() && !scriptureLoading && scriptureResults.length === 0 && looksLikeReference(scriptureQuery)}
+            <button
+              class="add scripture-fallback"
+              disabled={scriptureBusy}
+              onclick={() => fetchApiScripture(scriptureQuery)}
+            >
+              Look up “{scriptureQuery.trim()}” on bible-api.com
+            </button>
+          {/if}
+          <button
+            class="add scripture-import"
+            disabled={scriptureBusy}
+            onclick={() => void importOpenlpFile()}
+          >
+            Import OpenLP Bible…
+          </button>
+          {#if scriptureStatus}
+            <p class="scripture-status">{scriptureStatus}</p>
+          {/if}
+        </div>
+      </div>
+
       <div class="browse-panel">
         <button class="browse-header" onclick={() => (browseCollapsed = !browseCollapsed)} aria-expanded={!browseCollapsed}>
           <span class="section-title" style="margin:0; border:none; padding:0;">Browse Scripture</span>
@@ -1033,60 +1033,58 @@
           <p class="browse-hint">Browsing as full-width panel below — click a verse to add as slide (drag secondary).</p>
         {/if}
       </div>
-      </div>
 
-      <div class="sidebar-section library">
-      <div class="section-title library-title">Library</div>
-      <input
-        type="text"
-        class="search"
-        placeholder="Search songs"
-        bind:value={librarySearch}
-      />
-      <ul class="song-list">
-        {#each librarySongs as song (song.id)}
-          <li>
-            <button
-              class="song-entry"
-              draggable="true"
-              ondragstart={(e) => onLibrarySongDragStart(e, song)}
-              onclick={() => addToPlaylist(song)}
-              title="Drag to playlist to add • Click to add"
-            >
-              <span class="song-label">{song.title || "Untitled"}</span>
-              <span class="song-count">{song.slides.length} {song.slides.length === 1 ? "slide" : "slides"}</span>
-            </button>
-            <button
-              class="delete"
-              title="Delete song"
-              onclick={(e) => {
-                e.stopPropagation();
-                deleteSong(song);
-              }}
-            >
-              &times;
-            </button>
-          </li>
-          <!-- Individual verses draggable (keep click-to-add buttons) -->
-          {#each song.slides as verse (verse.id)}
-            <li class="library-verse-row">
+      <div class="sidebar-section library-section" class:has-content={librarySongs.length > 0 || librarySearch.trim().length > 0}>
+        <div class="section-title library-title">Library</div>
+        <input
+          type="text"
+          class="search"
+          placeholder="Search songs"
+          bind:value={librarySearch}
+        />
+        <ul class="song-list">
+          {#each librarySongs as song (song.id)}
+            <li>
               <button
-                class="library-verse"
+                class="song-entry"
                 draggable="true"
-                ondragstart={(e) => onLibraryVerseDragStart(e, song, verse)}
-                onclick={() => void api.addSlide(verse.title, verse.body).then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)))}
-                title="Drag verse to playlist • Click to add as slide"
+                ondragstart={(e) => onLibrarySongDragStart(e, song)}
+                onclick={() => addToPlaylist(song)}
+                title="Drag to playlist to add • Click to add"
               >
-                <span class="verse-title">{verse.title || "Untitled verse"}</span>
-                <span class="verse-preview">{verse.body.slice(0, 60)}{verse.body.length > 60 ? "…" : ""}</span>
+                <span class="song-label">{song.title || "Untitled"}</span>
+                <span class="song-count">{song.slides.length} {song.slides.length === 1 ? "slide" : "slides"}</span>
+              </button>
+              <button
+                class="delete"
+                title="Delete song"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  deleteSong(song);
+                }}
+              >
+                &times;
               </button>
             </li>
+            {#each song.slides as verse (verse.id)}
+              <li class="library-verse-row">
+                <button
+                  class="library-verse"
+                  draggable="true"
+                  ondragstart={(e) => onLibraryVerseDragStart(e, song, verse)}
+                  onclick={() => void api.addSlide(verse.title, verse.body).then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)))}
+                  title="Drag verse to playlist • Click to add as slide"
+                >
+                  <span class="verse-title">{verse.title || "Untitled verse"}</span>
+                  <span class="verse-preview">{verse.body.slice(0, 60)}{verse.body.length > 60 ? "…" : ""}</span>
+                </button>
+              </li>
+            {/each}
+          {:else}
+            <li class="empty">No songs yet. Add one below.</li>
           {/each}
-        {:else}
-          <li class="empty">No songs yet. Add one below.</li>
-        {/each}
-      </ul>
-      <button class="add" onclick={() => addLibrarySong()}>+ Add song</button>
+        </ul>
+        <button class="add" onclick={() => addLibrarySong()}>+ Add song</button>
       </div>
     </aside>
 
@@ -1554,7 +1552,7 @@
     padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 0;
+    gap: 16px;
     overflow: hidden;
     min-height: 0;
   }
@@ -1562,23 +1560,37 @@
   .sidebar-section {
     display: flex;
     flex-direction: column;
+    gap: 8px;
     min-height: 0;
+    overflow: hidden;
   }
 
-  .sidebar-section.playlist {
-    flex: 1 1 180px;
+  .sidebar-section.has-content {
+    flex: 1 1 0;
     min-height: 120px;
   }
 
-  .sidebar-section.scripture {
-    flex: 0 1 auto;
-    flex-shrink: 0;
+  .sidebar-section:not(.has-content) {
+    flex: 0 0 auto;
   }
 
-  .sidebar-section.library {
-    flex: 1 1 180px;
-    min-height: 140px;
-    max-height: 45%;
+  .sidebar-section .slide-list,
+  .sidebar-section .song-list,
+  .sidebar-section .scripture-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .sidebar-section:not(.has-content) .slide-list,
+  .sidebar-section:not(.has-content) .song-list {
+    flex: 0 0 auto;
+    max-height: 120px;
+  }
+
+  .sidebar-section.scripture-section.active .scripture-list {
+    flex: 1;
+    min-height: 120px;
   }
 
   /* Phase 1 — Output panel is the representative screen for the warm/bold

@@ -7,6 +7,7 @@
   import { isMedia } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
+  import SlideRender from "./SlideRender.svelte";
   import SongEditorModal from "./SongEditorModal.svelte";
   import ProjectHub from "../lib/components/ProjectHub.svelte";
 
@@ -106,6 +107,38 @@
       song.title.toLowerCase().includes(librarySearch.trim().toLowerCase()),
     ),
   );
+
+  // Output preview (reuses SlideRender at small size, no new backend) — near "Live on display" status
+  const outputPreviewSlide = $derived.by(() => {
+    if (!project) return null;
+    const liveId = project.live;
+    if (liveId) {
+      const live = project.slides.find((s) => s.id === liveId);
+      if (live) return live;
+    }
+    return selected;
+  });
+  const outputPreviewLook = $derived.by(() => {
+    const looks = appState?.looks ?? [];
+    if (looks.length === 0) return null;
+    const mapped = looks.find((l) => l.id === appState?.outputLookId);
+    if (mapped) return mapped;
+    return looks.find((l) => l.name === "Main") ?? looks[0] ?? null;
+  });
+  const isOnAir = $derived(!!(appState?.output.visible && project?.live));
+
+  // Stage preview (consistent treatment, straightforward)
+  const stagePreviewSlide = $derived.by(() => {
+    return appState?.current ?? selected;
+  });
+  const stagePreviewLook = $derived.by(() => {
+    const looks = appState?.looks ?? [];
+    if (looks.length === 0) return null;
+    const mapped = looks.find((l) => l.id === appState?.stageLookId);
+    if (mapped) return mapped;
+    return looks.find((l) => l.name === "Stage") ?? looks[0] ?? null;
+  });
+  const isStageOnAir = $derived(!!appState?.stage.visible);
 
   // Keep draftTitle/draftBody in sync when selection changes — only when the
   // underlying slide identity changes, so mid-edit keystrokes are never clobbered.
@@ -1239,6 +1272,17 @@
         </select>
       </label>
 
+      <div class="preview-row">
+        <div class="preview-box">
+          {#if outputPreviewSlide && outputPreviewLook}
+            <SlideRender slide={outputPreviewSlide} look={outputPreviewLook} />
+          {:else}
+            <div class="preview-empty">No slide</div>
+          {/if}
+        </div>
+        <span class="on-air-badge" class:on={isOnAir} class:off={!isOnAir}>{isOnAir ? "ON AIR" : "OFF"}</span>
+      </div>
+
       <div class="output-status" class:live={!!(appState?.output.visible && project?.live)}>
         {#if appState?.output.visible}
           {#if project?.live}
@@ -1288,6 +1332,17 @@
           {/each}
         </select>
       </label>
+
+      <div class="preview-row">
+        <div class="preview-box">
+          {#if stagePreviewSlide && stagePreviewLook}
+            <SlideRender slide={stagePreviewSlide} look={stagePreviewLook} />
+          {:else}
+            <div class="preview-empty">No slide</div>
+          {/if}
+        </div>
+        <span class="on-air-badge" class:on={isStageOnAir} class:off={!isStageOnAir}>{isStageOnAir ? "ON AIR" : "OFF"}</span>
+      </div>
 
       <div class="output-status">
         {#if appState?.stage.visible}
@@ -1641,6 +1696,69 @@
     background: var(--semantic-live-bg);
     border-color: var(--semantic-live-border);
     box-shadow: var(--semantic-live-glow);
+  }
+
+  /* Preview thumbnail + ON AIR badge — uses existing SlideRender at small size */
+  .preview-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 4px 0 8px;
+  }
+  .preview-box {
+    flex: 1;
+    aspect-ratio: 16 / 9;
+    width: 100%;
+    max-width: 280px;
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: var(--shadow-soft);
+  }
+  .preview-box :global(.slide-render) {
+    /* Scale down the 72px Look sizes to fit the ~280px preview; SlideRender is absolute inset:0 */
+    transform: scale(0.42);
+    transform-origin: top left;
+    width: 238%;
+    height: 238%;
+  }
+  .preview-empty {
+    display: grid;
+    place-items: center;
+    height: 100%;
+    min-height: 100px;
+    color: var(--text-dim);
+    font-size: 12px;
+    background: var(--panel-2);
+  }
+  .on-air-badge {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    line-height: 1;
+    white-space: nowrap;
+    transition:
+      background var(--motion-normal) var(--ease-standard),
+      color var(--motion-normal) var(--ease-standard),
+      border-color var(--motion-normal) var(--ease-standard),
+      box-shadow var(--motion-normal) var(--ease-standard);
+  }
+  .on-air-badge.on {
+    background: var(--semantic-live-bg);
+    color: var(--semantic-live);
+    border-color: var(--semantic-live-border);
+    box-shadow: var(--semantic-live-glow);
+  }
+  .on-air-badge.off {
+    background: var(--semantic-error-bg);
+    color: var(--semantic-error);
+    border-color: var(--semantic-error-border);
   }
 
   /* Buttons in Output panel — subtle warm/bold feedback */

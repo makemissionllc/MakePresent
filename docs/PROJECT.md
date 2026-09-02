@@ -453,14 +453,18 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - Global quick search (unified: library + all cached Bibles + media cache)
 - In-line text tools (title-case formatter, basic spellcheck)
 - Local file parsing: `.pro` (ProPresenter), `.cho` (ChordPro), CCLI USR — via `quick-xml`, drag-and-drop import into `library.json`
+- Separate slide internal name/label from the on-screen Title text — currently the Title field doubles as both the playlist list-item label and the rendered on-screen text. Add a distinct "Slide name" field (shown in playlist/grid views) independent from the Title/Body content actually rendered on Output.
+- Arrow-key slide navigation — Left/Right arrow keys (while Editor is focused) advance/reverse the live slide, reusing existing next/previous command logic. Scope as in-app-focused only for now (not a global system-wide shortcut — that's the separate, already-documented 'Global Keyboard Shortcuts' backlog item using Tauri's global shortcut plugin, which remains a distinct future item).
+- Responsive/adaptive Editor layout audit — beyond the existing DPI fixes documented in WINDOWS.md (125%/150% scaling, viewport-relative grid), do a broader pass ensuring the Editor layout adapts cleanly across window sizes/zoom levels without hiding or overlapping components, not just the specific DPI cases already fixed.
 
 ### TIER 2 — Real work, good architecture fit
 
 - Dynamic song arrangements: master block dictionary (Verse 1/Chorus/Bridge etc.) + array-flattening at queue time, replacing duplicated slide data
 - ChordPro parsing: strip brackets for Output, stacked chord/lyric layout for Stage (band-view monitor)
 - Targeted `stage_message` broadcast state (flashing banner for nursery alerts/countdowns, independent of main projection)
-- Remote control via embedded local HTTP/WebSocket server (axum/warp), mobile-optimized Svelte build served to phones on the LAN — extends the existing stage-network server pattern (port 1426) to control, not just view
+- **DEPRIORITIZED** — Remote control via embedded local HTTP/WebSocket server (axum/warp), mobile-optimized Svelte build served to phones on the LAN — extends the existing stage-network server pattern (port 1426) to control, not just view — *explicitly parked until the core presentation platform is further along. Not removed from backlog, just sequenced last.*
 - Multi-layer compositing: `AppState` tracks independent background/slide/overlay arrays, `SlideRender.svelte` stacks them as transparent absolute-positioned layers via CSS `z-index`
+- Merge Project Hub and Playlist Templates into one concept — rename "Project" to "View" and "Template" to "Playlist" throughout the UI and data model terminology. The original intent: a View has a Playlist (either freshly configured or the last one used); after a service, the operator saves that Playlist for reuse next time — Project Hub and the existing Playlist Templates feature (Tier 1 item 4) should become one unified flow rather than two separate systems. This is a meaningful terminology + data-model change — **flag as its own dedicated prompt/session when reached, not a quick edit.**
 
 ### TIER 3 — Real weight, scope carefully when reached
 

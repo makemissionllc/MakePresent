@@ -146,6 +146,7 @@ export interface ClientState {
   triggers: TriggerMapping[];
   stageNetworkEnabled: boolean;
   stageNetworkPort: number;
+  stageMessage: string | null;
 }
 
 export interface StageNetworkInfo {

@@ -24,6 +24,7 @@
 
   const showText = $derived(appState?.project?.showText ?? true);
   const showBackground = $derived(appState?.project?.showBackground ?? true);
+  const stageMessage = $derived(appState?.stageMessage ?? null);
 
   onMount(() => {
     let un: () => void = () => {};
@@ -54,6 +55,11 @@
 </script>
 
 <div class="stage">
+  {#if stageMessage}
+    <div class="stage-banner" role="alert" aria-live="assertive">
+      <span class="banner-text">{stageMessage}</span>
+    </div>
+  {/if}
   <section class="current">
     {#if current && look}
       <SlideRender {look} slide={current} {showText} {showBackground} isStage={true} />
@@ -98,6 +104,38 @@
     background: #0b0b0e;
     color: #f4f4f7;
     overflow: hidden;
+  }
+
+  .stage-banner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    background: #e11d48;
+    color: white;
+    text-align: center;
+    padding: 1.2vh 2vw;
+    font-family: var(--font-display);
+    font-size: clamp(1.4rem, 3.5vmin, 2.8rem);
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    box-shadow: 0 4px 20px rgba(225, 29, 72, 0.6);
+    animation: banner-pulse 1s ease-in-out infinite alternate;
+    pointer-events: none;
+  }
+  @keyframes banner-pulse {
+    from { background: #e11d48; box-shadow: 0 4px 20px rgba(225, 29, 72, 0.6); }
+    to { background: #be123c; box-shadow: 0 6px 28px rgba(225, 29, 72, 0.85); }
+  }
+  .banner-text {
+    display: inline-block;
+    animation: text-flash 0.8s step-end infinite alternate;
+  }
+  @keyframes text-flash {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.92; }
   }
 
   .current {

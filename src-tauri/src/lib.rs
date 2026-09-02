@@ -661,6 +661,8 @@ pub fn run() {
             commands::list_media,
             commands::import_song_file,
             commands::set_song_arrangement,
+            commands::set_stage_message,
+            commands::clear_stage_message,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

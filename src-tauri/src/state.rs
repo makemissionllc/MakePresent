@@ -36,6 +36,11 @@ pub struct AppState {
     /// slide changes (or is cleared) the generation is bumped so any previously
     /// spawned timer thread can detect it has been cancelled.
     pub auto_advance_gen: AtomicU64,
+    /// Targeted stage-only message (nursery alerts, countdowns, operator notes).
+    /// Separate from `Project.live` — never affects Output. `None` = no banner.
+    pub stage_message: RwLock<Option<String>>,
+    /// Generation for stage-message auto-expire timers (like auto_advance_gen).
+    pub stage_message_gen: AtomicU64,
 }
 
 impl Default for AppState {
@@ -54,6 +59,8 @@ impl Default for AppState {
             osc: OscListener::default(),
             network: NetworkServer::default(),
             auto_advance_gen: AtomicU64::new(0),
+            stage_message: RwLock::new(None),
+            stage_message_gen: AtomicU64::new(0),
         }
     }
 }
@@ -90,5 +97,13 @@ impl AppState {
 
     pub fn current_auto_advance_gen(&self) -> u64 {
         self.auto_advance_gen.load(Ordering::SeqCst)
+    }
+
+    pub fn bump_stage_message(&self) -> u64 {
+        self.stage_message_gen.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn current_stage_message_gen(&self) -> u64 {
+        self.stage_message_gen.load(Ordering::SeqCst)
     }
 }

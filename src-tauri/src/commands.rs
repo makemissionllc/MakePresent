@@ -74,6 +74,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
         triggers: settings.triggers,
         stage_network_enabled: settings.stage_network_enabled,
         stage_network_port: settings.stage_network_port,
+        stage_message: state.stage_message.read().unwrap().clone(),
     };
 
     // Keep connected phones/tablets in lock-step with the desktop windows: after
@@ -1408,6 +1409,91 @@ pub fn toggle_stage(app: AppHandle) -> Result<bool, String> {
     let snap = snapshot(&app);
     let _ = app.emit("state", &snap);
     Ok(next)
+}
+
+/// Targeted stage-only message (nursery alerts, countdowns, operator notes) — never appears on Output.
+/// Separate from `Project.live`; changing it never touches Output or the main live slide.
+/// Manual clear is baseline; optional `duration_secs` auto-clears after N seconds (straightforward, cancellable).
+#[tauri::command]
+pub fn set_stage_message(
+    app: AppHandle,
+    message: String,
+    duration_secs: Option<u64>,
+) -> Result<ClientState, String> {
+    let trimmed = message.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("stage message must not be empty".to_string());
+    }
+    if trimmed.len() > 500 {
+        return Err("stage message must be 500 characters or fewer".to_string());
+    }
+    let dur = duration_secs.filter(|s| *s > 0);
+    if let Some(secs) = dur {
+        if secs > 3600 {
+            return Err("duration must be between 1 and 3600 seconds".to_string());
+        }
+    }
+    let gen = {
+        let state = app.state::<AppState>();
+        {
+            let mut msg = state.stage_message.write().unwrap();
+            *msg = Some(trimmed.clone());
+        }
+        state.bump_stage_message()
+    };
+    log(
+        &app,
+        Level::Info,
+        &format!(
+            "stage_message: set \"{}\"{}",
+            trimmed,
+            dur.map(|s| format!(" (auto-clear in {s}s, gen {gen})"))
+                .unwrap_or_default()
+        ),
+    );
+    let snap = snapshot_and_emit(&app);
+    if let Some(secs) = dur {
+        let app_clone = app.clone();
+        let msg_clone = trimmed.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(secs));
+            let state = app_clone.state::<AppState>();
+            if state.current_stage_message_gen() != gen {
+                return;
+            }
+            let still = { state.stage_message.read().unwrap().clone() };
+            if still.as_deref() == Some(msg_clone.as_str()) {
+                {
+                    let mut m = state.stage_message.write().unwrap();
+                    *m = None;
+                }
+                // Bump to invalidate any other pending auto-clear timers
+                state.bump_stage_message();
+                log(&app_clone, Level::Info, &format!("stage_message: auto-cleared after {secs}s"));
+                let _ = snapshot_and_emit(&app_clone);
+            }
+        });
+    }
+    Ok(snap)
+}
+
+#[tauri::command]
+pub fn clear_stage_message(app: AppHandle) -> Result<ClientState, String> {
+    let had = {
+        let state = app.state::<AppState>();
+        let msg = state.stage_message.read().unwrap();
+        msg.is_some()
+    };
+    {
+        let state = app.state::<AppState>();
+        let mut m = state.stage_message.write().unwrap();
+        *m = None;
+    }
+    app.state::<AppState>().bump_stage_message();
+    if had {
+        log(&app, Level::Info, "stage_message: cleared");
+    }
+    Ok(snapshot_and_emit(&app))
 }
 
 /// Explicit "Show Output" action: create and show the output window on its

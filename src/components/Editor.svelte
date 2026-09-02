@@ -118,6 +118,10 @@
   // Global search (Ctrl/Cmd+K) — library + all Bibles + media cache
   let globalSearchOpen = $state(false);
 
+  // Stage message (nursery alerts, countdowns, operator notes) — stage-only, never Output
+  let stageMessageDraft = $state("");
+  let stageMessageDuration = $state("");
+
   // Draft copies for responsive editing — typing updates these immediately
   // while the backend save is debounced so the input never resets mid-keystroke.
   let draftTitle = $state("");
@@ -1294,6 +1298,41 @@
     }
   }
 
+  async function sendStageMessage(): Promise<void> {
+    const msg = stageMessageDraft.trim();
+    if (!msg) {
+      errorMsg = "Stage message must not be empty";
+      return;
+    }
+    let dur: number | null = null;
+    const d = stageMessageDuration.trim();
+    if (d !== "") {
+      const n = Number(d);
+      if (!Number.isFinite(n) || n < 1 || n > 3600) {
+        errorMsg = "Duration must be 1–3600 seconds or blank (manual clear)";
+        return;
+      }
+      dur = Math.floor(n);
+    }
+    try {
+      errorMsg = null;
+      appState = await api.setStageMessage(msg, dur);
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
+  async function clearStageMessage(): Promise<void> {
+    try {
+      errorMsg = null;
+      appState = await api.clearStageMessage();
+      stageMessageDraft = "";
+      stageMessageDuration = "";
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
   onMount(() => {
     let unSub: () => void = () => {};
     let unAuto: () => void = () => {};
@@ -2068,6 +2107,44 @@
           {/each}
         </select>
       </label>
+
+      <div class="stage-message-panel">
+        <span class="field-label">Stage message — stage only (never Output)</span>
+        {#if appState?.stageMessage}
+          <div class="stage-message-current">
+            <span class="stage-message-text">{appState.stageMessage}</span>
+            <span class="live-dot" style:background="var(--semantic-error, #e11d48)"></span>
+          </div>
+        {/if}
+        <div class="stage-message-row">
+          <input
+            type="text"
+            placeholder="Nursery alert, countdown, note…"
+            bind:value={stageMessageDraft}
+            onkeydown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void sendStageMessage();
+              }
+            }}
+          />
+          <input
+            type="number"
+            min="1"
+            max="3600"
+            step="1"
+            placeholder="30s"
+            bind:value={stageMessageDuration}
+            title="Auto-clear after N seconds (blank = stay until Clear)"
+            class="stage-message-duration"
+          />
+        </div>
+        <div class="stage-message-actions">
+          <button class="ghost" onclick={() => void sendStageMessage()} title="Send to Stage instantly">Send</button>
+          <button class="ghost" onclick={() => void clearStageMessage()} title="Clear Stage banner">Clear</button>
+        </div>
+        <span class="field-hint">Red flashing banner on Stage only — never on Output. Optional duration auto-clears.</span>
+      </div>
     </aside>
   </div>
 
@@ -3591,6 +3668,55 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--text);
+  }
+
+  .stage-message-panel {
+    margin-top: 12px;
+    padding: 10px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .stage-message-current {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(225, 29, 72, 0.12);
+    border: 1px solid var(--semantic-error, #e11d48);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 11px;
+    color: var(--text);
+  }
+  .stage-message-text {
+    flex: 1;
+    font-weight: 600;
+    word-break: break-word;
+  }
+  .stage-message-row {
+    display: flex;
+    gap: 6px;
+  }
+  .stage-message-row input[type="text"] {
+    flex: 1;
+    min-width: 0;
+  }
+  .stage-message-row input[type="number"] {
+    width: 72px;
+    flex: 0 0 72px;
+  }
+  .stage-message-duration {
+    text-align: center;
+  }
+  .stage-message-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .stage-message-actions button {
+    flex: 1;
   }
 
   @keyframes spin {

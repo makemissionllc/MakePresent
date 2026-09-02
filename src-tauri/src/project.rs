@@ -447,6 +447,9 @@ pub struct ClientState {
     pub stage_network_enabled: bool,
     /// Port the Stage Display web/WebSocket server binds to.
     pub stage_network_port: u16,
+    /// Targeted stage-only message (nursery alerts, countdowns, operator notes).
+    /// Separate from `Project.live` — changing it never affects Output.
+    pub stage_message: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -228,4 +228,12 @@ export const api = {
 
   setSongArrangement: (songId: string, arrangement: string[]) =>
     invoke<Library>("set_song_arrangement", { songId, arrangement }),
+
+  setStageMessage: (message: string, durationSecs?: number | null) =>
+    invoke<ClientState>("set_stage_message", {
+      message,
+      durationSecs: durationSecs ?? null,
+    }),
+
+  clearStageMessage: () => invoke<ClientState>("clear_stage_message"),
 };

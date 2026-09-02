@@ -793,6 +793,45 @@
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
+  // Lightweight title-case: "amazing grace - how sweet the sound" -> "Amazing Grace - How Sweet the Sound"
+  // Keeps small words lowercased unless first word. Handles hyphen/apostrophe.
+  function toTitleCase(s: string): string {
+    const small = new Set([
+      "a", "an", "and", "as", "at", "but", "by", "for", "if", "in", "nor", "of", "on", "or", "per", "the", "to", "vs", "via",
+    ]);
+    return s
+      .trim()
+      .split(/\s+/)
+      .map((w, i) => {
+        if (!w) return w;
+        const lower = w.toLowerCase();
+        if (i !== 0 && small.has(lower)) return lower;
+        // Preserve hyphen/apostrophe capitalisation: "o'neill" -> "O'Neill", "self-giving" -> "Self-Giving"
+        return lower
+          .split("-")
+          .map((part) =>
+            part
+              .split("'")
+              .map((p) => (p ? p.charAt(0).toUpperCase() + p.slice(1) : p))
+              .join("'"),
+          )
+          .join("-");
+      })
+      .join(" ");
+  }
+
+  function applyTitleCase(): void {
+    if (!draftId || !selected || selected.id !== draftId) return;
+    const formatted = toTitleCase(draftTitle);
+    if (formatted === draftTitle) return;
+    draftTitle = formatted;
+    if (titleTimer) {
+      clearTimeout(titleTimer);
+      titleTimer = null;
+    }
+    commitTitle(draftId, formatted);
+  }
+
   function onTitleInput(value: string): void {
     draftTitle = value;
     if (!draftId) return;
@@ -1502,13 +1541,26 @@
         <div class="edit-window">
           <label>
             Title
-            <input
-              type="text"
-              value={draftTitle}
-              placeholder="Slide title"
-              oninput={(e) => onTitleInput((e.target as HTMLInputElement).value)}
-              onblur={() => flushTitle()}
-            />
+            <div class="title-row">
+              <input
+                type="text"
+                value={draftTitle}
+                placeholder="Slide title"
+                spellcheck="true"
+                lang="en"
+                oninput={(e) => onTitleInput((e.target as HTMLInputElement).value)}
+                onblur={() => flushTitle()}
+              />
+              <button
+                class="ghost title-case-btn"
+                type="button"
+                title="Title Case — e.g. 'amazing grace' → 'Amazing Grace'"
+                onclick={() => applyTitleCase()}
+              >
+                Aa
+              </button>
+            </div>
+            <span class="field-hint">Tip: “Aa” fixes caps before going live. Body spellcheck underlines typos.</span>
           </label>
           <label>
             Body
@@ -1516,6 +1568,8 @@
               rows="8"
               value={draftBody}
               placeholder="Slide body text"
+              spellcheck="true"
+              lang="en"
               oninput={(e) => onBodyInput((e.target as HTMLTextAreaElement).value)}
               onblur={() => flushBody()}
             ></textarea>
@@ -3140,6 +3194,23 @@
     margin-top: 4px;
     display: block;
     font-style: italic;
+  }
+
+  .title-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .title-row input {
+    flex: 1;
+    min-width: 0;
+  }
+  .title-case-btn {
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 7px 10px;
+    letter-spacing: 0.02em;
   }
 
   .auto-badge {

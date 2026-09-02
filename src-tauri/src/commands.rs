@@ -1,9 +1,8 @@
 use crate::logging::{Level, LogEntry};
 use crate::project::{
     is_first_run, now_iso, Background, BroadcastView, ClientState, Library, LibrarySlide,
-    BoxGeometry, LibrarySong, Look, OutputView, Positioning, Project, Settings, Slide, StageView,
-    TextPosition, Transition,
-    write_settings,
+    BoxGeometry, LibrarySong, Look, OutputView, PlaylistTemplate, Positioning, Project, Settings,
+    Slide, StageView, TemplateItem, TextPosition, Transition, write_settings,
 };
 use crate::scripture::ScriptureMatch;
 use crate::state::AppState;
@@ -11,6 +10,7 @@ use crate::triggers::TriggerAction;
 use crate::windows::{self, DisplayInfo};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
@@ -97,6 +97,105 @@ pub fn snapshot_and_emit(app: &AppHandle) -> ClientState {
     snap
 }
 
+// ---------------------------------------------------------------------------
+// Per-slide auto-advance timer — backend-driven (dumb-renderer principle).
+// When a live slide has `auto_advance_secs = Some(n)`, the backend spawns a
+// thread that sleeps N seconds and then advances to the next playlist item via
+// the same `make_live` path the UI/triggers use. The generation counter on
+// AppState cancels any previous timer when the operator manually advances.
+// ---------------------------------------------------------------------------
+
+/// Cancel any pending auto-advance timer by bumping the generation.
+fn cancel_auto_advance(app: &AppHandle) {
+    app.state::<AppState>().bump_auto_advance();
+    log(app, Level::Info, "auto-advance: cancelled");
+}
+
+/// Schedule an auto-advance for the given live slide when `secs` is Some and >0.
+/// Bumps the generation so any previous timer is cancelled; the new timer captures
+/// this generation and checks it after sleeping.
+fn schedule_auto_advance(app: &AppHandle, live_id: &str, secs: u64) {
+    if secs == 0 {
+        cancel_auto_advance(app);
+        return;
+    }
+    let live_id_owned = live_id.to_string();
+    let gen = app.state::<AppState>().bump_auto_advance();
+    let app_clone = app.clone();
+    log(
+        app,
+        Level::Info,
+        &format!("auto-advance: scheduled {live_id_owned} -> next in {secs}s (gen {gen})"),
+    );
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(secs));
+        let state = app_clone.state::<AppState>();
+        if state.current_auto_advance_gen() != gen {
+            // Cancelled by a manual advance / clear / new timer.
+            return;
+        }
+        // Still the same live slide? Re-check under lock.
+        let still_live = { state.project.read().unwrap().live.clone() };
+        if still_live.as_deref() != Some(live_id_owned.as_str()) {
+            return;
+        }
+        // Verify the slide still has the same duration (in case it was edited to None mid-sleep).
+        let current_secs = {
+            let project = state.project.read().unwrap();
+            project
+                .find(&live_id_owned)
+                .and_then(|s| s.auto_advance_secs)
+        };
+        if current_secs != Some(secs) {
+            return;
+        }
+        // Find next playlist index and advance, or log at end.
+        let next_id: Option<String> = {
+            let project = state.project.read().unwrap();
+            project
+                .live
+                .as_deref()
+                .and_then(|id| project.next_slide(id))
+                .map(|s| s.id.clone())
+        };
+        if let Some(next) = next_id {
+            log(
+                &app_clone,
+                Level::Info,
+                &format!("auto-advance: {live_id_owned} -> {next} after {secs}s"),
+            );
+            // Reuse make_live so the same window-reveal + broadcast + next-timer logic runs.
+            let _ = make_live(&app_clone, &next);
+        } else {
+            log(
+                &app_clone,
+                Level::Info,
+                &format!("auto-advance: at end of playlist (live {live_id_owned}), staying"),
+            );
+        }
+    });
+}
+
+/// After any operation that changes what is live, (re)schedule or cancel the
+/// auto-advance timer based on the current live slide's `auto_advance_secs`.
+#[allow(dead_code)]
+fn reschedule_auto_advance(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let (live_id, secs) = {
+        let project = state.project.read().unwrap();
+        let live = project.live.clone();
+        let secs = live
+            .as_deref()
+            .and_then(|id| project.find(id))
+            .and_then(|s| s.auto_advance_secs);
+        (live, secs)
+    };
+    match (live_id, secs) {
+        (Some(id), Some(s)) if s > 0 => schedule_auto_advance(app, &id, s),
+        _ => cancel_auto_advance(app),
+    }
+}
+
 /// Apply a mutation to the single source of truth, schedule an autosave,
 /// then broadcast the resulting state to every window.
 fn mutate<R>(
@@ -120,6 +219,7 @@ fn replace_project(app: &AppHandle, project: Project) -> Result<ClientState, Str
     *state.project.write().unwrap() = project;
     state.set_notice(None);
     state.request_save();
+    cancel_auto_advance(app);
     let snap = snapshot(app);
     let _ = app.emit("state", &snap);
     Ok(snap)
@@ -237,6 +337,7 @@ pub fn add_song_to_playlist(app: AppHandle, song_id: String) -> Result<ClientSta
                 title: slide.title.clone(),
                 body: slide.body.clone(),
                 background: song.default_background.clone(),
+                auto_advance_secs: None,
             });
         }
         Ok(())
@@ -279,6 +380,19 @@ fn make_live(app: &AppHandle, slide_id: &str) -> Result<ClientState, String> {
 
     let snap = snapshot(app);
     let _ = app.emit("state", &snap);
+    // Per-slide auto-advance: backend-driven timer (dumb-renderer principle).
+    // Capture the live slide's duration after broadcast so the timer thread
+    // can advance via the same `make_live` path any manual click would use.
+    {
+        let secs = {
+            let project = state.project.read().unwrap();
+            project.find(slide_id).and_then(|s| s.auto_advance_secs)
+        };
+        match secs {
+            Some(s) if s > 0 => schedule_auto_advance(app, slide_id, s),
+            _ => cancel_auto_advance(app),
+        }
+    }
     Ok(snap)
 }
 
@@ -298,6 +412,7 @@ fn do_clear_output(app: &AppHandle) -> Result<ClientState, String> {
         project.modified_at = now_iso();
     }
     state.request_save();
+    cancel_auto_advance(app);
     log(app, Level::Info, "output: cleared (black)");
     let snap = snapshot(app);
     let _ = app.emit("state", &snap);
@@ -750,6 +865,137 @@ pub fn new_project_from_preset(
     replace_project(&app, project)
 }
 
+// ---------------------------------------------------------------------------
+// Playlist templates — save current playlist as reusable template and load
+// a template into the current project. Templates store slide references
+// (title/body/background/library refs) not duplicated bytes. Persisted in
+// templates.json with atomic writes (temp + rename + sync_all) mirroring
+// project.json / library.json.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn list_templates(app: AppHandle) -> Vec<PlaylistTemplate> {
+    let data_dir = app.state::<AppState>().app_data_dir();
+    crate::project::read_templates(&data_dir).templates
+}
+
+#[tauri::command]
+pub fn save_template(app: AppHandle, name: String) -> Result<Vec<PlaylistTemplate>, String> {
+    let trimmed = name.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("template name must not be empty".to_string());
+    }
+    if trimmed.len() > 80 {
+        return Err("template name must be 80 characters or fewer".to_string());
+    }
+    let state = app.state::<AppState>();
+    let data_dir = state.app_data_dir();
+    let mut store = crate::project::read_templates(&data_dir);
+    // Avoid duplicate names — replace existing with same name case-insensitively
+    if let Some(existing) = store.templates.iter_mut().find(|t| t.name.to_lowercase() == trimmed.to_lowercase()) {
+        existing.items = state
+            .project
+            .read()
+            .unwrap()
+            .slides
+            .iter()
+            .map(|s| TemplateItem {
+                title: s.title.clone(),
+                body: s.body.clone(),
+                background: s.background.clone(),
+                library_id: s.library_id.clone(),
+                library_slide_id: s.library_slide_id.clone(),
+                auto_advance_secs: s.auto_advance_secs,
+            })
+            .collect();
+        existing.created_at = now_iso();
+        log(&app, Level::Info, &format!("template: updated \"{trimmed}\" ({} slides)", existing.items.len()));
+    } else {
+        let items: Vec<TemplateItem> = state
+            .project
+            .read()
+            .unwrap()
+            .slides
+            .iter()
+            .map(|s| TemplateItem {
+                title: s.title.clone(),
+                body: s.body.clone(),
+                background: s.background.clone(),
+                library_id: s.library_id.clone(),
+                library_slide_id: s.library_slide_id.clone(),
+                auto_advance_secs: s.auto_advance_secs,
+            })
+            .collect();
+        let tmpl = PlaylistTemplate {
+            id: Uuid::new_v4().to_string(),
+            name: trimmed.clone(),
+            created_at: now_iso(),
+            items,
+        };
+        let count = tmpl.items.len();
+        store.templates.push(tmpl);
+        log(&app, Level::Info, &format!("template: saved \"{trimmed}\" ({count} slides)"));
+    }
+    crate::project::write_templates(&data_dir, &store).map_err(|e| e.to_string())?;
+    Ok(store.templates)
+}
+
+#[tauri::command]
+pub fn load_template(app: AppHandle, template_id: String) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    let data_dir = state.app_data_dir();
+    let store = crate::project::read_templates(&data_dir);
+    let tmpl = store
+        .templates
+        .iter()
+        .find(|t| t.id == template_id)
+        .cloned()
+        .ok_or_else(|| format!("template {template_id} not found"))?;
+    let new_slides: Vec<Slide> = tmpl
+        .items
+        .iter()
+        .map(|it| Slide {
+            id: Uuid::new_v4().to_string(),
+            library_id: it.library_id.clone(),
+            library_slide_id: it.library_slide_id.clone(),
+            title: it.title.clone(),
+            body: it.body.clone(),
+            background: it.background.clone(),
+            auto_advance_secs: it.auto_advance_secs,
+        })
+        .collect();
+    let count = new_slides.len();
+    let name = tmpl.name.clone();
+    // Loading a template clears the live slide, so cancel any auto-advance.
+    cancel_auto_advance(&app);
+    mutate(&app, |project| {
+        project.slides = new_slides;
+        project.live = None;
+        project.selected = project.slides.first().map(|s| s.id.clone());
+        project.show_text = true;
+        project.show_background = true;
+        Ok(())
+    })
+    .map(|s| {
+        log(&app, Level::Info, &format!("template: loaded \"{name}\" ({count} slides) into playlist"));
+        s
+    })
+}
+
+#[tauri::command]
+pub fn delete_template(app: AppHandle, template_id: String) -> Result<Vec<PlaylistTemplate>, String> {
+    let data_dir = app.state::<AppState>().app_data_dir();
+    let mut store = crate::project::read_templates(&data_dir);
+    let before = store.templates.len();
+    store.templates.retain(|t| t.id != template_id);
+    if store.templates.len() == before {
+        return Err(format!("template {template_id} not found"));
+    }
+    crate::project::write_templates(&data_dir, &store).map_err(|e| e.to_string())?;
+    log(&app, Level::Info, &format!("template: deleted {template_id}"));
+    Ok(store.templates)
+}
+
 #[tauri::command]
 pub fn add_slide(
     app: AppHandle,
@@ -763,6 +1009,7 @@ pub fn add_slide(
         title: title.unwrap_or_else(|| "New Slide".to_string()),
         body: body.unwrap_or_default(),
         background: Background::default(),
+        auto_advance_secs: None,
     };
     let slide_title = slide.title.clone();
     mutate(&app, |project| {
@@ -785,8 +1032,20 @@ pub fn update_slide(
     title: Option<String>,
     body: Option<String>,
     background: Option<Background>,
+    auto_advance_secs: Option<Option<u64>>,
 ) -> Result<ClientState, String> {
-    mutate(&app, |project| {
+    // Validate duration before mutating so we can give a clear error.
+    if let Some(Some(secs)) = auto_advance_secs {
+        if secs == 0 || secs > 86400 {
+            return Err("auto-advance must be between 1 and 86400 seconds".to_string());
+        }
+    }
+    let was_live = {
+        let state = app.state::<AppState>();
+        let project = state.project.read().unwrap();
+        project.live.as_deref() == Some(slide_id.as_str())
+    };
+    let snap = mutate(&app, |project| {
         let slide = project
             .slides
             .iter_mut()
@@ -804,6 +1063,12 @@ pub fn update_slide(
             }
             slide.background = background;
         }
+        if let Some(inner) = auto_advance_secs {
+            match inner {
+                Some(secs) if secs > 0 => slide.auto_advance_secs = Some(secs),
+                _ => slide.auto_advance_secs = None,
+            }
+        }
         Ok(())
     })
     .map(|s| {
@@ -813,12 +1078,27 @@ pub fn update_slide(
             &format!("playlist: updated slide \"{slide_id}\""),
         );
         s
-    })
+    })?;
+    // If the live slide's timer was edited, reschedule (backend-driven).
+    if was_live {
+        if let Some(inner) = auto_advance_secs {
+            match inner {
+                Some(secs) if secs > 0 => schedule_auto_advance(&app, &slide_id, secs),
+                _ => cancel_auto_advance(&app),
+            }
+        }
+    }
+    Ok(snap)
 }
 
 #[tauri::command]
 pub fn delete_slide(app: AppHandle, slide_id: String) -> Result<ClientState, String> {
-    mutate(&app, |project| {
+    let was_live = {
+        let state = app.state::<AppState>();
+        let project = state.project.read().unwrap();
+        project.live.as_deref() == Some(slide_id.as_str())
+    };
+    let snap = mutate(&app, |project| {
         if !project.slides.iter().any(|s| s.id == slide_id) {
             return Err(format!("slide {slide_id} not found"));
         }
@@ -831,7 +1111,11 @@ pub fn delete_slide(app: AppHandle, slide_id: String) -> Result<ClientState, Str
     .map(|s| {
         log(&app, Level::Info, &format!("playlist: deleted slide \"{slide_id}\""));
         s
-    })
+    })?;
+    if was_live {
+        cancel_auto_advance(&app);
+    }
+    Ok(snap)
 }
 
 #[tauri::command]

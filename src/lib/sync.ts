@@ -15,6 +15,7 @@ import type {
   MediaAsset,
   MidiDeviceInfo,
   MidiMessageView,
+  PlaylistTemplate,
   ScriptureMatch,
   ScriptureImportResult,
   StageNetworkInfo,
@@ -66,7 +67,7 @@ export const api = {
 
   updateSlide: (
     slideId: string,
-    patch: { title?: string; body?: string; background?: Background },
+    patch: { title?: string; body?: string; background?: Background; autoAdvanceSecs?: number | null },
   ) => invoke<ClientState>("update_slide", { slideId, ...patch }),
 
   deleteSlide: (slideId: string) =>
@@ -205,4 +206,15 @@ export const api = {
 
   setStageNetworkPin: (pin: string) =>
     invoke<ClientState>("set_stage_network_pin", { pin }),
+
+  listTemplates: () => invoke<PlaylistTemplate[]>("list_templates"),
+
+  saveTemplate: (name: string) =>
+    invoke<PlaylistTemplate[]>("save_template", { name }),
+
+  loadTemplate: (templateId: string) =>
+    invoke<ClientState>("load_template", { templateId }),
+
+  deleteTemplate: (templateId: string) =>
+    invoke<PlaylistTemplate[]>("delete_template", { templateId }),
 };

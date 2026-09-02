@@ -39,6 +39,7 @@ export interface Slide {
   title: string;
   body: string;
   background: Background;
+  autoAdvanceSecs: number | null;
 }
 
 export type TextPosition = "top" | "center" | "bottom";
@@ -206,6 +207,27 @@ export interface ServicePreset {
 export interface Library {
   schemaVersion: number;
   songs: LibrarySong[];
+}
+
+export interface TemplateItem {
+  title: string;
+  body: string;
+  background: Background;
+  libraryId: string | null;
+  librarySlideId: string | null;
+  autoAdvanceSecs: number | null;
+}
+
+export interface PlaylistTemplate {
+  id: string;
+  name: string;
+  createdAt: string;
+  items: TemplateItem[];
+}
+
+export interface TemplateStore {
+  schemaVersion: number;
+  templates: PlaylistTemplate[];
 }
 
 export interface AutosaveEvent {

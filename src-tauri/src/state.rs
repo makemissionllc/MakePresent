@@ -6,6 +6,7 @@ use crate::osc::OscListener;
 use crate::project::{Library, Notice, Project, Settings};
 use crate::scripture::ScriptureIndex;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -31,6 +32,10 @@ pub struct AppState {
     /// Local-network Stage Display server (HTTP+WebSocket; inactive unless
     /// Stage Network is enabled).
     pub network: NetworkServer,
+    /// Generation counter for per-slide auto-advance timers. Each time the live
+    /// slide changes (or is cleared) the generation is bumped so any previously
+    /// spawned timer thread can detect it has been cancelled.
+    pub auto_advance_gen: AtomicU64,
 }
 
 impl Default for AppState {
@@ -48,6 +53,7 @@ impl Default for AppState {
             midi: MidiListener::default(),
             osc: OscListener::default(),
             network: NetworkServer::default(),
+            auto_advance_gen: AtomicU64::new(0),
         }
     }
 }
@@ -74,5 +80,15 @@ impl AppState {
 
     pub fn app_data_dir(&self) -> PathBuf {
         self.data_dir.read().unwrap().clone()
+    }
+
+    /// Bump the auto-advance generation, cancelling any previously scheduled
+    /// timer without blocking. Returns the new generation id.
+    pub fn bump_auto_advance(&self) -> u64 {
+        self.auto_advance_gen.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn current_auto_advance_gen(&self) -> u64 {
+        self.auto_advance_gen.load(Ordering::SeqCst)
     }
 }

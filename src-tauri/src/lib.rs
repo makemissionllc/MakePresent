@@ -642,6 +642,10 @@ pub fn run() {
             commands::set_stage_network_enabled,
             commands::set_stage_network_port,
             commands::set_stage_network_pin,
+            commands::list_templates,
+            commands::save_template,
+            commands::load_template,
+            commands::delete_template,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

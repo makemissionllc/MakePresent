@@ -71,6 +71,12 @@ pub struct Slide {
     pub title: String,
     pub body: String,
     pub background: Background,
+    /// Optional per-slide auto-advance timer: when Some(n) and this slide is
+    /// live, the backend automatically advances to the next playlist item after
+    /// n seconds. None / 0 means no auto-advance. Stored per slide so templates
+    /// and persistence cover it.
+    #[serde(default)]
+    pub auto_advance_secs: Option<u64>,
 }
 
 /// Where the slide text is placed within its frame.
@@ -271,6 +277,7 @@ impl Project {
                 title: "Welcome to MakePresent".to_string(),
                 body: "This is the Phase 1 test slide.".to_string(),
                 background: Background::default(),
+                auto_advance_secs: None,
             }],
             looks: vec![Look::main_default(), Look::stage_default()],
             live: None,
@@ -305,6 +312,7 @@ impl Project {
                     title: it.title.clone(),
                     body: it.content.clone().unwrap_or_default(),
                     background: Background::default(),
+                    auto_advance_secs: None,
                 })
                 .collect();
         }
@@ -572,6 +580,68 @@ impl Default for Library {
             songs: Vec::new(),
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Playlist templates — reusable playlist structures (e.g. "Pre-Service Loop")
+// Persisted in their own templates.json with atomic writes, mirroring
+// project.json / library.json. Each TemplateItem stores slide references
+// (title/body/background/library refs) not duplicated media bytes.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateItem {
+    pub title: String,
+    pub body: String,
+    pub background: Background,
+    #[serde(default)]
+    pub library_id: Option<String>,
+    #[serde(default)]
+    pub library_slide_id: Option<String>,
+    #[serde(default)]
+    pub auto_advance_secs: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistTemplate {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+    pub items: Vec<TemplateItem>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TemplateStore {
+    pub schema_version: u32,
+    pub templates: Vec<PlaylistTemplate>,
+}
+
+impl Default for TemplateStore {
+    fn default() -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            templates: Vec::new(),
+        }
+    }
+}
+
+fn templates_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("templates.json")
+}
+
+pub fn read_templates(data_dir: &Path) -> TemplateStore {
+    let raw = std::fs::read_to_string(templates_path(data_dir)).ok();
+    match raw.and_then(|r| serde_json::from_str::<TemplateStore>(&r).ok()) {
+        Some(store) => store,
+        None => TemplateStore::default(),
+    }
+}
+
+pub fn write_templates(data_dir: &Path, store: &TemplateStore) -> io::Result<()> {
+    atomic_write_json(data_dir, "templates.json", store)
 }
 
 // ---------------------------------------------------------------------------

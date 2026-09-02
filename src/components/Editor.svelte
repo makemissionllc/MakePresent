@@ -3,7 +3,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { api, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, ScriptureMatch, Slide } from "../lib/types";
+  import type { BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, PlaylistTemplate, ScriptureMatch, Slide } from "../lib/types";
   import { isMedia } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
@@ -84,13 +84,21 @@
   // Project Hub (Startup launcher)
   let showHub = $state(false);
 
+  // Playlist templates (save/load reusable structures like "Worship", "Sermon")
+  let templates = $state<PlaylistTemplate[]>([]);
+  let showSaveTemplateModal = $state(false);
+  let showTemplatePicker = $state(false);
+  let templatePickerLoading = $state(false);
+
   // Draft copies for responsive editing — typing updates these immediately
   // while the backend save is debounced so the input never resets mid-keystroke.
   let draftTitle = $state("");
   let draftBody = $state("");
+  let draftAutoAdvance = $state("");
   let draftId: string | null = $state(null);
   let titleTimer: ReturnType<typeof setTimeout> | null = null;
   let bodyTimer: ReturnType<typeof setTimeout> | null = null;
+  let autoAdvanceTimer: ReturnType<typeof setTimeout> | null = null;
 
   const project = $derived(appState?.project ?? null);
   const notice = $derived(
@@ -140,13 +148,14 @@
   });
   const isStageOnAir = $derived(!!appState?.stage.visible);
 
-  // Keep draftTitle/draftBody in sync when selection changes — only when the
+  // Keep draftTitle/draftBody/draftAutoAdvance in sync when selection changes — only when the
   // underlying slide identity changes, so mid-edit keystrokes are never clobbered.
   $effect(() => {
     const s = selected;
     if (!s) {
       draftTitle = "";
       draftBody = "";
+      draftAutoAdvance = "";
       draftId = null;
       return;
     }
@@ -154,8 +163,10 @@
       draftId = s.id;
       draftTitle = s.title;
       draftBody = s.body;
+      draftAutoAdvance = s.autoAdvanceSecs != null ? String(s.autoAdvanceSecs) : "";
       if (titleTimer) clearTimeout(titleTimer);
       if (bodyTimer) clearTimeout(bodyTimer);
+      if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
     }
   });
 
@@ -604,6 +615,27 @@
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
+  function commitAutoAdvance(id: string, value: string): void {
+    if (draftId !== id || !selected || selected.id !== id) return;
+    const trimmed = value.trim();
+    if (trimmed === "") {
+      void api
+        .updateSlide(id, { autoAdvanceSecs: null })
+        .then((s) => (appState = s))
+        .catch((e: unknown) => (errorMsg = String(e)));
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n < 1 || n > 86400) {
+      errorMsg = "Auto-advance must be a number between 1 and 86400 seconds (blank = off)";
+      return;
+    }
+    void api
+      .updateSlide(id, { autoAdvanceSecs: Math.floor(n) })
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (errorMsg = String(e)));
+  }
+
   function onTitleInput(value: string): void {
     draftTitle = value;
     if (!draftId) return;
@@ -630,6 +662,20 @@
     if (bodyTimer) clearTimeout(bodyTimer);
     bodyTimer = null;
     if (draftId) commitBody(draftId, draftBody);
+  }
+
+  function onAutoAdvanceInput(value: string): void {
+    draftAutoAdvance = value;
+    if (!draftId) return;
+    const id = draftId;
+    if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
+    autoAdvanceTimer = setTimeout(() => commitAutoAdvance(id, value), 350);
+  }
+
+  function flushAutoAdvance(): void {
+    if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
+    autoAdvanceTimer = null;
+    if (draftId) commitAutoAdvance(draftId, draftAutoAdvance);
   }
 
   function setColor(slide: Slide, color: string): void {
@@ -831,6 +877,57 @@
     openHub();
   }
 
+  // Playlist templates
+  function openSaveTemplate(): void {
+    showSaveTemplateModal = true;
+  }
+
+  async function handleSaveTemplateConfirm(name: string): Promise<void> {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    try {
+      errorMsg = null;
+      templates = await api.saveTemplate(trimmed);
+      showSaveTemplateModal = false;
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
+  async function openTemplatePicker(): Promise<void> {
+    showTemplatePicker = true;
+    templatePickerLoading = true;
+    try {
+      errorMsg = null;
+      templates = await api.listTemplates();
+    } catch (e) {
+      errorMsg = String(e);
+    } finally {
+      templatePickerLoading = false;
+    }
+  }
+
+  async function handleLoadTemplate(templateId: string): Promise<void> {
+    try {
+      errorMsg = null;
+      appState = await api.loadTemplate(templateId);
+      const slides = appState.project.slides;
+      selectedId = slides[0]?.id ?? null;
+      showTemplatePicker = false;
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
+  async function handleDeleteTemplate(templateId: string): Promise<void> {
+    try {
+      errorMsg = null;
+      templates = await api.deleteTemplate(templateId);
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
   onMount(() => {
     let unSub: () => void = () => {};
     let unAuto: () => void = () => {};
@@ -984,6 +1081,7 @@
                   style:background-position="center"
                 ></span>
                 <span class="slide-label">{slide.title || "Untitled"}</span>
+                {#if slide.autoAdvanceSecs != null}<span class="auto-badge" title="Auto-advance after {slide.autoAdvanceSecs}s">↻ {slide.autoAdvanceSecs}s</span>{/if}
                 {#if project?.live === slide.id}<span class="live-dot"></span>{/if}
               </button>
               <button
@@ -1003,6 +1101,10 @@
           {/if}
         </ul>
         <button class="add" onclick={() => addSlide()}>+ Add slide</button>
+        <div class="template-actions">
+          <button class="ghost template-btn" onclick={() => openSaveTemplate()} title="Save current playlist as a reusable template">Save as template</button>
+          <button class="ghost template-btn" onclick={() => void openTemplatePicker()} title="Load a saved template into the playlist">Load template</button>
+        </div>
       </div>
 
       <div class="sidebar-section scripture-section" class:has-content={scriptureOpen || scriptureQuery.trim().length > 0} class:active={scriptureOpen}>
@@ -1227,6 +1329,20 @@
               </button>
             </div>
           </div>
+          <label>
+            Auto-advance
+            <input
+              type="number"
+              min="1"
+              max="86400"
+              step="1"
+              placeholder="e.g. 5 — blank = manual"
+              value={draftAutoAdvance}
+              oninput={(e) => onAutoAdvanceInput((e.target as HTMLInputElement).value)}
+              onblur={() => flushAutoAdvance()}
+            />
+            <span class="field-hint">When live, advance to next slide after N seconds. Blank = manual.</span>
+          </label>
         </div>
       {:else}
         <div class="empty">No slide selected. Add a slide to get started.</div>
@@ -1514,6 +1630,58 @@
   onClose={() => (showHub = false)}
   onCreate={handleHubCreate}
 />
+
+<Modal
+  open={showSaveTemplateModal}
+  title="Save as template"
+  label="Template name — e.g. Pre-Service Loop, Worship, Sermon"
+  placeholder="e.g. Worship"
+  initialValue=""
+  confirmLabel="Save"
+  cancelLabel="Cancel"
+  onConfirm={handleSaveTemplateConfirm}
+  onCancel={() => (showSaveTemplateModal = false)}
+/>
+
+{#if showTemplatePicker}
+  <div
+    class="modal-backdrop"
+    onclick={() => (showTemplatePicker = false)}
+    onkeydown={(e) => e.key === "Escape" && (showTemplatePicker = false)}
+    role="presentation"
+  ></div>
+  <div class="modal-card template-picker" role="dialog" aria-modal="true" aria-label="Load template">
+    <header class="modal-header">
+      <h2>Load template</h2>
+      <button class="ghost modal-close" onclick={() => (showTemplatePicker = false)} aria-label="Close">×</button>
+    </header>
+    <p class="template-hint">Pick a saved playlist structure to populate this project. Media stays referenced by hash; library slides keep their library links.</p>
+    {#if templatePickerLoading}
+      <p class="browse-placeholder"><span class="media-spinner"></span> Loading…</p>
+    {:else if templates.length === 0}
+      <p class="browse-placeholder">No templates yet — use “Save as template” to create one (e.g. Pre-Service Loop, Worship, Sermon).</p>
+    {:else}
+      <ul class="template-list">
+        {#each templates as tmpl (tmpl.id)}
+          <li class="template-row">
+            <div class="template-meta">
+              <span class="template-name">{tmpl.name}</span>
+              <span class="template-count">{tmpl.items.length} {tmpl.items.length === 1 ? "slide" : "slides"}</span>
+              <span class="template-at">{tmpl.createdAt ? new Date(tmpl.createdAt).toLocaleDateString() : ""}</span>
+            </div>
+            <div class="template-actions-row">
+              <button class="ghost primary" onclick={() => void handleLoadTemplate(tmpl.id)}>Load</button>
+              <button class="ghost" onclick={() => void handleDeleteTemplate(tmpl.id)} title="Delete template">Delete</button>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    <div class="modal-actions">
+      <button class="ghost" onclick={() => (showTemplatePicker = false)}>Close</button>
+    </div>
+  </div>
+{/if}
 
 <style>
   .shell {
@@ -2579,6 +2747,135 @@
   .browse-verse[draggable="true"]:active,
   .library-verse[draggable="true"]:active {
     cursor: grabbing;
+  }
+
+  .template-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .template-btn {
+    flex: 1;
+    font-size: 11px;
+    padding: 6px 8px;
+  }
+  .template-picker {
+    min-width: min(560px, 92vw);
+    max-width: 92vw;
+    max-height: 80vh;
+    overflow: auto;
+  }
+  .template-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin: 8px 0 12px;
+    line-height: 1.4;
+  }
+  .template-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .template-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-2);
+  }
+  .template-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .template-name {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .template-count {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .template-at {
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+  .template-actions-row {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 40;
+  }
+  .modal-card.template-picker {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 41;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .modal-header h2 {
+    font-family: var(--font-display);
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 0;
+  }
+  .modal-close {
+    font-size: 18px;
+    line-height: 1;
+    padding: 2px 8px;
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .field-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    display: block;
+    font-style: italic;
+  }
+
+  .auto-badge {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    background: var(--panel-2);
   }
 
   @keyframes spin {

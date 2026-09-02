@@ -294,14 +294,14 @@ Startup creates **only the Editor window**.
 src-tauri/src/
   lib.rs        App lifecycle: setup (recovery, logger, autosave worker, tray/standby), finalize, commands
   state.rs      AppState — the single source of truth
-  project.rs    Domain model (Project/Slide/Settings/Library/Look+geometry), persistence, autosave worker
+  project.rs    Domain model (Project/Slide/Settings/Library/Template/Look+geometry), persistence, autosave worker (templates.json atomic)
   windows.rs    Window lifecycle: Output + Stage + Editor respawn, display picking
   media.rs      Media import/cache: copy+hash, ffmpeg thumbnails, startup verification
   broadcast.rs  NDI sender: runtime-loaded SDK (libloading), dedicated send thread
   midi.rs       MIDI input: midir listener, device enumeration, message parsing
   osc.rs        OSC listener: dedicated UDP thread, rosc decode, bundle flattening
   triggers.rs   Trigger/action model, routing, action→command dispatch
-  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import, NDI, MIDI/OSC/triggers, scripture import
+  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import, NDI, MIDI/OSC/triggers, scripture import, templates (save/load)
   logging.rs    Rolling, immediately-flushed event log (logs/app.log)
   scripture.rs  KJV search index + OpenLP/Zefania XML import + bible-api.com REST fallback
 src/
@@ -336,7 +336,8 @@ the build-time SDK requirement of the other crates.io binding crates.
 Data lives under the app data dir (`~/.local/share/com.makesoftware.makepresent`):
 `project.json` (autosaved), `versions/` (snapshots), `session.json`
 (recovery bookkeeping), `settings.json` (per-machine), `library.json`
-(songs), `logs/app.log` (event log), `media/` (managed content-hashed media
+(songs), `templates.json` (reusable playlist templates — slide refs, atomic writes),
+`logs/app.log` (event log), `media/` (managed content-hashed media
 copies), `thumbnails/` (hash-keyed thumbnails).
 
 ## Changed (2026-09-03) — Display disconnect/reconnect self-healing
@@ -465,3 +466,23 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - Live Editor preview thumbnails of Output/Stage (requires window/frame capture, not just state — meaningfully harder than a UI change)
 - Live video input via `getUserMedia` (UVC capture cards) — self-contained, moderate effort
 - NDI framepull/receiving (harder than existing NDI send; separate scope from Tier 2's remote control server)
+## Changed (2026-09-02) - Playlist templates (save/load reusable structures)
+
+*Implements TIER 1 backlog item `Playlist templates`. Adds the ability to save the current playlist structure as a reusable template (e.g. Pre-Service Loop, Worship, Sermon) and load a template to quickly populate a new project's playlist. Templates store slide references (title/body/background/library refs) not full duplicated bytes, persisted in their own `templates.json` with atomic writes.*
+
+- **Model + persistence** `src-tauri/src/project.rs:561` `TemplateItem { title, body, background, libraryId, librarySlideId }` + `PlaylistTemplate { id, name, createdAt, items }` + `TemplateStore { schemaVersion, templates }` (`SCHEMA_VERSION 1`, `serde renameAll camelCase`, `Default`). `read_templates`/`write_templates`/`templates_path` `project.rs:600` use `atomic_write_json` `project.rs:723` (tmp + sync_all + rename). Missing file -> empty store. Data lives `templates.json` alongside `project.json`/`library.json`. Same atomic-write pattern as project/library (prompt requirement).
+- **Commands** `src-tauri/src/commands.rs:752` `list_templates` -> `Vec<PlaylistTemplate>`, `save_template(name)` (trim 1..80, upsert by case-insensitive name; items from `state.project.read().slides` mapping to `TemplateItem` preserving `Background` hash refs and `libraryId` links), `load_template(templateId)` (clone, map each `TemplateItem` to fresh `Slide { id: new Uuid, ... }`, `mutate` replaces `project.slides`, clears `live`, sets `selected` to first, resets `show_text/show_background`, `request_save` + `snapshot_and_emit`), `delete_template(templateId)`. All 4 registered `src-tauri/src/lib.rs:635` `generate_handler![..., list_templates, save_template, load_template, delete_template]`, exposed `src/lib/sync.ts:206` + `src/lib/types.ts:190` `TemplateItem/PlaylistTemplate/TemplateStore`. IPC count 46->50 (README).
+- **Editor UI** `src/components/Editor.svelte:1` import + `Editor.svelte:87` state `templates`/`showSaveTemplateModal`/`showTemplatePicker`/`templatePickerLoading` + handlers `openSaveTemplate`/`handleSaveTemplateConfirm`/`openTemplatePicker` (`api.listTemplates`)/`handleLoadTemplate` (`api.loadTemplate` -> `appState`)/`handleDeleteTemplate`. Playlist panel `Editor.svelte:1006` `div.template-actions` two ghost buttons `Save as template` + `Load template` below Add slide. Save uses reusable `Modal.svelte`; picker is custom modal `Editor.svelte:1575` backdrop + card (560px, 80vh), hint, loading/empty/list rows with name/count/date + Load/Delete, Close. Styles `Editor.svelte:2680`.
+- **Backlog:** Moves `Playlist templates` from TIER 1 Feature Backlog (was planned) to shipped; remaining TIER 1 items keep priority.
+- **Verify:** `npm run check` 0 errors 0 warnings, `cargo check` 2 `dead_code` (`COPY_SUFFIX`, `ensure_stage`). Manual: 3-slide playlist -> Save as template Worship -> `templates.json` appears with 3 TemplateItems; New project blank -> Load template Worship -> 3 slides appear with fresh ids; Save again Worship overwrites; Delete -> removed; restart -> templates persist; media hash refs intact, library links preserved.
+
+## Changed (2026-09-02) - Per-slide auto-advance timer (backend-driven)
+
+*Implements TIER 1 backlog item `Slide auto-advance (per-slide countdown timer)`. Optional per-slide timer: when set (e.g. via a small duration field on a slide), the slide automatically advances to the next playlist item after N seconds while live, without requiring a manual click. Implemented in the Rust backend (single source of truth � not a frontend setTimeout), so Output/Stage remain dumb renderers; the backend drives the advance and broadcasts the resulting state change like any other slide change. Cancellable if the operator manually advances before the timer fires.*
+
+- **Model** `src-tauri/src/project.rs:62` `Slide { auto_advance_secs: Option<u64> #[serde(default)] }` (`None` = manual). `Project::new` / `from_preset` seed `None`; legacy `project.json` loads via `default`. `TemplateItem` `project.rs:584` also stores `auto_advance_secs` so templates preserve timers. `src/lib/types.ts:35` `Slide { autoAdvanceSecs: number | null }` mirrored.
+- **Backend timer � generation-cancellation, dumb-renderer** `src-tauri/src/state.rs:33` `AppState { auto_advance_gen: AtomicU64 }` (`bump_auto_advance()` / `current_auto_advance_gen()`). Helpers `src-tauri/src/commands.rs:105` `cancel_auto_advance` (bump gen) and `schedule_auto_advance(live_id, secs)` (bump gen, capture `gen`, `std::thread::spawn` `sleep(secs)` then check `gen` + `still live == live_id` + `current_secs == secs` before `make_live(next)`). Logging `auto-advance: scheduled ...` / `auto-advance: X -> Y after Ns` / `at end, staying`.
+- **Wiring** `commands.rs:352` `make_live` after `snapshot_and_emit` reads `slide.auto_advance_secs` and schedules/cancels; `do_clear_output` `commands.rs:388` bumps gen; `replace_project` `commands.rs:119` bumps gen; `update_slide` `commands.rs:1026` extended `auto_advance_secs: Option<Option<u64>>` (`None` = not touching, `Some(None)` = clear, `Some(Some(n))` = set; validated `1..86400`) and when `was_live` reschedules; `delete_slide` `commands.rs:1092` cancels if `was_live`; `add_slide` / `add_song_to_playlist` set `None`; `load_template`/`save_template` preserve `auto_advance_secs`.
+- **Editor UI** `src/components/Editor.svelte:94` `draftAutoAdvance` / `autoAdvanceTimer` / `\` sync `selected.autoAdvanceSecs`; `commitAutoAdvance` (`\"\" -> null` else validate `1..86400` -> `api.updateSlide({ autoAdvanceSecs })`), `onAutoAdvanceInput` (350ms debounce), `flushAutoAdvance`. Edit form `Editor.svelte:1303` field `Auto-advance` `<input type=\"number\" min=1 max=86400>` + hint. Playlist `Editor.svelte:1083` `auto-badge` `? Ns`. `src/lib/sync.ts:68` `updateSlide` patch extended.
+- **Backlog:** Moves `Slide auto-advance` from TIER 1 Feature Backlog (was planned) to shipped; remaining TIER 1 items (external drag-drop -> media, global quick search, text tools, local file parsing) keep priority.
+- **Verify:** `npm run check` 0 errors 0 warnings, `cargo check` 3 warnings (`COPY_SUFFIX`, `ensure_stage`, `reschedule_auto_advance` allow). Manual: slide 1 `auto-advance 3` live -> after 3s auto advances to slide 2 (same as click); manual click before 3s cancels; editing live slide blank cancels; last slide with timer stays at end; template save/load preserves value.

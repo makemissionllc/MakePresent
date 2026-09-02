@@ -80,7 +80,7 @@ impl MidiListener {
         let state = app.state::<AppState>();
         // Create the MidiInput on the connecting thread. On Linux this needs
         // the ALSA client setup, on Windows the WinMM device init.
-        let mut midi_in = MidiInput::new("MakePresent")
+        let mut midi_in = MidiInput::new("MakrStudio")
             .map_err(|e| format!("could not initialise MIDI subsystem: {e}"))?;
         // We want to see real messages, but there is no need for our trigger
         // matching to react to raw clock/active-sense noise. Keeping them out
@@ -173,7 +173,7 @@ fn on_midi_message(timestamp: u64, message: &[u8], app: &mut AppHandle) {
 /// Enumerate every available MIDI input device. The set differs by OS, but
 /// midir hides that behind one `ports()` call.
 pub fn list_devices() -> Result<Vec<MidiDeviceInfo>, String> {
-    let midi_in = MidiInput::new("MakePresent")
+    let midi_in = MidiInput::new("MakrStudio")
         .map_err(|e| format!("could not initialise MIDI subsystem: {e}"))?;
     let ports = midi_in.ports();
     let mut out = Vec::with_capacity(ports.len());

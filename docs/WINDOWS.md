@@ -1,6 +1,6 @@
-# MakePresent — Native Windows Build (`windows` branch)
+# MakrStudio (formerly MakePresent) — Native Windows Build (`windows` branch)
 
-This branch (`windows`) is the native Windows distribution of MakePresent. It builds a signed-ready NSIS installer and MSI via Tauri 2 + WebView2.
+This branch (`windows`) is the native Windows distribution of MakrStudio. It builds a signed-ready NSIS installer and MSI via Tauri 2 + WebView2.
 
 ## What changed vs `main`
 
@@ -42,7 +42,7 @@ Artifacts land in `src-tauri/target/release/bundle/nsis/*.exe` and `.../msi/*.ms
 Push to `windows` triggers `.github/workflows/build.yml:windows` on `windows-2022`:
 1. `npm ci` → `npm run build` → `npm run check`
 2. `npm run tauri build` (full bundle)
-3. Upload artifacts `MakePresent-windows-installers`
+3. Upload artifacts `MakrStudio-windows-installers`
 
 Download from Actions → Artifacts.
 

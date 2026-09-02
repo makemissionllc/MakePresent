@@ -953,7 +953,7 @@ pub async fn fetch_api_bible(
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .user_agent("MakePresent/0.1 (https://github.com/dwellpraise/makepresent)")
+        .user_agent("MakrStudio/0.1 (https://github.com/dwellpraise/makepresent)")
         .build()
         .map_err(|e| format!("bible-api client: {e}"))?;
     let resp = client

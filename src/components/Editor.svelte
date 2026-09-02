@@ -1522,7 +1522,7 @@
 {#if appState === null}
   <div class="loading-shell">
     <div class="spinner" aria-hidden="true"></div>
-    <p>Starting MakePresent…</p>
+    <p>Starting MakrStudio…</p>
     {#if errorMsg}
       <p class="loading-error">{errorMsg}</p>
     {/if}
@@ -1530,7 +1530,7 @@
 {:else}
 <div class="shell">
   <header class="topbar">
-    <h1>MakePresent</h1>
+    <h1>MakrStudio</h1>
     <span class="project-name">{project?.name ?? "No project"}</span>
     <span class="live-indicator" class:live={!!project?.live}>
       {#if project?.live}LIVE{:else}OFFLINE{/if}
@@ -1569,7 +1569,7 @@
       {#if welcome}
         <div class="welcome">
           <div>
-            <strong>Welcome to MakePresent</strong>
+            <strong>Welcome to MakrStudio</strong>
             <p>Add your first slide to get started — it will appear live on the output when you're ready.</p>
           </div>
           <button

@@ -1,8 +1,8 @@
-# MakePresent
+# MakrStudio (formerly MakePresent)
 
 **Live presentation software for churches — by DwellPraise Ministries / MakeSoftware.**
 
-MakePresent is a free, self-hosted, church presentation tool built around a
+MakrStudio is a free, self-hosted, church presentation tool built around a
 simple, volunteer-friendly workflow. It is **not a ProPresenter clone** — it is
 designed from the ground up to fit a first-time volunteer's flow with one
 obvious path from "open the app" to "slide is live."
@@ -14,7 +14,7 @@ fees, no vendor-controlled roadmaps, and no service data leaving the building.
 
 ## Table of Contents
 
-- [Why MakePresent](#why-makepresent)
+- [Why MakrStudio](#why-makrstudio)
 - [Design Principles](#design-principles)
 - [What It Does](#what-it-does)
 - [Architecture](#architecture)
@@ -34,7 +34,7 @@ fees, no vendor-controlled roadmaps, and no service data leaving the building.
 
 ---
 
-## Why MakePresent
+## Why MakrStudio
 
 DwellPraise Ministries needed its own presentation software that:
 
@@ -76,7 +76,7 @@ screen state must answer *"what am I looking at and what do I do next?"*
 
 ## What It Does
 
-MakePresent renders song/scripture slides to external screens in a classic
+MakrStudio renders song/scripture slides to external screens in a classic
 live-presentation workflow:
 
 - Build a **playlist** of slides (typed manually or pulled from a library).
@@ -92,7 +92,7 @@ live-presentation workflow:
 
 ## Architecture
 
-MakePresent is a **Tauri 2** app: a **Rust** backend owns all state and
+MakrStudio is a **Tauri 2** app: a **Rust** backend owns all state and
 persistence, and a **Svelte 5** frontend renders it. Vite builds **three
 separate HTML/JS bundles** (editor, output, stage), each loaded by its own
 native window.
@@ -230,7 +230,7 @@ and shows a recovery notice when the prior exit was unclean.
   diagnostics.
 
 ### NDI broadcast
-- Publishes the live slide as an **NDI source** (`MakePresent - Sunday Output`)
+- Publishes the live slide as an **NDI source** (`MakrStudio - Sunday Output`)
   on the local network so a video switcher can cut to it.
 - Runs on its **own thread** — never blocks the Output render loop — with a
   bounded, non-blocking frame channel and live-source keep-alive.
@@ -607,7 +607,7 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 
 ## Documentation
 
-- **`docs/PROJECT.md`** — the living project spec: what MakePresent is, design
+- **`docs/PROJECT.md`** — the living project spec: what MakrStudio is, design
   intent, current status (Phases 1–7 shipped, including NDI sender, MIDI/OSC
   triggers, XML/API scripture import, visual template editor, and persistent
   tray/standby), anticipated failure modes, onboarding flow, and the code

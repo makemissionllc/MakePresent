@@ -142,7 +142,7 @@ fn setup_tray(app: &tauri::AppHandle) {
             return;
         }
     };
-    let quit = match MenuItem::with_id(app, "quit", "Quit MakePresent", true, None::<&str>) {
+    let quit = match MenuItem::with_id(app, "quit", "Quit MakrStudio", true, None::<&str>) {
         Ok(i) => i,
         Err(e) => {
             state

@@ -36,9 +36,9 @@ use std::time::{Duration, Instant};
 
 /// Behavioural constant — the NDI *source name* receivers see on the network.
 /// Source names may be anything; the "NDI" mark itself is only restricted in
-/// *product names* (which require permission), so the app is "MakePresent"
-/// while the source is e.g. "MakePresent - Sunday Output".
-pub const NDI_SOURCE_NAME: &str = "MakePresent - Sunday Output";
+/// *product names* (which require permission), so the app is "MakrStudio"
+/// while the source is e.g. "MakrStudio - Sunday Output".
+pub const NDI_SOURCE_NAME: &str = "MakrStudio - Sunday Output";
 
 /// Nominal video geometry/frame-rate for the feed: 1920x1080 @ ~29.97fps
 /// progressive. The webview capture scales to/below this as needed.
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn source_name_is_documented() {
-        assert_eq!(NDI_SOURCE_NAME, "MakePresent - Sunday Output");
+        assert_eq!(NDI_SOURCE_NAME, "MakrStudio - Sunday Output");
     }
 
     #[test]

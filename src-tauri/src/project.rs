@@ -276,7 +276,7 @@ impl Project {
                 id: Uuid::new_v4().to_string(),
                 library_id: None,
                 library_slide_id: None,
-                title: "Welcome to MakePresent".to_string(),
+                title: "Welcome to MakrStudio".to_string(),
                 body: "This is the Phase 1 test slide.".to_string(),
                 background: Background::default(),
                 auto_advance_secs: None,

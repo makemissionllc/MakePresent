@@ -459,7 +459,7 @@ const STAGE_PAGE_HTML: &str = r###"<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>MakePresent Stage</title>
+<title>MakrStudio Stage</title>
 <style>
   :root { --bg:#0b0b0e; --panel:#101014; --line:#26262e; --text:#f4f4f7;
           --dim:#555a68; --accent:#4aa7ff; }
@@ -519,8 +519,8 @@ const STAGE_PAGE_HTML: &str = r###"<!doctype html>
 <div id="app">
   <div id="gate">
     <div class="card">
-      <h1>MakePresent Stage</h1>
-      <p class="sub">Enter the PIN shown in MakePresent → Settings → Network on the computer running the presentation.</p>
+      <h1>MakrStudio Stage</h1>
+      <p class="sub">Enter the PIN shown in MakrStudio → Settings → Network on the computer running the presentation.</p>
       <input id="pin" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="••••" maxlength="12" enterkeyhint="go">
       <p id="err" role="alert"></p>
       <button id="connect">Connect</button>

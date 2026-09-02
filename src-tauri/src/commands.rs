@@ -1971,11 +1971,11 @@ pub async fn import_settings(app: AppHandle, path: String) -> Result<ImportRepor
             .map_err(|e| format!("could not read settings file: {e}"))?
     };
     let file_data: SettingsSnapshot = serde_json::from_str(&raw)
-        .map_err(|e| format!("not a valid MakePresent settings file: {e}"))?;
+        .map_err(|e| format!("not a valid MakrStudio settings file: {e}"))?;
 
     if file_data.app != "makepresent" {
         return Err(format!(
-            "not a MakePresent settings file (app is \"{}\")",
+            "not a MakrStudio settings file (app is \"{}\")",
             file_data.app
         ));
     }

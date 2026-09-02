@@ -1,11 +1,11 @@
-# MakePresent — Living Project Doc
+# MakrStudio (formerly MakePresent) — Living Project Doc
 
-This document is the source of truth for **what MakePresent is, how we build
+This document is the source of truth for **what MakrStudio is, how we build
 it, and where we are**. Update it as the project evolves.
 
-## What MakePresent Is
+## What MakrStudio Is
 
-MakePresent is **DwellPraise Ministries' own church presentation software**.
+MakrStudio is **DwellPraise Ministries' own church presentation software**.
 It is **not a ProPresenter clone** — it is built to fit our specific service
 flow, it is free forever, and it is **ours to control**. That last point
 matters: no license fees, no feature roadmaps dictated by a vendor, no data
@@ -133,7 +133,7 @@ Phase 4 — Media (image/video) slide backgrounds
 Phase 5 — NDI broadcast output (sending side)
 - **NDI sending infrastructure** (`broadcast.rs`): publishes the live slide
   as an NDI source on the LAN so a video switcher can cut to it. It registers
-  a sender (`"MakePresent - Sunday Output"`), runs on its **own dedicated
+  a sender (`"MakrStudio - Sunday Output"`), runs on its **own dedicated
   thread** independent of the Output render loop, keeps the source alive by
   re-sending the last frame on a cadence, and pushes BGRA+alpha frames through
   a bounded, non-blocking channel (no render-loop stalls, no unbounded memory).
@@ -270,7 +270,7 @@ Startup creates **only the Editor window**.
 1. The Editor shows a brief loading animation while the backend runs the
    recovery check and sends the initial state.
 2. On the **very first launch** the playlist area shows an inline welcome:
-   "Welcome to MakePresent — add your first slide to get started". It
+   "Welcome to MakrStudio — add your first slide to get started". It
    dismisses permanently once the first slide is added or a project is
    created.
 3. The Output panel reads **"Not shown yet"** with a clear **Show Output**
@@ -319,7 +319,7 @@ src/
 
 ## NDI licensing & installation
 
-NDI® is a registered trademark of Vizrt. MakePresent's broadcast build loads
+NDI® is a registered trademark of Vizrt. MakrStudio's broadcast build loads
 the **free standard NDI SDK** at runtime and does **not** vendor it, so no NDI
 code or headers ship with the app and the app builds, tests, and CI-run without
 it. To actually broadcast:

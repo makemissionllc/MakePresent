@@ -1,7 +1,7 @@
 {
   "name": "makepresent",
   "version": "0.1.0",
-  "description": "MakePresent - live presentation software for churches",
+  "description": "MakrStudio - live presentation software for churches",
   "type": "module",
   "scripts": {
     "dev": "vite",

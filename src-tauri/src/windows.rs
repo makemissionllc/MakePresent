@@ -104,7 +104,7 @@ pub fn ensure_editor(app: &AppHandle) -> Result<WebviewWindow, String> {
         let _ = app_for_run.run_on_main_thread(move || {
             mark_as_main_thread();
             let r = WebviewWindow::builder(&app_for_build, EDITOR_WINDOW, editor_url())
-                .title("MakePresent - Editor")
+                .title("MakrStudio - Editor")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(960.0, 600.0)
                 .center()
@@ -132,7 +132,7 @@ pub fn ensure_editor(app: &AppHandle) -> Result<WebviewWindow, String> {
         let app_main = app.clone();
         return run_on_main(app, &state, "ensure_editor", move || {
             match WebviewWindow::builder(&app_main, EDITOR_WINDOW, editor_url())
-                .title("MakePresent - Editor")
+                .title("MakrStudio - Editor")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(960.0, 600.0)
                 .center()
@@ -307,7 +307,7 @@ pub fn ensure_output(app: &AppHandle) -> Result<WebviewWindow, String> {
             mark_as_main_thread();
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 WebviewWindow::builder(&app_for_build, OUTPUT_WINDOW, output_url())
-                    .title("MakePresent - Output")
+                    .title("MakrStudio - Output")
                     .decorations(false)
                     .resizable(false)
                     .fullscreen(false)
@@ -332,7 +332,7 @@ pub fn ensure_output(app: &AppHandle) -> Result<WebviewWindow, String> {
         return run_on_main(app, &state, "ensure_output", move || {
         let build_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             WebviewWindow::builder(&app_main, OUTPUT_WINDOW, output_url())
-                .title("MakePresent - Output")
+                .title("MakrStudio - Output")
                 .decorations(false)
                 .resizable(false)
                 .fullscreen(false)
@@ -474,7 +474,7 @@ pub fn ensure_stage(app: &AppHandle) -> Result<WebviewWindow, String> {
         let _ = app.run_on_main_thread(move || {
             mark_as_main_thread();
             let r = WebviewWindow::builder(&app_clone, STAGE_WINDOW, stage_url())
-                .title("MakePresent - Stage Display")
+                .title("MakrStudio - Stage Display")
                 .resizable(true)
                 .visible(false)
                 .build();
@@ -497,7 +497,7 @@ pub fn ensure_stage(app: &AppHandle) -> Result<WebviewWindow, String> {
         let app_main = app.clone();
         return run_on_main(app, &state, "ensure_stage", move || {
             match WebviewWindow::builder(&app_main, STAGE_WINDOW, stage_url())
-                .title("MakePresent - Stage Display")
+                .title("MakrStudio - Stage Display")
                 .resizable(true)
                 .visible(false)
                 .build()
@@ -539,7 +539,7 @@ pub fn precreate_hidden_windows(app: &AppHandle) {
         // Replicate ensure_output's builder options including self-healing handler.
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             WebviewWindow::builder(app, OUTPUT_WINDOW, output_url())
-                .title("MakePresent - Output")
+                .title("MakrStudio - Output")
                 .decorations(false)
                 .resizable(false)
                 .fullscreen(false)
@@ -593,7 +593,7 @@ pub fn precreate_hidden_windows(app: &AppHandle) {
     }
     if app.get_webview_window(STAGE_WINDOW).is_none() {
         match WebviewWindow::builder(app, STAGE_WINDOW, stage_url())
-            .title("MakePresent - Stage Display")
+            .title("MakrStudio - Stage Display")
             .resizable(true)
             .visible(false)
             .build()
@@ -902,7 +902,7 @@ pub fn move_stage_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWin
                     let _ = ac_for_run.run_on_main_thread(move || {
                         mark_as_main_thread();
                         let r = WebviewWindow::builder(&ac_for_build, STAGE_WINDOW, stage_url())
-                            .title("MakePresent - Stage Display")
+                            .title("MakrStudio - Stage Display")
                             .resizable(true)
                             .visible(false)
                             .build();
@@ -1038,7 +1038,7 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
                     let _ = ac_for_run.run_on_main_thread(move || {
                         mark_as_main_thread();
                         let r = WebviewWindow::builder(&ac_for_build, OUTPUT_WINDOW, output_url())
-                            .title("MakePresent - Output")
+                            .title("MakrStudio - Output")
                             .decorations(false)
                             .resizable(false)
                             .fullscreen(false)

@@ -1367,6 +1367,27 @@ pub async fn import_media(app: AppHandle, path: String) -> Result<crate::media::
     Ok(asset)
 }
 
+/// Search the managed media cache (reuses `media::search_media_assets`).
+/// Empty query returns up to 100 most recent; non-empty filters
+/// case-insensitively by file name / hash / kind. Used by the global
+/// search overlay alongside `search_scripture` and the library.
+#[tauri::command]
+pub fn search_media(app: AppHandle, query: String) -> Vec<crate::media::MediaAsset> {
+    let data_dir = app.state::<AppState>().app_data_dir();
+    crate::media::search_media_assets(&data_dir, &query)
+}
+
+/// List all cached media assets (no filter). Convenience for the overlay's
+/// empty state; capped at 100.
+#[tauri::command]
+pub fn list_media(app: AppHandle) -> Vec<crate::media::MediaAsset> {
+    let data_dir = app.state::<AppState>().app_data_dir();
+    crate::media::list_media_assets(&data_dir)
+        .into_iter()
+        .take(100)
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Settings import/export
 // ---------------------------------------------------------------------------

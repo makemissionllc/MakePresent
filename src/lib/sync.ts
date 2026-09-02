@@ -217,4 +217,9 @@ export const api = {
 
   deleteTemplate: (templateId: string) =>
     invoke<PlaylistTemplate[]>("delete_template", { templateId }),
+
+  searchMedia: (query: string) =>
+    invoke<MediaAsset[]>("search_media", { query }),
+
+  listMedia: () => invoke<MediaAsset[]>("list_media"),
 };

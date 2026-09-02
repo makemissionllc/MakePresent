@@ -11,6 +11,7 @@
   import SlideRender from "./SlideRender.svelte";
   import SongEditorModal from "./SongEditorModal.svelte";
   import ProjectHub from "../lib/components/ProjectHub.svelte";
+  import GlobalSearch from "./GlobalSearch.svelte";
 
   const PALETTE = [
     "#1a1a24",
@@ -98,6 +99,9 @@
   let showSaveTemplateModal = $state(false);
   let showTemplatePicker = $state(false);
   let templatePickerLoading = $state(false);
+
+  // Global search (Ctrl/Cmd+K) — library + all Bibles + media cache
+  let globalSearchOpen = $state(false);
 
   // Draft copies for responsive editing — typing updates these immediately
   // while the backend save is debounced so the input never resets mid-keystroke.
@@ -1081,6 +1085,18 @@
     }
   }
 
+  function handleGlobalKeydown(e: KeyboardEvent): void {
+    const isK = e.key.toLowerCase() === "k";
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && isK) {
+      e.preventDefault();
+      globalSearchOpen = !globalSearchOpen;
+    } else if (e.key === "Escape" && globalSearchOpen) {
+      e.preventDefault();
+      globalSearchOpen = false;
+    }
+  }
+
   onMount(() => {
     let unSub: () => void = () => {};
     let unAuto: () => void = () => {};
@@ -1156,6 +1172,7 @@
       }
     })();
 
+    window.addEventListener("keydown", handleGlobalKeydown);
     return () => {
       cancelled = true;
       unSub();
@@ -1163,6 +1180,7 @@
       unLib();
       if (unFileDrop) unFileDrop();
       if (unFileDrop2) unFileDrop2();
+      window.removeEventListener("keydown", handleGlobalKeydown);
       if (scriptureTimer) clearTimeout(scriptureTimer);
       if (titleTimer) clearTimeout(titleTimer);
       if (bodyTimer) clearTimeout(bodyTimer);
@@ -1188,6 +1206,14 @@
       {#if project?.live}LIVE{:else}OFFLINE{/if}
     </span>
     <span class="spacer"></span>
+    <button
+      class="ghost search-trigger"
+      title="Search songs, Bibles & media (Ctrl+K)"
+      onclick={() => (globalSearchOpen = true)}
+    >
+      ⌕ Search
+      <span class="kbd">Ctrl+K</span>
+    </button>
     <span class="saved-label">{savedLabel}</span>
     <button class="ghost" onclick={() => newProject()}>New project</button>
     <button class="ghost" onclick={() => clearOutput()}>Clear output</button>
@@ -1912,6 +1938,8 @@
   </div>
 {/if}
 
+<GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} />
+
 <style>
   .shell {
     display: flex;
@@ -1956,6 +1984,24 @@
   .saved-label {
     font-size: 12px;
     color: var(--text-dim);
+  }
+
+  .search-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    padding: 6px 10px;
+    border-color: var(--border);
+  }
+  .search-trigger .kbd {
+    font-size: 10px;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    background: var(--panel-2);
+    font-family: var(--font-mono, monospace);
   }
 
   button {

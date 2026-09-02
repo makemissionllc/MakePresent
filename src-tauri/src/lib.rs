@@ -646,6 +646,8 @@ pub fn run() {
             commands::save_template,
             commands::load_template,
             commands::delete_template,
+            commands::search_media,
+            commands::list_media,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

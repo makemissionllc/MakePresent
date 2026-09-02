@@ -319,6 +319,82 @@ pub fn to_asset(background: Background, source: &Path) -> MediaAsset {
     }
 }
 
+/// List all cached media assets by scanning `media/<hash>.<ext>`. Used by the
+/// global search overlay to surface the media cache alongside library and
+/// scripture results. Filters by `query` case-insensitively when provided;
+/// empty query returns all (capped at 100) sorted by filename. Reuses the
+/// same `MediaKind::from_extension` + hash/thumb derivation as `import`.
+pub fn list_media_assets(data_dir: &Path) -> Vec<MediaAsset> {
+    let dir = media_dir(data_dir);
+    let entries = match fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for ent in entries.flatten() {
+        let path = ent.path();
+        if !path.is_file() {
+            continue;
+        }
+        let kind = match MediaKind::from_extension(&path) {
+            Some(k) => k,
+            None => continue,
+        };
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // Hash is file stem (hash without extension) — matches import's dest naming.
+        let hash = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let thumb = thumbnail_path_for(data_dir, &hash)
+            .to_string_lossy()
+            .into_owned();
+        let background = match kind {
+            MediaKind::Image => Background::Image {
+                path: path.to_string_lossy().into_owned(),
+                hash: hash.clone(),
+                thumb: thumb.clone(),
+            },
+            MediaKind::Video => Background::Video {
+                path: path.to_string_lossy().into_owned(),
+                hash: hash.clone(),
+                thumb: thumb.clone(),
+                duration_ms: None,
+            },
+        };
+        out.push(MediaAsset {
+            background,
+            kind: kind.label().to_string(),
+            file_name,
+            hash,
+            duration_ms: None,
+        });
+    }
+    out.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+    out
+}
+
+/// Search the media cache case-insensitively by `query` against
+/// `file_name` / `hash` / `kind`. Empty query returns all (capped).
+pub fn search_media_assets(data_dir: &Path, query: &str) -> Vec<MediaAsset> {
+    let all = list_media_assets(data_dir);
+    if query.trim().is_empty() {
+        return all.into_iter().take(100).collect();
+    }
+    let q = query.trim().to_lowercase();
+    all.into_iter()
+        .filter(|a| {
+            a.file_name.to_lowercase().contains(&q)
+                || a.hash.to_lowercase().contains(&q)
+                || a.kind.to_lowercase().contains(&q)
+        })
+        .take(50)
+        .collect()
+}
+
 /// Startup cache verification: every media asset referenced by the current
 /// project or library must still have its source file AND a thumbnail. Any
 /// missing/corrupt thumbnail is regenerated with ffmpeg; missing source files

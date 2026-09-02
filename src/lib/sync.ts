@@ -225,4 +225,7 @@ export const api = {
 
   importSongFile: (path: string) =>
     invoke<Library>("import_song_file", { path }),
+
+  setSongArrangement: (songId: string, arrangement: string[]) =>
+    invoke<Library>("set_song_arrangement", { songId, arrangement }),
 };

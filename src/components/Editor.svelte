@@ -561,7 +561,14 @@
       })();
     } else if (payload.type === "library-verse" && payload.songId && payload.slideId) {
       const song = library?.songs.find((x) => x.id === payload.songId);
-      const verse = song?.slides.find((x) => x.id === payload.slideId);
+      let verse: any | undefined;
+      if (song) {
+        if (song.blocks && Object.keys(song.blocks).length > 0) {
+          verse = Object.values(song.blocks).find((x: any) => x.id === payload.slideId);
+        } else {
+          verse = (song as any).slides?.find((x: any) => x.id === payload.slideId);
+        }
+      }
       if (!verse) {
         errorMsg = "Verse not found";
         return;
@@ -1123,6 +1130,56 @@
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
+  // Master-block helpers — library.json now stores blocks + arrangement (v2)
+  function getSongBlockCount(song: LibrarySong): number {
+    if (song.blocks && Object.keys(song.blocks).length > 0) return Object.keys(song.blocks).length;
+    return song.slides?.length ?? 0;
+  }
+  function getSongArrangementCount(song: LibrarySong): number {
+    if (song.arrangement && song.arrangement.length > 0) return song.arrangement.length;
+    return getSongBlockCount(song);
+  }
+  function getBlocksArray(song: LibrarySong): import("../lib/types").LibrarySlide[] {
+    if (song.blocks && Object.keys(song.blocks).length > 0) return Object.values(song.blocks);
+    return song.slides ?? [];
+  }
+  async function setArrangement(song: LibrarySong, newArr: string[]): Promise<void> {
+    try {
+      errorMsg = null;
+      const lib = await api.setSongArrangement(song.id, newArr);
+      library = lib;
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+  function moveArrangement(song: LibrarySong, from: number, to: number): void {
+    const arr = [...(song.arrangement ?? [])];
+    if (from < 0 || from >= arr.length || to < 0 || to >= arr.length) return;
+    const [moved] = arr.splice(from, 1);
+    arr.splice(to, 0, moved);
+    void setArrangement(song, arr);
+  }
+  function duplicateArrangement(song: LibrarySong, idx: number): void {
+    const arr = [...(song.arrangement ?? [])];
+    if (idx < 0 || idx >= arr.length) return;
+    arr.splice(idx + 1, 0, arr[idx]);
+    void setArrangement(song, arr);
+  }
+  function removeFromArrangement(song: LibrarySong, idx: number): void {
+    const arr = [...(song.arrangement ?? [])];
+    if (arr.length <= 1) {
+      errorMsg = "Arrangement must have at least one block";
+      return;
+    }
+    arr.splice(idx, 1);
+    void setArrangement(song, arr);
+  }
+  function addBlockToArrangement(song: LibrarySong, key: string): void {
+    if (!key) return;
+    const arr = [...(song.arrangement ?? []), key];
+    void setArrangement(song, arr);
+  }
+
   function toggleFullscreen(): void {
     void api.toggleOutputFullscreen().catch((e: unknown) => (errorMsg = String(e)));
   }
@@ -1632,10 +1689,10 @@
                 draggable="true"
                 ondragstart={(e) => onLibrarySongDragStart(e, song)}
                 onclick={() => addToPlaylist(song)}
-                title="Drag to playlist to add • Click to add"
+                title="Drag to playlist to add • Click to add (uses arrangement)"
               >
                 <span class="song-label">{song.title || "Untitled"}</span>
-                <span class="song-count">{song.slides.length} {song.slides.length === 1 ? "slide" : "slides"}</span>
+                <span class="song-count">{getSongArrangementCount(song)} {getSongArrangementCount(song) === 1 ? "slide" : "slides"} • {getSongBlockCount(song)} blocks</span>
               </button>
               <button
                 class="delete"
@@ -1648,7 +1705,7 @@
                 &times;
               </button>
             </li>
-            {#each song.slides as verse (verse.id)}
+            {#each getBlocksArray(song) as verse (verse.id)}
               <li class="library-verse-row">
                 <button
                   class="library-verse"
@@ -1662,6 +1719,40 @@
                 </button>
               </li>
             {/each}
+            {#if song.arrangement && song.arrangement.length > 0}
+              <li class="arrangement-row">
+                <span class="arrangement-label">Order:</span>
+                <div class="chip-list">
+                  {#each song.arrangement as blockKey, idx (blockKey + "-" + idx)}
+                    <span class="chip" title={blockKey}>
+                      {blockKey}
+                      <button class="chip-btn" title="Move left" onclick={() => moveArrangement(song, idx, idx - 1)} disabled={idx === 0}>‹</button>
+                      <button class="chip-btn" title="Move right" onclick={() => moveArrangement(song, idx, idx + 1)} disabled={idx === song.arrangement.length - 1}>›</button>
+                      <button class="chip-btn" title="Duplicate" onclick={() => duplicateArrangement(song, idx)}>⧉</button>
+                      <button class="chip-btn chip-remove" title="Remove from order" onclick={() => removeFromArrangement(song, idx)}>×</button>
+                    </span>
+                  {/each}
+                </div>
+                <div class="arrangement-actions">
+                  <select
+                    class="arrangement-add"
+                    value=""
+                    onchange={(e) => {
+                      const v = (e.target as HTMLSelectElement).value;
+                      if (v) {
+                        addBlockToArrangement(song, v);
+                        (e.target as HTMLSelectElement).value = "";
+                      }
+                    }}
+                  >
+                    <option value="">+ Add block…</option>
+                    {#each Object.keys(song.blocks ?? {}) as key (key)}
+                      <option value={key}>{key}</option>
+                    {/each}
+                  </select>
+                </div>
+              </li>
+            {/if}
           {:else}
             <li class="empty">No songs yet. Add one below.</li>
           {/each}
@@ -3436,6 +3527,69 @@
     outline: 1.5px dashed var(--accent);
     outline-offset: 2px;
     background: rgba(79, 140, 255, 0.03);
+  }
+
+  .arrangement-row {
+    margin-top: 8px;
+    padding: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .arrangement-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+    display: block;
+  }
+  .chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .chip-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    width: 20px;
+    height: 20px;
+    font-size: 10px;
+    line-height: 1;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .chip-btn:disabled {
+    opacity: 0.3;
+  }
+  .chip-remove {
+    color: var(--semantic-error, #e11d48);
+    border-color: var(--semantic-error, #e11d48);
+  }
+  .arrangement-actions {
+    margin-top: 6px;
+  }
+  .arrangement-add {
+    font-size: 11px;
+    padding: 4px 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
   }
 
   @keyframes spin {

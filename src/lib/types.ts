@@ -185,7 +185,12 @@ export interface LibrarySong {
   id: string;
   title: string;
   defaultBackground: Background;
-  slides: LibrarySlide[];
+  /** Master blocks — unique named slides keyed by block name (e.g. "Verse 1", "Chorus") */
+  blocks: Record<string, LibrarySlide>;
+  /** Default play order — array of block keys, may repeat */
+  arrangement: string[];
+  /** Deprecated flat list — retained for one-time migration, not present in new saves */
+  slides?: LibrarySlide[] | null;
 }
 
 export interface ServicePresetItem {

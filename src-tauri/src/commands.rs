@@ -264,36 +264,67 @@ pub fn add_library_song(
     slides: Option<Vec<LibrarySlideInput>>,
 ) -> Result<Library, String> {
     let state = app.state::<AppState>();
-    let lib_slides: Vec<LibrarySlide> = if let Some(inputs) = slides {
+    let (blocks, arrangement) = if let Some(inputs) = slides {
         if inputs.is_empty() {
             return Err("no slides provided".to_string());
         }
-        inputs
-            .into_iter()
-            .map(|s| LibrarySlide {
-                id: Uuid::new_v4().to_string(),
-                title: s.title,
-                body: s.body,
-                positioning: s.positioning,
-                group_id: s.group_id,
-                group_label: s.group_label,
-            })
-            .collect()
+        let mut blocks: std::collections::HashMap<String, LibrarySlide> = std::collections::HashMap::new();
+        let mut arrangement: Vec<String> = Vec::new();
+        for input in inputs {
+            let base_key = if !input.title.trim().is_empty() {
+                input.title.clone()
+            } else {
+                format!("Verse {}", arrangement.len() + 1)
+            };
+            let mut key = base_key.clone();
+            if let Some(existing) = blocks.get(&key) {
+                if existing.body != input.body {
+                    let mut counter = 2;
+                    let mut new_key = format!("{} ({})", key, counter);
+                    while blocks.contains_key(&new_key) {
+                        counter += 1;
+                        new_key = format!("{} ({})", key, counter);
+                    }
+                    key = new_key;
+                }
+            }
+            if !blocks.contains_key(&key) {
+                blocks.insert(
+                    key.clone(),
+                    LibrarySlide {
+                        id: Uuid::new_v4().to_string(),
+                        title: key.clone(),
+                        body: input.body.clone(),
+                        positioning: input.positioning.clone(),
+                        group_id: input.group_id.clone().or_else(|| Some(format!("block-{}", blocks.len() + 1))),
+                        group_label: input.group_label.clone().or_else(|| Some(key.clone())),
+                    },
+                );
+            }
+            arrangement.push(key);
+        }
+        (blocks, arrangement)
     } else {
-        vec![LibrarySlide {
+        let mut blocks: std::collections::HashMap<String, LibrarySlide> = std::collections::HashMap::new();
+        let key = "Verse 1".to_string();
+        let slide = LibrarySlide {
             id: Uuid::new_v4().to_string(),
-            title: "".to_string(),
+            title: key.clone(),
             body: body.unwrap_or_default(),
             positioning: None,
-            group_id: None,
-            group_label: None,
-        }]
+            group_id: Some("verse-1".to_string()),
+            group_label: Some(key.clone()),
+        };
+        blocks.insert(key.clone(), slide);
+        (blocks, vec![key])
     };
     let song = LibrarySong {
         id: Uuid::new_v4().to_string(),
         title,
         default_background: background.unwrap_or_default(),
-        slides: lib_slides,
+        blocks,
+        arrangement,
+        slides: None,
     };
     state.library.write().unwrap().songs.push(song);
     state.request_save();
@@ -309,6 +340,38 @@ pub fn delete_library_song(app: AppHandle, song_id: String) -> Result<Library, S
             return Err(format!("library song {song_id} not found"));
         }
         library.songs.retain(|s| s.id != song_id);
+    }
+    state.request_save();
+    Ok(broadcast_library(&app))
+}
+
+/// Update a song's default arrangement (e.g. ["Verse 1", "Chorus", "Verse 2", "Chorus"]).
+/// The arrangement may repeat block keys (extra Chorus) and order matters — it is flattened at queue-time.
+/// Validates that every key exists in `song.blocks`; returns the updated Library.
+#[tauri::command]
+pub fn set_song_arrangement(
+    app: AppHandle,
+    song_id: String,
+    arrangement: Vec<String>,
+) -> Result<Library, String> {
+    if arrangement.is_empty() {
+        return Err("arrangement must not be empty".to_string());
+    }
+    let state = app.state::<AppState>();
+    {
+        let mut library = state.library.write().unwrap();
+        let song = library
+            .songs
+            .iter_mut()
+            .find(|s| s.id == song_id)
+            .ok_or_else(|| format!("library song {song_id} not found"))?;
+        for key in &arrangement {
+            if !song.blocks.contains_key(key) {
+                return Err(format!("block \"{key}\" not found in song \"{}\"", song.title));
+            }
+        }
+        song.arrangement = arrangement;
+        // Keep deprecated slides in sync? No — slides stays None after migration.
     }
     state.request_save();
     Ok(broadcast_library(&app))
@@ -338,7 +401,9 @@ pub async fn import_song_file(app: AppHandle, path: String) -> Result<Library, S
 }
 
 /// Copy every verse/section of a library song into the playlist as linked
-/// slides (one click from the editor).
+/// slides (one click from the editor). Flattens the song's `arrangement`
+/// (master-block architecture) into a linear list — same end result as the
+/// old flat `slides` list, but the underlying data is no longer duplicated.
 #[tauri::command]
 pub fn add_song_to_playlist(app: AppHandle, song_id: String) -> Result<ClientState, String> {
     let state = app.state::<AppState>();
@@ -352,8 +417,15 @@ pub fn add_song_to_playlist(app: AppHandle, song_id: String) -> Result<ClientSta
         .cloned()
         .ok_or_else(|| format!("library song {song_id} not found"))?;
 
+    // Flatten arrangement -> blocks (v2) or fallback to deprecated slides (v1 pre-migration)
+    let flattened: Vec<LibrarySlide> = song
+        .flattened_slides()
+        .into_iter()
+        .cloned()
+        .collect();
+
     mutate(&app, |project| {
-        for slide in &song.slides {
+        for slide in &flattened {
             project.slides.push(Slide {
                 id: Uuid::new_v4().to_string(),
                 library_id: Some(song.id.clone()),

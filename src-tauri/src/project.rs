@@ -1,6 +1,7 @@
 use crate::logging::Level;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -12,6 +13,7 @@ use tauri::{Emitter, Manager};
 use uuid::Uuid;
 
 pub const SCHEMA_VERSION: u32 = 1;
+pub const LIBRARY_SCHEMA_VERSION: u32 = 2;
 /// Debounce window for autosave. Every edit is persisted well within 2 seconds.
 pub const AUTOSAVE_DEBOUNCE_MS: u64 = 1200;
 pub const MAX_SNAPSHOTS: usize = 50;
@@ -483,7 +485,92 @@ pub struct LibrarySong {
     pub id: String,
     pub title: String,
     pub default_background: Background,
-    pub slides: Vec<LibrarySlide>,
+    /// Master blocks — unique named slides keyed by block name (e.g. "Verse 1", "Chorus", "Bridge")
+    #[serde(default)]
+    pub blocks: HashMap<String, LibrarySlide>,
+    /// Default play order — array of block keys, may repeat (e.g. ["Verse 1", "Chorus", "Verse 2", "Chorus", "Bridge", "Chorus"])
+    #[serde(default)]
+    pub arrangement: Vec<String>,
+    /// Deprecated flat list — retained for one-time migration from v1 library.json, not serialized in new files
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slides: Option<Vec<LibrarySlide>>,
+}
+
+impl LibrarySong {
+    /// One-time migration from flat `slides` (v1) to `blocks`+`arrangement` (v2).
+    /// Returns true if migrated. Deduplicates by block title, preserving order via `arrangement`.
+    pub fn migrate_if_needed(&mut self) -> bool {
+        if !self.blocks.is_empty() || self.slides.is_none() {
+            return false;
+        }
+        let old_slides = self.slides.take().unwrap_or_default();
+        if old_slides.is_empty() {
+            return false;
+        }
+        let mut blocks: HashMap<String, LibrarySlide> = HashMap::new();
+        let mut arrangement: Vec<String> = Vec::new();
+        for slide in old_slides {
+            let base_key = if !slide.title.trim().is_empty() {
+                slide.title.clone()
+            } else if let Some(ref gl) = slide.group_label {
+                if !gl.trim().is_empty() {
+                    gl.clone()
+                } else {
+                    slide.title.clone()
+                }
+            } else {
+                slide.title.clone()
+            };
+            let mut key = base_key.clone();
+            if key.trim().is_empty() {
+                key = format!("Verse {}", arrangement.len() + 1);
+            }
+            if let Some(existing) = blocks.get(&key) {
+                if existing.body != slide.body || existing.title != slide.title {
+                    let mut counter = 2;
+                    let mut new_key = format!("{} ({})", key, counter);
+                    while blocks.contains_key(&new_key) {
+                        counter += 1;
+                        new_key = format!("{} ({})", key, counter);
+                    }
+                    key = new_key;
+                }
+            }
+            if !blocks.contains_key(&key) {
+                blocks.insert(key.clone(), slide);
+            }
+            arrangement.push(key);
+        }
+        self.blocks = blocks;
+        self.arrangement = arrangement;
+        true
+    }
+
+    /// Flatten arrangement into ordered list of block slides (resolving each key).
+    /// Falls back to blocks values if arrangement empty, or deprecated slides if present.
+    pub fn flattened_slides(&self) -> Vec<&LibrarySlide> {
+        if !self.arrangement.is_empty() {
+            let mut out = Vec::new();
+            for key in &self.arrangement {
+                if let Some(block) = self.blocks.get(key) {
+                    out.push(block);
+                }
+            }
+            if out.is_empty() && !self.blocks.is_empty() {
+                out.extend(self.blocks.values());
+            }
+            out
+        } else if !self.blocks.is_empty() {
+            let mut vals: Vec<&LibrarySlide> = self.blocks.values().collect();
+            vals.sort_by(|a, b| a.title.cmp(&b.title));
+            vals
+        } else if let Some(ref slides) = self.slides {
+            slides.iter().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -576,7 +663,7 @@ pub struct Library {
 impl Default for Library {
     fn default() -> Self {
         Self {
-            schema_version: SCHEMA_VERSION,
+            schema_version: LIBRARY_SCHEMA_VERSION,
             songs: Vec::new(),
         }
     }
@@ -804,14 +891,42 @@ fn atomic_write_json(data_dir: &Path, file_name: &str, value: &impl Serialize) -
 }
 
 /// Load the library from disk, seeding sample songs on first run.
+/// Handles one-time migration from flat `slides` (v1) to master-block `blocks`+`arrangement` (v2).
+/// Returns the library and whether migration occurred (for logging via AppState).
+#[allow(dead_code)]
 pub fn read_library(data_dir: &Path) -> Library {
+    let (lib, _migrated) = read_library_with_migration_info(data_dir);
+    lib
+}
+
+/// Inner helper that also returns migration count for logging.
+pub fn read_library_with_migration_info(data_dir: &Path) -> (Library, usize) {
     let raw = fs::read_to_string(data_dir.join("library.json")).ok();
     match raw.and_then(|r| serde_json::from_str::<Library>(&r).ok()) {
-        Some(library) => library,
+        Some(mut library) => {
+            let mut migrated = 0;
+            for song in &mut library.songs {
+                if song.migrate_if_needed() {
+                    migrated += 1;
+                }
+            }
+            let needs_bump = library.schema_version < LIBRARY_SCHEMA_VERSION;
+            if migrated > 0 || needs_bump {
+                let old_v = library.schema_version;
+                library.schema_version = LIBRARY_SCHEMA_VERSION;
+                eprintln!(
+                    "library: migrated {} song(s) from flat slides (v{}) to blocks+arrangement (v{})",
+                    migrated, old_v, LIBRARY_SCHEMA_VERSION
+                );
+                // Persist migrated library immediately so next launch is clean
+                let _ = write_library(data_dir, &library);
+            }
+            (library, migrated)
+        }
         None => {
             let library = seed_library();
             let _ = write_library(data_dir, &library);
-            library
+            (library, 0)
         }
     }
 }
@@ -820,10 +935,50 @@ pub fn write_library(data_dir: &Path, library: &Library) -> io::Result<()> {
     atomic_write_json(data_dir, "library.json", library)
 }
 
-/// A couple of sample songs so the library has content on first launch.
+/// A couple of sample songs so the library has content on first launch — now using master-block architecture.
 fn seed_library() -> Library {
+    let mut ag_blocks = HashMap::new();
+    let ag_v1 = LibrarySlide {
+        id: Uuid::new_v4().to_string(),
+        title: "Verse 1".to_string(),
+        body: "Amazing grace, how sweet the sound\nThat saved a wretch like me\nI once was lost, but now am found\nWas blind, but now I see.".to_string(),
+        positioning: None,
+        group_id: Some("verse-1".to_string()),
+        group_label: Some("Verse 1".to_string()),
+    };
+    let ag_ch = LibrarySlide {
+        id: Uuid::new_v4().to_string(),
+        title: "Chorus".to_string(),
+        body: "Was grace that taught my heart to fear\nAnd grace my fears relieved\nHow precious did that grace appear\nThe hour I first believed.".to_string(),
+        positioning: None,
+        group_id: Some("chorus".to_string()),
+        group_label: Some("Chorus".to_string()),
+    };
+    ag_blocks.insert(ag_v1.title.clone(), ag_v1);
+    ag_blocks.insert(ag_ch.title.clone(), ag_ch);
+
+    let mut gf_blocks = HashMap::new();
+    let gf_v1 = LibrarySlide {
+        id: Uuid::new_v4().to_string(),
+        title: "Verse 1".to_string(),
+        body: "Great is Thy faithfulness, O God my Father\nThere is no shadow of turning with Thee\nThou changest not, Thy compassions, they fail not\nAs Thou hast been, Thou forever wilt be.".to_string(),
+        positioning: None,
+        group_id: Some("verse-1".to_string()),
+        group_label: Some("Verse 1".to_string()),
+    };
+    let gf_ch = LibrarySlide {
+        id: Uuid::new_v4().to_string(),
+        title: "Chorus".to_string(),
+        body: "Great is Thy faithfulness!\nGreat is Thy faithfulness!\nMorning by morning new mercies I see\nAll I have needed Thy hand hath provided\nGreat is Thy faithfulness, Lord, unto me.".to_string(),
+        positioning: None,
+        group_id: Some("chorus".to_string()),
+        group_label: Some("Chorus".to_string()),
+    };
+    gf_blocks.insert(gf_v1.title.clone(), gf_v1);
+    gf_blocks.insert(gf_ch.title.clone(), gf_ch);
+
     Library {
-        schema_version: SCHEMA_VERSION,
+        schema_version: LIBRARY_SCHEMA_VERSION,
         songs: vec![
             LibrarySong {
                 id: Uuid::new_v4().to_string(),
@@ -831,24 +986,9 @@ fn seed_library() -> Library {
                 default_background: Background::Solid {
                     color: "#1f3a2f".to_string(),
                 },
-                slides: vec![
-                    LibrarySlide {
-                        id: Uuid::new_v4().to_string(),
-                        title: "Verse 1".to_string(),
-                        body: "Amazing grace, how sweet the sound\nThat saved a wretch like me\nI once was lost, but now am found\nWas blind, but now I see.".to_string(),
-                        positioning: None,
-                        group_id: Some("verse-1".to_string()),
-                        group_label: Some("Verse 1".to_string()),
-                    },
-                    LibrarySlide {
-                        id: Uuid::new_v4().to_string(),
-                        title: "Chorus".to_string(),
-                        body: "Was grace that taught my heart to fear\nAnd grace my fears relieved\nHow precious did that grace appear\nThe hour I first believed.".to_string(),
-                        positioning: None,
-                        group_id: Some("chorus".to_string()),
-                        group_label: Some("Chorus".to_string()),
-                    },
-                ],
+                blocks: ag_blocks,
+                arrangement: vec!["Verse 1".to_string(), "Chorus".to_string()],
+                slides: None,
             },
             LibrarySong {
                 id: Uuid::new_v4().to_string(),
@@ -856,26 +996,93 @@ fn seed_library() -> Library {
                 default_background: Background::Solid {
                     color: "#0f2b4a".to_string(),
                 },
-                slides: vec![
-                    LibrarySlide {
-                        id: Uuid::new_v4().to_string(),
-                        title: "Verse 1".to_string(),
-                        body: "Great is Thy faithfulness, O God my Father\nThere is no shadow of turning with Thee\nThou changest not, Thy compassions, they fail not\nAs Thou hast been, Thou forever wilt be.".to_string(),
-                        positioning: None,
-                        group_id: Some("verse-1".to_string()),
-                        group_label: Some("Verse 1".to_string()),
-                    },
-                    LibrarySlide {
-                        id: Uuid::new_v4().to_string(),
-                        title: "Chorus".to_string(),
-                        body: "Great is Thy faithfulness!\nGreat is Thy faithfulness!\nMorning by morning new mercies I see\nAll I have needed Thy hand hath provided\nGreat is Thy faithfulness, Lord, unto me.".to_string(),
-                        positioning: None,
-                        group_id: Some("chorus".to_string()),
-                        group_label: Some("Chorus".to_string()),
-                    },
-                ],
+                blocks: gf_blocks,
+                arrangement: vec!["Verse 1".to_string(), "Chorus".to_string()],
+                slides: None,
             },
         ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn library_migration_preserves_amazing_grace() {
+        let old_json = r##"{
+            "schemaVersion": 1,
+            "songs": [
+                {
+                    "id": "test-id-1",
+                    "title": "Amazing Grace",
+                    "defaultBackground": {"type": "solid", "color": "#1f3a2f"},
+                    "slides": [
+                        {"id": "s1", "title": "Verse 1", "body": "Amazing grace, how sweet the sound\nThat saved a wretch like me", "groupId": "verse-1", "groupLabel": "Verse 1"},
+                        {"id": "s2", "title": "Chorus", "body": "Was grace that taught my heart to fear", "groupId": "chorus", "groupLabel": "Chorus"}
+                    ]
+                },
+                {
+                    "id": "test-id-2",
+                    "title": "Great Is Thy Faithfulness",
+                    "defaultBackground": {"type": "solid", "color": "#0f2b4a"},
+                    "slides": [
+                        {"id": "s3", "title": "Verse 1", "body": "Great is Thy faithfulness", "groupId": "verse-1", "groupLabel": "Verse 1"},
+                        {"id": "s4", "title": "Chorus", "body": "Great is Thy faithfulness! Great is Thy faithfulness!", "groupId": "chorus", "groupLabel": "Chorus"}
+                    ]
+                }
+            ]
+        }"##;
+        let mut lib: Library = serde_json::from_str(old_json).unwrap();
+        assert_eq!(lib.songs[0].slides.as_ref().unwrap().len(), 2);
+        assert!(lib.songs[0].blocks.is_empty());
+        let migrated0 = lib.songs[0].migrate_if_needed();
+        let migrated1 = lib.songs[1].migrate_if_needed();
+        assert!(migrated0);
+        assert!(migrated1);
+        assert_eq!(lib.songs[0].blocks.len(), 2);
+        assert_eq!(lib.songs[0].arrangement, vec!["Verse 1".to_string(), "Chorus".to_string()]);
+        assert!(lib.songs[0].slides.is_none());
+        let flat0 = lib.songs[0].flattened_slides();
+        assert_eq!(flat0.len(), 2);
+        assert_eq!(flat0[0].title, "Verse 1");
+        assert_eq!(flat0[1].title, "Chorus");
+        let flat1 = lib.songs[1].flattened_slides();
+        assert_eq!(flat1.len(), 2);
+        assert_eq!(lib.songs[1].arrangement, vec!["Verse 1".to_string(), "Chorus".to_string()]);
+    }
+
+    #[test]
+    fn seed_library_has_blocks_and_arrangement() {
+        let lib = seed_library();
+        assert_eq!(lib.schema_version, LIBRARY_SCHEMA_VERSION);
+        for song in &lib.songs {
+            assert!(!song.blocks.is_empty(), "song {} should have blocks", song.title);
+            assert!(!song.arrangement.is_empty(), "song {} should have arrangement", song.title);
+            assert!(song.slides.is_none(), "new seed should not have deprecated slides");
+            for key in &song.arrangement {
+                assert!(song.blocks.contains_key(key), "missing block {} in {}", key, song.title);
+            }
+        }
+        let ag = lib.songs.iter().find(|s| s.title == "Amazing Grace").unwrap();
+        assert_eq!(ag.arrangement, vec!["Verse 1".to_string(), "Chorus".to_string()]);
+        assert_eq!(ag.blocks.len(), 2);
+        let flat = ag.flattened_slides();
+        assert_eq!(flat.len(), 2);
+    }
+
+    #[test]
+    fn arrangement_duplicate_preserves_repeats() {
+        let mut song = seed_library().songs.into_iter().find(|s| s.title == "Amazing Grace").unwrap();
+        // Add an extra Chorus via arrangement duplicate
+        let mut new_arr = song.arrangement.clone();
+        new_arr.push("Chorus".to_string());
+        song.arrangement = new_arr.clone();
+        let flat = song.flattened_slides();
+        assert_eq!(flat.len(), 3);
+        assert_eq!(flat[0].title, "Verse 1");
+        assert_eq!(flat[1].title, "Chorus");
+        assert_eq!(flat[2].title, "Chorus");
     }
 }
 

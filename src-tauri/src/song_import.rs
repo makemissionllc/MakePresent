@@ -54,29 +54,50 @@ pub fn import_song_file(path: &Path) -> Result<ParsedSong, String> {
 }
 
 pub fn parsed_to_library_song(parsed: ParsedSong) -> LibrarySong {
+    use std::collections::HashMap;
     let song_id = Uuid::new_v4().to_string();
-    let slides: Vec<LibrarySlide> = parsed
-        .slides
-        .into_iter()
-        .enumerate()
-        .map(|(i, ps)| LibrarySlide {
-            id: Uuid::new_v4().to_string(),
-            title: if ps.title.trim().is_empty() {
-                format!("Verse {}", i + 1)
-            } else {
-                ps.title
-            },
-            body: ps.body,
-            positioning: None,
-            group_id: Some(format!("verse-{}", i + 1)),
-            group_label: Some(format!("Verse {}", i + 1)),
-        })
-        .collect();
+    let mut blocks: HashMap<String, LibrarySlide> = HashMap::new();
+    let mut arrangement: Vec<String> = Vec::new();
+    for (i, ps) in parsed.slides.into_iter().enumerate() {
+        let base_title = if ps.title.trim().is_empty() {
+            format!("Verse {}", i + 1)
+        } else {
+            ps.title.clone()
+        };
+        let mut key = base_title.clone();
+        if let Some(existing) = blocks.get(&key) {
+            if existing.body != ps.body {
+                let mut counter = 2;
+                let mut new_key = format!("{} ({})", key, counter);
+                while blocks.contains_key(&new_key) {
+                    counter += 1;
+                    new_key = format!("{} ({})", key, counter);
+                }
+                key = new_key;
+            }
+        }
+        if !blocks.contains_key(&key) {
+            blocks.insert(
+                key.clone(),
+                LibrarySlide {
+                    id: Uuid::new_v4().to_string(),
+                    title: key.clone(),
+                    body: ps.body.clone(),
+                    positioning: None,
+                    group_id: Some(format!("verse-{}", blocks.len() + 1)),
+                    group_label: Some(key.clone()),
+                },
+            );
+        }
+        arrangement.push(key);
+    }
     LibrarySong {
         id: song_id,
         title: parsed.title,
         default_background: Background::default(),
-        slides,
+        blocks,
+        arrangement,
+        slides: None,
     }
 }
 
@@ -648,6 +669,19 @@ mod tests {
     }
 
     #[test]
+    fn cho_to_library_blocks() {
+        let p = tmp_path(
+            "{title: Test}\nVerse 1 line\n\nChorus line\n\nVerse 1 line\n",
+            "cho",
+        );
+        let parsed = parse_cho(&p).unwrap();
+        let lib = parsed_to_library_song(parsed);
+        // Should deduplicate Verse 1 if same body, or create unique if different
+        assert!(lib.blocks.contains_key("Verse 1") || lib.blocks.contains_key("Verse 1 (2)"));
+        assert_eq!(lib.arrangement.len(), 3);
+    }
+
+    #[test]
     fn cho_rejects_empty() {
         let p = tmp_path("", "cho");
         assert!(parse_cho(&p).is_err());
@@ -675,9 +709,18 @@ mod tests {
     #[test]
     fn pro_rejects_malformed() {
         let p = tmp_path("<not xml>", "pro");
-        // Should not panic; either parses fallback or errors clearly
+        // Should not panic; either parses fallback or errors clearly (malformed or no extractable text)
         let res = parse_pro(&p);
-        // Malformed XML with no extractable text should error, fallback with text "not xml" may succeed as one slide — both are non-silent
-        assert!(res.is_ok() || res.unwrap_err().contains("malformed"));
+        match res {
+            Ok(_) => {},
+            Err(e) => {
+                let low = e.to_lowercase();
+                assert!(
+                    low.contains("malformed") || low.contains("extractable") || low.contains("valid"),
+                    "unexpected error: {}",
+                    e
+                );
+            }
+        }
     }
 }

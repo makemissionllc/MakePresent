@@ -301,7 +301,7 @@ src-tauri/src/
   midi.rs       MIDI input: midir listener, device enumeration, message parsing
   osc.rs        OSC listener: dedicated UDP thread, rosc decode, bundle flattening
   triggers.rs   Trigger/action model, routing, actionâ†’command dispatch
-  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import/search, NDI, MIDI/OSC/triggers, scripture import/search, templates (save/load), song import (.pro/.cho/.usr via quick-xml, no cloud)
+  commands.rs   Tauri IPC: mutations + broadcast, settings import/export, logs, media import/search, NDI, MIDI/OSC/triggers, scripture import/search, templates (save/load), song import (.pro/.cho/.usr via quick-xml, no cloud), song arrangement (set_song_arrangement, flatten at queue-time)
   logging.rs    Rolling, immediately-flushed event log (logs/app.log)
   scripture.rs  KJV search index + OpenLP/Zefania XML import + bible-api.com REST fallback
   song_import.rs Local parsers for .pro (ProPresenter via quick-xml), .cho (ChordPro), .usr (CCLI USR) â€” title+verses into library.json, no cloud
@@ -522,11 +522,27 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 
 *Add local parsers (using `quick-xml` where applicable) for `.pro` (ProPresenter export), `.cho` (ChordPro text), and CCLI USR text files, so dragging one of these onto the Library adds it as a new song with its slides/verses parsed in, no cloud calls. Scope conservatively: extract title + text content into the existing `library.json` song structure; don't attempt to preserve ProPresenter-specific styling/backgrounds from `.pro` files, just the text content. Clearly report unparseable/malformed files rather than silently failing.*
 
-- **Parsers — `src-tauri/src/song_import.rs:1` new module (`quick-xml` 0.37 already in `Cargo.toml:46`)**: `ParsedSlide { title, body }` + `ParsedSong { title, slides }`; `import_song_file(path)` dispatches by ext: `.pro` ? `parse_pro` (`quick-xml`), `.cho/.chopro/.chord` ? `parse_cho`, `.usr` ? `parse_usr`, `.txt` heuristic. `parsed_to_library_song` ? `LibrarySong` (default background, text only, styling ignored). Unsupported ext ? clear `unsupported file type` Err.
+- **Parsers ï¿½ `src-tauri/src/song_import.rs:1` new module (`quick-xml` 0.37 already in `Cargo.toml:46`)**: `ParsedSlide { title, body }` + `ParsedSong { title, slides }`; `import_song_file(path)` dispatches by ext: `.pro` ? `parse_pro` (`quick-xml`), `.cho/.chopro/.chord` ? `parse_cho`, `.usr` ? `parse_usr`, `.txt` heuristic. `parsed_to_library_song` ? `LibrarySong` (default background, text only, styling ignored). Unsupported ext ? clear `unsupported file type` Err.
 - **.pro `song_import.rs:80` `parse_pro`** `Reader::from_str` tracking `RVSlideGrouping`/`RVDisplaySlide` boundaries, `name` attributes as titles, `NSString` text nodes; fallback `strip_xml_tags` if no slides; title from first group name or file stem; malformed/empty ? clear Err.
 - **.cho `song_import.rs:200` `parse_cho`** `{title:}/{t:}` ? title, `{soc}/{eoc}` as separators, `strip_chords` `[C]` removal, split by blank lines ? `Verse N` slides; empty ? Err.
 - **USR `song_import.rs:260` `parse_usr`** `Title:` header until blank/`---`, split by blank lines + labels `Verse/Chorus/Bridge` ? slides; fallback `parse_plain` for generic `.txt`.
 - **Backend IPC** `src-tauri/src/commands.rs:315` `import_song_file(path)` (`spawn_blocking`), `src-tauri/src/lib.rs:8` `mod song_import` + `lib.rs:650` `53 handlers`, `src/lib/sync.ts:226` `importSongFile`.
-- **Frontend — Library drop zone** `src/components/Editor.svelte:86` `libraryDragActive`/`libraryDragError`/`SONG_EXTS` + helpers `handleLibraryDragOver`/`handleLibraryFiles` (validates `SONG_EXTS`, calls `api.importSongFile` per path, inline `Unsupported`/`malformed` errors). Library sidebar `Editor.svelte:1605` `ondragover/ondrop` + inner `library-drop-zone` (`Drop .pro / .cho / .usr here`). Tauri `tauri://drag-drop` now partitions `songPaths` vs `mediaPaths`. Existing playlist media drop unchanged.
+- **Frontend ï¿½ Library drop zone** `src/components/Editor.svelte:86` `libraryDragActive`/`libraryDragError`/`SONG_EXTS` + helpers `handleLibraryDragOver`/`handleLibraryFiles` (validates `SONG_EXTS`, calls `api.importSongFile` per path, inline `Unsupported`/`malformed` errors). Library sidebar `Editor.svelte:1605` `ondragover/ondrop` + inner `library-drop-zone` (`Drop .pro / .cho / .usr here`). Tauri `tauri://drag-drop` now partitions `songPaths` vs `mediaPaths`. Existing playlist media drop unchanged.
 - **Tests** `song_import.rs:380` 5 tests (cho strips chords, usr title/verses, pro simple xml, malformed handling).
 - **Verify:** `npm run check` 0/0, `cargo check` 2 `dead_code`. Manual: drag `.pro`/`.cho`/`.usr` onto Library ? Library song with verses, no styling; malformed ? inline `malformed XML` / `empty` error, not silent.
+
+## Changed (2026-09-02) - Refactor library.json to master-block architecture (blocks + arrangement) with migration
+
+*Refactor song storage in `library.json` from duplicated per-verse flat `slides` to a master-block architecture: each song stores a dictionary of unique named blocks (e.g. `Verse 1`, `Chorus`, `Bridge`) and a separate `arrangement` array of block keys defining the normal play order (e.g. `[\"Verse 1\",\"Chorus\",\"Verse 2\",\"Chorus\",\"Bridge\",\"Chorus\"]`).*
+
+- **Backend ï¿½ model `src-tauri/src/project.rs:15` `LIBRARY_SCHEMA_VERSION=2` + `LibrarySong { blocks: HashMap<String,LibrarySlide>, arrangement: Vec<String>, slides: Option<Vec<LibrarySlide>> }` + `impl LibrarySong { migrate_if_needed(), flattened_slides() }` (deduplicates by title, handles duplicate titles via `\" (2)\"` suffix). `Library` default now `2`.**
+- **Migration ï¿½ one-time, logged** `project.rs:896` `read_library` ? `read_library_with_migration_info` counts `migrated`, bumps `schema_version` to `2`, `eprintln!` + `write_library` persist, `lib.rs:267` logs via `state.logger.log(Level::Info, \"library: migrated {} song(s) ...\")`. Existing `library.json` with flat `slides` auto-converted on first load, no manual rebuild. Tested with `Amazing Grace`/`Great Is Thy Faithfulness`.**
+- **Seed** `project.rs:932` `seed_library` now builds `HashMap` blocks + `arrangement` (`[\"Verse 1\",\"Chorus\"]`) for both samples.**
+- **Queue-time flattening** `commands.rs:374` `add_song_to_playlist` now `song.flattened_slides()` ? `project.slides` (same linear result, data deduplicated).**
+- **Song creation** `commands.rs:259` `add_library_song` + `song_import.rs:56` `parsed_to_library_song` now build `blocks`+`arrangement` (handling duplicate titles).**
+- **Arrangement editing ï¿½ backend** `commands.rs:345` `set_song_arrangement` validates keys, updates `arrangement`, `broadcast_library`. Registered `lib.rs:650` + `sync.ts:228`.**
+- **Editor UI ï¿½ chips** `Editor.svelte:979` helpers `getSongBlockCount`/`getBlocksArray`/`move/duplicate/remove/addBlockToArrangement` (via `setSongArrangement`). Library sidebar `Editor.svelte:1605` shows `getBlocksArray` blocks + `arrangement-row` chip list (`ï¿½`/`ï¿½`/`?`/`ï¿½`) + `<select>+ Add blockï¿½</select>`. `onPlaylistDrop` library-verse lookup handles both `blocks` and deprecated `slides`. Counts show `arrangement.length` (queued) ï¿½ `blocks.length` (unique).**
+- **Global search** `GlobalSearch.svelte:24` updated to check `Object.values(s.blocks)` fallback.**
+- **Types** `types.ts:184` `LibrarySong { blocks: Record<string,LibrarySlide>, arrangement: string[], slides? }`.**
+- **Tests** `project.rs:998` 3 migration tests (preserve Amazing Grace, seed, duplicate). `cargo test` 53 passed.**
+- **Verify:** `npm run check` 0/0, `cargo check` 2 `dead_code`, `cargo test` 53 passed.**

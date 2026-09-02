@@ -26,16 +26,27 @@
     const songs = library?.songs ?? [];
     if (!q) return songs.slice(0, 5);
     return songs
-      .filter((s) => {
+      .filter((s: any) => {
         if (s.title.toLowerCase().includes(q)) return true;
-        return s.slides.some(
-          (v) =>
+        const blocks: any[] = s.blocks
+          ? Object.values(s.blocks)
+          : (s.slides ?? []);
+        return blocks.some(
+          (v: any) =>
             v.title.toLowerCase().includes(q) ||
             v.body.toLowerCase().includes(q),
         );
       })
       .slice(0, 8);
   });
+
+  function songVerseCount(s: any): number {
+    return s.arrangement?.length ?? (s.blocks ? Object.keys(s.blocks).length : (s.slides?.length ?? 0));
+  }
+  function songBlockTitles(s: any): string {
+    const arr: string[] = s.arrangement ?? (s.blocks ? Object.keys(s.blocks) : (s.slides?.map((v: any) => v.title) ?? []));
+    return arr.slice(0, 3).join(", ") + (arr.length > 3 ? "…" : "");
+  }
 
   // Focus when opened
   $effect(() => {
@@ -207,10 +218,10 @@
                     class="result"
                     onclick={() => void insertSong(song.id)}
                     disabled={inserting === `song-${song.id}`}
-                    title="Click to add whole song to playlist"
+                    title="Click to add whole song to playlist (uses arrangement)"
                   >
                     <span class="result-title">{song.title}</span>
-                    <span class="result-meta">{song.slides.length} {song.slides.length === 1 ? "verse" : "verses"} • {song.slides.map((v) => v.title).slice(0, 3).join(", ")}{song.slides.length > 3 ? "…" : ""}</span>
+                    <span class="result-meta">{songVerseCount(song)} {songVerseCount(song) === 1 ? "verse" : "verses"} • {songBlockTitles(song)}</span>
                   </button>
                 </li>
               {/each}

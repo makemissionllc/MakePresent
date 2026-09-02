@@ -13,7 +13,7 @@ mod triggers;
 mod windows;
 
 use logging::Level;
-use project::{persist, read_library, read_session, recover_or_seed, write_library, write_session};
+use project::{persist, read_library_with_migration_info, read_session, recover_or_seed, write_library, write_session};
 use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{Menu, MenuItem};
@@ -263,9 +263,9 @@ pub fn run() {
 
             // Single source of truth: load the last autosaved project (with
             // crash-recovery notice) or seed the sample project, and load (or
-            // seed) the reusable slide library.
+            // seed) the reusable slide library (with one-time v1 -> v2 blocks+arrangement migration).
             let (project, notice) = recover_or_seed(&data_dir);
-            let library = read_library(&data_dir);
+            let (library, migrated) = read_library_with_migration_info(&data_dir);
 
             state.logger.log(
                 Level::Info,
@@ -276,9 +276,19 @@ pub fn run() {
                     .logger
                     .log(Level::Warn, &format!("project: {} — {}", n.kind, n.message));
             }
-            state
-                .logger
-                .log(Level::Info, &format!("library: loaded {} songs", library.songs.len()));
+            state.logger.log(
+                Level::Info,
+                &format!("library: loaded {} songs", library.songs.len()),
+            );
+            if migrated > 0 {
+                state.logger.log(
+                    Level::Info,
+                    &format!(
+                        "library: migrated {} song(s) from flat slides (v1) to blocks+arrangement (v2) — bumped library schema_version to {}",
+                        migrated, project::LIBRARY_SCHEMA_VERSION
+                    ),
+                );
+            }
 
             *state.project.write().unwrap() = project;
             *state.library.write().unwrap() = library;
@@ -650,6 +660,7 @@ pub fn run() {
             commands::search_media,
             commands::list_media,
             commands::import_song_file,
+            commands::set_song_arrangement,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -84,6 +84,8 @@ function neutralise(el: HTMLElement): void {
   el.style.fontSize = "";
   el.style.lineHeight = "";
   el.style.textOverflow = "";
+  el.style.margin = "";
+  el.style.transform = "";
 }
 
 function restoreNatural(el: HTMLElement): void {
@@ -96,6 +98,8 @@ function restoreNatural(el: HTMLElement): void {
   el.style.fontSize = "";
   el.style.lineHeight = "";
   el.style.textOverflow = "";
+  el.style.margin = "";
+  el.style.transform = "";
 }
 
 function readMetrics(el: HTMLElement): Metrics {

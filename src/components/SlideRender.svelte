@@ -71,11 +71,11 @@
       class="look-title"
       data-role="title"
       style:font-family={look.titleFont}
-      style:left={`${look.titleBox.x}%`}
-      style:top={`${look.titleBox.y}%`}
-      style:width={`${look.titleBox.width}%`}
-      style:height={`${look.titleBox.height}%`}
-      style:z-index={look.titleBox.zIndex}
+      style:left={look.positioning === "absolute" ? `${look.titleBox.x}%` : undefined}
+      style:top={look.positioning === "absolute" ? `${look.titleBox.y}%` : undefined}
+      style:width={look.positioning === "absolute" ? `${look.titleBox.width}%` : undefined}
+      style:height={look.positioning === "absolute" ? `${look.titleBox.height}%` : undefined}
+      style:z-index={look.positioning === "absolute" ? look.titleBox.zIndex : undefined}
     >
       {stripChords(slide.title)}
     </h1>
@@ -86,11 +86,11 @@
         class="look-body chord-body"
         data-role="body"
         style:font-family={look.bodyFont}
-        style:left={`${look.bodyBox.x}%`}
-        style:top={`${look.bodyBox.y}%`}
-        style:width={`${look.bodyBox.width}%`}
-        style:height={`${look.bodyBox.height}%`}
-        style:z-index={look.bodyBox.zIndex}
+        style:left={look.positioning === "absolute" ? `${look.bodyBox.x}%` : undefined}
+        style:top={look.positioning === "absolute" ? `${look.bodyBox.y}%` : undefined}
+        style:width={look.positioning === "absolute" ? `${look.bodyBox.width}%` : undefined}
+        style:height={look.positioning === "absolute" ? `${look.bodyBox.height}%` : undefined}
+        style:z-index={look.positioning === "absolute" ? look.bodyBox.zIndex : undefined}
       >
         {#each slide.body.split("\n") as line}
           {#if line.trim() === ""}
@@ -113,11 +113,11 @@
         class="look-body"
         data-role="body"
         style:font-family={look.bodyFont}
-        style:left={`${look.bodyBox.x}%`}
-        style:top={`${look.bodyBox.y}%`}
-        style:width={`${look.bodyBox.width}%`}
-        style:height={`${look.bodyBox.height}%`}
-        style:z-index={look.bodyBox.zIndex}
+        style:left={look.positioning === "absolute" ? `${look.bodyBox.x}%` : undefined}
+        style:top={look.positioning === "absolute" ? `${look.bodyBox.y}%` : undefined}
+        style:width={look.positioning === "absolute" ? `${look.bodyBox.width}%` : undefined}
+        style:height={look.positioning === "absolute" ? `${look.bodyBox.height}%` : undefined}
+        style:z-index={look.positioning === "absolute" ? look.bodyBox.zIndex : undefined}
       >
         {isStage ? slide.body : stripChords(slide.body)}
       </p>

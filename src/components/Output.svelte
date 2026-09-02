@@ -213,6 +213,8 @@
     display: flex;
     flex-direction: column;
     background: #000;
+    isolation: isolate;
+    contain: layout style;
   }
 
   .frame,
@@ -226,14 +228,26 @@
   .frame {
     opacity: 1;
     transition: opacity 400ms ease;
-    contain: size layout style paint;
+    /* was `contain: size layout style paint` — `size` freezes the box to the
+       stale window size during the OS fullscreen swap-chain recreation, so the
+       incoming/outgoing frames clip to the old size instead of blending. Keep
+       layout/style/paint isolation for perf but allow the box to resize. */
+    contain: layout style paint;
+    /* Keep a cheap composited layer alive at all times so the fullscreen
+       surface switch does not discard the layer mid-fade. The heavy
+       `will-change: transform, opacity` promotion for the crossfade itself
+       stays on `.gpu` below. */
+    will-change: opacity;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    isolation: isolate;
   }
 
   /* GPU compositing hints: applied only during a crossfade so idle frames
-     never waste GPU memory. translate3d forces the browser to promote the
-     element to its own composited layer; will-change tells the compositor
-     to expect transform+opacity changes so it can prepare the layer up
-     front instead of discovering the animation on the first frame. */
+      never waste GPU memory. translate3d forces the browser to promote the
+      element to its own composited layer; will-change tells the compositor
+      to expect transform+opacity changes so it can prepare the layer up
+      front instead of discovering the animation on the first frame. */
   .frame.gpu {
     will-change: transform, opacity;
     transform: translate3d(0, 0, 0);

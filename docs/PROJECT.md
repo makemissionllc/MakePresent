@@ -632,3 +632,15 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **PART E — Look editor `LookEditorView.svelte:1` dedicated view `activeLookId`/`draft`/`scheduleCommit` + `looks-sidebar` `look-pill`/`badge` + `look-main` `look-preview-box` `SlideRender` sample + `look-form` `Name`/`titleSize`/`bodySize`/`titleFont`/`bodyFont`/`textColor`/`showBackground`/`textPosition`/`positioning` + `box-canvas` draggable `title`/`body` boxes + `assign-block` Output/Stage/NDI + `Delete`; `Editor.svelte:203` `centralView` + `LookEditorView` in center `slides` default; not just dropdown.**
 - **Visual:** Left `Slides`/`Looks` switch + Playlist/Library, Center `Slides — N` grid 180px cards 16:9 thumbs `LIVE` badge + centered name, `Selected` accent ring `Live` green, hover lift; click → `← Grid` detail `Slide name` + `Title — on-screen` + `Body` + `Background` + `Auto-advance`. `Looks` center shows Looks list + 16:9 preview + form + bounding boxes canvas 16:9. Right sticky Output `Display`/`Fullscreen`/`Transition`/`Look`/`preview`/`ON AIR`/`status`/`Clear` always top-right, then Stage. Not denser than list — generous gaps, not overwhelming.**
 - **Verify:** `npm run check` 0/0, `cargo check` 4 `dead_code` (`COPY_SUFFIX`, `ensure_stage`, `AudioPlayer::is_active`, `display_name`).**
+
+---
+
+## Changed (2026-09-02) — Fix fullscreen Fade clips out/in (containment + GPU promotion)
+
+*Investigated before fixing — OS fullscreen collides with fade, plus size containment and transient promotion.*
+
+- **OS toggle vs fade `Output.svelte:62` vs `windows.rs:1332` `toggle_output_fullscreen` + `windows.rs:1242` deferred 120ms** — fade fires immediately on `live` (`FADE_MS 400`), `set_fullscreen` recreates swap-chain at monitor size; concurrent dispatch caused stale-size clip. `show_output` already deferred; `toggle` did not.
+- **Clipping `Output.svelte:226` `.frame` `contain: size layout style paint` + `Output.svelte:206` `.stage` `overflow:hidden`** — `size` froze box to old `100vw` during resize, clips to old box then snaps.
+- **GPU lost `Output.svelte:232` `.frame.gpu` only while `crossfading` — fullscreen discarded layer mid-fade.**
+- **Fix `Output.svelte:226` `contain: layout style paint` + `will-change: opacity; transform: translateZ(0); backface-visibility:hidden; isolation:isolate` on `.frame` + `Output.svelte:206` `.stage` `isolation: isolate; contain: layout style` — size can follow viewport, promotion persists, heavy `will-change` stays on `.gpu`.**
+- **Verify:** `npm run check` 0/0, `cargo check` 4 `dead_code`. Manual fullscreen Fade now seamless.**

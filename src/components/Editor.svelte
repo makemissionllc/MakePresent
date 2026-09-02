@@ -84,6 +84,21 @@
     ...MEDIA_FILTERS[1].extensions,
   ]);
 
+  // Library song-file drop — .pro / .cho / .usr (no cloud)
+  let libraryDragActive = $state(false);
+  let libraryDragError = $state<string | null>(null);
+  const SONG_EXTS = new Set([
+    "pro",
+    "pro6",
+    "pro5",
+    "cho",
+    "chopro",
+    "chordpro",
+    "chord",
+    "usr",
+    "txt",
+  ]);
+
   // Add song modal (reusable Modal, replaces window.prompt "localhost:1420 says")
   let showAddSongTitleModal = $state(false);
   let showAddSongBodyModal = $state(false);
@@ -756,6 +771,92 @@
     }
   }
 
+  // — Library song-file drag-and-drop (.pro / .cho / .usr) — no cloud —
+  function isSongFileDrag(e: DragEvent): boolean {
+    const types = Array.from(e.dataTransfer?.types ?? []);
+    if (types.includes("Files")) {
+      // Check at least one file looks like a song file; if we can't inspect names yet, assume Files drag might be song
+      // For dragover we conservatively return true when Files is present — actual filtering happens on drop
+      return true;
+    }
+    return (e.dataTransfer?.files?.length ?? 0) > 0;
+  }
+
+  function handleLibraryDragOver(e: DragEvent): void {
+    // Allow any Files drag over Library — we validate extensions on drop and report clearly if unsupported
+    if (!Array.from(e.dataTransfer?.types ?? []).includes("Files") && (e.dataTransfer?.files?.length ?? 0) === 0) return;
+    e.preventDefault();
+    libraryDragActive = true;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleLibraryDragLeave(e: DragEvent): void {
+    const related = e.relatedTarget as HTMLElement | null;
+    if (!related || !(e.currentTarget as HTMLElement).contains(related)) {
+      libraryDragActive = false;
+    }
+  }
+
+  async function handleLibraryFiles(files: FileList | File[] | string[]): Promise<void> {
+    const asArray = Array.isArray(files) ? files : Array.from(files as FileList);
+    const songPaths: string[] = [];
+    const unsupported: string[] = [];
+    for (const entry of asArray as any[]) {
+      let name: string;
+      let path: string | undefined;
+      if (typeof entry === "string") {
+        path = entry;
+        name = entry.split(/[\/\\]/).pop() ?? entry;
+      } else {
+        const f = entry as File & { path?: string };
+        name = (f as any).name ?? "file";
+        path = (f as any).path;
+        if (!path) {
+          unsupported.push(`${name} (no filesystem path — use the Library drop zone from the desktop)`);
+          continue;
+        }
+      }
+      const ext = getFileExt(name);
+      if (!SONG_EXTS.has(ext)) {
+        // Also allow .txt that may be USR/CHO — SONG_EXTS includes txt, so this is truly unsupported
+        unsupported.push(name);
+        continue;
+      }
+      if (path) songPaths.push(path);
+    }
+    if (unsupported.length > 0) {
+      const msg = `Unsupported file type: ${unsupported.join(", ")}. Supported: ${Array.from(SONG_EXTS).join(", ")} (ProPresenter .pro, ChordPro .cho, CCLI USR .usr/.txt)`;
+      errorMsg = msg;
+      libraryDragError = msg;
+      setTimeout(() => (libraryDragError = null), 6000);
+      if (songPaths.length === 0) {
+        libraryDragActive = false;
+        return;
+      }
+    } else {
+      libraryDragError = null;
+    }
+    if (songPaths.length === 0) {
+      libraryDragActive = false;
+      return;
+    }
+    // Import sequentially so errors are reported per-file and library state stays consistent
+    for (const p of songPaths) {
+      try {
+        const lib = await api.importSongFile(p);
+        library = lib;
+        errorMsg = null;
+        libraryDragError = null;
+      } catch (err) {
+        const msg = String(err);
+        errorMsg = msg;
+        libraryDragError = msg;
+        setTimeout(() => (libraryDragError = null), 6000);
+      }
+    }
+    libraryDragActive = false;
+  }
+
   function commitTitle(id: string, value: string): void {
     if (draftId !== id || !selected || selected.id !== id) return;
     void api
@@ -1146,28 +1247,47 @@
 
     // Tauri OS file-drop fallback — some platforms/window managers deliver
     // desktop drops via `tauri://drag-drop` rather than HTML5 DataTransfer.files.
-    // This ensures the same media pipeline (hash+copy+thumb → new slide) runs.
+    // This ensures the same media pipeline (hash+copy+thumb → new slide) runs,
+    // and also handles song-file drops (.pro/.cho/.usr) onto the Library.
+    async function handleTauriPaths(paths: string[]): Promise<void> {
+      if (!Array.isArray(paths) || paths.length === 0) return;
+      const songPaths: string[] = [];
+      const mediaPaths: string[] = [];
+      const unsupported: string[] = [];
+      for (const p of paths) {
+        const ext = getFileExt(p.split(/[\/\\]/).pop() ?? p);
+        if (SONG_EXTS.has(ext)) songPaths.push(p);
+        else if (ALLOWED_EXTS.has(ext)) mediaPaths.push(p);
+        else unsupported.push(p.split(/[\/\\]/).pop() ?? p);
+      }
+      if (unsupported.length > 0) {
+        const msg = `Unsupported file type: ${unsupported.join(", ")}. Supported: ${[...SONG_EXTS].join(", ")} (songs) or ${[...ALLOWED_EXTS].join(", ")} (media)`;
+        errorMsg = msg;
+        externalDragError = msg;
+        libraryDragError = msg;
+      }
+      if (songPaths.length > 0) {
+        await handleLibraryFiles(songPaths as any);
+      }
+      if (mediaPaths.length > 0) {
+        const target = dragOverIndex ?? project?.slides.length ?? 0;
+        await handleExternalFiles(mediaPaths as any, target);
+      }
+      dragOverIndex = null;
+      externalDragActive = false;
+      libraryDragActive = false;
+    }
     void (async () => {
       try {
         unFileDrop = await listen("tauri://drag-drop", (event: any) => {
           const raw = event.payload as any;
           const paths: string[] = Array.isArray(raw) ? raw : (raw?.paths ?? []);
-          if (Array.isArray(paths) && paths.length > 0) {
-            const target = dragOverIndex ?? project?.slides.length ?? 0;
-            void handleExternalFiles(paths as any, target);
-            dragOverIndex = null;
-            externalDragActive = false;
-          }
+          void handleTauriPaths(paths);
         });
         unFileDrop2 = await listen("tauri://file-drop", (event: any) => {
           const raw = event.payload as any;
           const paths: string[] = Array.isArray(raw) ? raw : (raw?.paths ?? []);
-          if (Array.isArray(paths) && paths.length > 0) {
-            const target = dragOverIndex ?? project?.slides.length ?? 0;
-            void handleExternalFiles(paths as any, target);
-            dragOverIndex = null;
-            externalDragActive = false;
-          }
+          void handleTauriPaths(paths);
         });
       } catch {
         // listen not available in browser preview — HTML5 path still works
@@ -1482,7 +1602,21 @@
         {/if}
       </div>
 
-      <div class="sidebar-section library-section" class:has-content={librarySongs.length > 0 || librarySearch.trim().length > 0}>
+      <div
+        class="sidebar-section library-section"
+        role="region"
+        aria-label="Library — drop .pro/.cho/.usr files"
+        class:has-content={librarySongs.length > 0 || librarySearch.trim().length > 0}
+        class:library-drag-active={libraryDragActive}
+        ondragover={(e) => handleLibraryDragOver(e)}
+        ondragleave={(e) => handleLibraryDragLeave(e)}
+        ondrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          libraryDragActive = false;
+          if ((e.dataTransfer?.files?.length ?? 0) > 0) void handleLibraryFiles(e.dataTransfer!.files);
+        }}
+      >
         <div class="section-title library-title">Library</div>
         <input
           type="text"
@@ -1533,6 +1667,25 @@
           {/each}
         </ul>
         <button class="add" onclick={() => addLibrarySong()}>+ Add song</button>
+        <div
+          class="library-drop-zone"
+          role="region"
+          aria-label="Drop song files here"
+          class:drag-active={libraryDragActive}
+          ondragover={(e) => handleLibraryDragOver(e)}
+          ondragleave={(e) => handleLibraryDragLeave(e)}
+          ondrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            libraryDragActive = false;
+            if ((e.dataTransfer?.files?.length ?? 0) > 0) void handleLibraryFiles(e.dataTransfer!.files);
+          }}
+        >
+          <span class="drop-zone-label">Drop .pro / .cho / .usr here — adds to Library</span>
+          {#if libraryDragError}
+            <span class="drop-error" role="alert">{libraryDragError}</span>
+          {/if}
+        </div>
       </div>
     </aside>
 
@@ -3259,6 +3412,30 @@
     font-size: 11px;
     font-weight: 600;
     word-break: break-word;
+  }
+
+  .library-drop-zone {
+    margin-top: 10px;
+    border: 1.5px dashed var(--border);
+    border-radius: 8px;
+    padding: 9px 10px;
+    text-align: center;
+    background: var(--panel-2);
+    color: var(--text-dim);
+    font-size: 10px;
+    transition:
+      border-color 150ms ease,
+      background 150ms ease;
+  }
+  .library-drop-zone.drag-active {
+    border-color: var(--accent);
+    background: rgba(79, 140, 255, 0.08);
+    color: var(--text);
+  }
+  .library-section.library-drag-active {
+    outline: 1.5px dashed var(--accent);
+    outline-offset: 2px;
+    background: rgba(79, 140, 255, 0.03);
   }
 
   @keyframes spin {

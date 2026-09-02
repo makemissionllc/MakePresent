@@ -7,6 +7,7 @@ mod network;
 mod osc;
 mod project;
 mod scripture;
+mod song_import;
 mod state;
 mod triggers;
 mod windows;
@@ -648,6 +649,7 @@ pub fn run() {
             commands::delete_template,
             commands::search_media,
             commands::list_media,
+            commands::import_song_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

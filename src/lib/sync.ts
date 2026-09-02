@@ -222,4 +222,7 @@ export const api = {
     invoke<MediaAsset[]>("search_media", { query }),
 
   listMedia: () => invoke<MediaAsset[]>("list_media"),
+
+  importSongFile: (path: string) =>
+    invoke<Library>("import_song_file", { path }),
 };

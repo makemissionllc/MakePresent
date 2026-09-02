@@ -10,6 +10,7 @@ use crate::triggers::TriggerAction;
 use crate::windows::{self, DisplayInfo};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
@@ -310,6 +311,29 @@ pub fn delete_library_song(app: AppHandle, song_id: String) -> Result<Library, S
         library.songs.retain(|s| s.id != song_id);
     }
     state.request_save();
+    Ok(broadcast_library(&app))
+}
+
+/// Local parsers for .pro (ProPresenter export via quick-xml), .cho/.chordpro (ChordPro text), and CCLI USR text.
+/// Dragging a file onto the Library creates a new song with verses parsed locally — no cloud calls.
+/// Conservatively extracts title + text into the existing library.json structure; does not preserve
+/// ProPresenter styling/backgrounds. Malformed files return a clear Err rather than failing silently.
+#[tauri::command]
+pub async fn import_song_file(app: AppHandle, path: String) -> Result<Library, String> {
+    let p = PathBuf::from(path.clone());
+    let parsed = tauri::async_runtime::spawn_blocking(move || crate::song_import::import_song_file(&p))
+        .await
+        .map_err(|e| format!("import task failed: {e}"))??;
+    let song = crate::song_import::parsed_to_library_song(parsed);
+    let display_title = song.title.clone();
+    let state = app.state::<AppState>();
+    state.library.write().unwrap().songs.push(song);
+    state.request_save();
+    log(
+        &app,
+        Level::Info,
+        &format!("library: imported \"{}\" from {}", display_title, path),
+    );
     Ok(broadcast_library(&app))
 }
 

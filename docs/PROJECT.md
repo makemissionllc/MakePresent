@@ -319,18 +319,17 @@ src/
 
 ## NDI licensing & installation
 
-NDI® is a registered trademark of Vizrt. MakrStudio's broadcast build loads
+NDI® is a registered trademark of Vizrt NDI AB. MakrStudio's broadcast build loads
 the **free standard NDI SDK** at runtime and does **not** vendor it, so no NDI
 code or headers ship with the app and the app builds, tests, and CI-run without
 it. To actually broadcast:
 
-1. Download the free NDI SDK from <https://ndi.video> and install it (on
-   Windows place `Processing.NDI.Lib.x64.dll` alongside the app; on Linux/macOS
-   put `libndi.so.5` / `libndi.dylib` on the loader path).
-2. Keep the ndi.video link near any NDI usage and the trademark attribution
-   "NDI® is a registered trademark of Vizrt NDI AB".
-3. The NDI SDK is closed-source and royalty-free for the standard SDK; its own
-   license terms (in the SDK download) govern distribution of its DLLs.
+1. **Windows:** No manual download needed — the official **NDI 6 Runtime redistributable** (DLL-only, ~9 MB, `src-tauri/resources/NDI_Runtime_V6.exe` via `https://ndi.link/NDIRedistV6` → `https://downloads.ndi.tv/SDK/NDI_SDK/NDI%206%20Runtime.exe`, **6.0.1 Apr 16 2026**, see `src-tauri/resources/NDI_VERSION.txt`) is **bundled inside the MakrStudio installer** and runs silently (`/verysilent`) as part of MakrStudio's own NSIS install (`src-tauri/windows/hooks.nsi` `NSIS_HOOK_POSTINSTALL`, mirroring `embedBootstrapper` for WebView2 in `tauri.conf.json:74`). The app finds the DLL via the `NDI_RUNTIME_DIR_V5` (and `V6`) env var set by the redistributable (fallback: `Processing.NDI.Lib.x64.dll` next to the .exe, `src-tauri/src/broadcast.rs:144`). A fresh install on a clean VM immediately shows `ndi: broadcast enabled — source "MakrStudio - Sunday Output"` in `logs/app.log` with no `NDI SDK not found` error, and OBS (obs-ndi) discovers it. Bundled version is documented in `src-tauri/resources/NDI_VERSION.txt` — check `https://ndi.link/NDIRedistV6` quarterly and before each release per NDI terms to keep current (do NOT vendor the ~300 MB full SDK).
+2. **Linux/macOS:** Still requires manual install — put `libndi.so.5` / `libndi.dylib` on the loader path (e.g. `https://downloads.ndi.tv/SDK/NDI_SDK_Linux/Install_NDI_SDK_v6_Linux.tar.gz` or `https://ndi.link/NDIRedistV6Apple`). The redistributable-bundling here is **Windows-installer-specific** and does not change Linux/macOS.
+3. Keep the ndi.video link near any NDI usage and the trademark attribution
+   "NDI® is a registered trademark of Vizrt NDI AB" (visible in the app's Settings → NDI section and in `src-tauri/resources/NDI_VERSION.txt` — re-verified).
+4. The NDI SDK is closed-source and royalty-free for the standard SDK; its own
+   license terms (in the SDK download) govern distribution of its DLLs. Our use of `/verysilent` is per `https://docs.ndi.video/all/developing-with-ndi/sdk/software-distribution` ("You may use the command line with `/verysilent`...") and our EULA covers NDI terms.
 
 The `libloading` approach avoids the GPL-3.0 `ndi-sdk-sys` binding crate and
 the build-time SDK requirement of the other crates.io binding crates.

@@ -181,11 +181,38 @@ struct NdiRecvLib {
 
 /// Load the NDI SDK and resolve the receive-side entry points. Same DLL
 /// filename as the sender (`broadcast::lib_filename`); missing SDK is a
-/// graceful `Err`, never a crash.
+/// graceful `Err`, never a crash. Detection order mirrors `broadcast::load_ndi`:
+/// `NDI_RUNTIME_DIR_V6` → `V5` → bare filename next to .exe.
 unsafe fn load_recv_lib() -> Result<NdiRecvLib, String> {
     let file = crate::broadcast::lib_filename();
-    let lib = Library::new(file)
-        .map_err(|e| format!("NDI SDK not found (looked for \"{file}\"): {e}"))?;
+    let lib = {
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        for env_key in ["NDI_RUNTIME_DIR_V6", "NDI_RUNTIME_DIR_V5"] {
+            if let Ok(dir) = std::env::var(env_key) {
+                let trimmed = dir.trim().trim_matches('"');
+                if !trimmed.is_empty() {
+                    candidates.push(std::path::Path::new(trimmed).join(file));
+                }
+            }
+        }
+        candidates.push(std::path::PathBuf::from(file));
+        let mut last_err: Option<String> = None;
+        let mut found: Option<Library> = None;
+        for cand in &candidates {
+            match Library::new(cand) {
+                Ok(l) => {
+                    found = Some(l);
+                    break;
+                }
+                Err(e) => last_err = Some(format!("\"{}\" -> {e}", cand.display())),
+            }
+        }
+        found.ok_or_else(|| {
+            let tried = candidates.iter().map(|p| format!("\"{}\"", p.display())).collect::<Vec<_>>().join(", ");
+            let detail = last_err.unwrap_or_else(|| "no candidates".to_string());
+            format!("NDI SDK not found (tried {tried}): {detail} — install the NDI Runtime via MakrStudio's bundled installer (auto, /verysilent) or manually from https://ndi.link/NDIRedistV6")
+        })?
+    };
 
     let err_of = |n: &str, e: libloading::Error| format!("failed to resolve NDI symbol \"{n}\": {e}");
     let (initialize, destroy, find_create, find_destroy, find_wait_for_sources, find_get_sources, recv_create, recv_destroy, recv_connect, recv_capture, recv_free_video) = {

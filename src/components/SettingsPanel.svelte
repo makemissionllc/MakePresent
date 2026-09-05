@@ -823,14 +823,16 @@
             <p class="hint">
               Publishes the live slide as an NDI source
               (<code>{appState?.broadcast.sourceName}</code>) on your local
-              network so a video switcher can cut to it. Requires the free
+              network so a video switcher can cut to it. On <strong>Windows</strong>, the NDI 6 Runtime is <strong>bundled with MakrStudio's installer</strong> and installs silently
+              (<code>/verysilent</code>, <code>src-tauri/resources/NDI_Runtime_V6.exe</code> via <code>NDI_RUNTIME_DIR_V5</code>) — no manual download needed; a fresh install on a clean VM works immediately and OBS discovers it. On <strong>Linux/macOS</strong>, still install the free
               <a href="https://ndi.video" target="_blank" rel="noopener noreferrer">
                 NDI® SDK
               </a>
-              installed on this machine; it is loaded at runtime and the app
+              manually (see README.md). The SDK is loaded at runtime and the app
               keeps working normally if it is absent. Assign a Look to the NDI
               feed under <em>Looks</em>.
             </p>
+            <p class="hint" style="font-size: 11px; opacity: 0.8;">NDI® is a registered trademark of Vizrt NDI AB. Bundled NDI 6 Runtime 6.0.1 (Apr 16 2026) — see <code>src-tauri/resources/NDI_VERSION.txt</code> for currency.</p>
           </div>
 
           <div class="bcast-block">

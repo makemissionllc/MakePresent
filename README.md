@@ -235,8 +235,7 @@ and shows a recovery notice when the prior exit was unclean.
 - Runs on its **own thread** — never blocks the Output render loop — with a
   bounded, non-blocking frame channel and live-source keep-alive.
 - The **NDI SDK is loaded at runtime** (`libloading`), not linked, so the app
-  builds, tests, and CI-runs without it. Installing the free SDK (see below)
-  is only needed to actually stream.
+  builds, tests, and CI-runs without it. On **Windows**, the **NDI 6 Runtime redistributable** is **bundled into the installer** (`src-tauri/resources/NDI_Runtime_V6.exe` + `src-tauri/windows/hooks.nsi` `/verysilent`, `src-tauri/resources/NDI_VERSION.txt:3` 6.0.1 Apr 16 2026, detected via `NDI_RUNTIME_DIR_V5` → fallback next to .exe `broadcast.rs:144`), so a fresh install on a clean VM works immediately — no manual DLL step, OBS (obs-ndi) discovers it automatically. On **Linux/macOS**, still requires manual `libndi.so.5`/`libndi.dylib` install.
 - Assign a **NDI Look** independently of the on-screen Output; enable/disable
   the feed and pick the Look from **Settings**.
 - *Scope note:* the sender side is implemented; the webview→pixel **capture**
@@ -509,10 +508,7 @@ APIs and need no extra steps). `ffmpeg`/`ffprobe` on `PATH` for media
 thumbnails.
 
 **NDI (optional):** broadcasting NDI does **not** affect building or testing —
-the NDI SDK is loaded at runtime, only when the feed is enabled. To actually
-stream, install the free NDI SDK from <https://ndi.video> (Windows: put
-`Processing.NDI.Lib.x64.dll` beside the app; Linux/macOS: put `libndi.so.5` /
-`libndi.dylib` on the loader path). NDI® is a registered trademark of Vizrt.
+the NDI SDK is loaded at runtime, only when the feed is enabled. On **Windows**, the official **NDI 6 Runtime redistributable** (DLL-only, ~9 MB) is **bundled inside the MakrStudio installer** and installs silently (`/verysilent`) as part of MakrStudio's own install (mirroring WebView2 via `embedBootstrapper` in `tauri.conf.json:74` `webviewInstallMode`), so **no manual download is needed** — the app finds the DLL via the `NDI_RUNTIME_DIR_V5` env var set by the redistributable (fallback: DLL next to the .exe, see `src-tauri/src/broadcast.rs:144` detection order `NDI_RUNTIME_DIR_V6` → `V5` → bare filename). On **Linux/macOS**, still install manually: put `libndi.so.5` / `libndi.dylib` on the loader path (e.g. `https://downloads.ndi.tv/SDK/NDI_SDK_Linux/Install_NDI_SDK_v6_Linux.tar.gz` or `https://ndi.link/NDIRedistV6Apple`). Bundled version is documented in `src-tauri/resources/NDI_VERSION.txt` (currently **NDI 6 Runtime 6.0.1, Apr 16 2026** from `https://downloads.ndi.tv/SDK/NDI_SDK/NDI%206%20Runtime.exe` via `https://ndi.link/NDIRedistV6`) — check quarterly and before each release per NDI terms ("make all reasonable efforts to keep the versions you distribute up to date"). This does **not** vendor the full NDI SDK (~300 MB), only the small redistributable runtime. NDI® is a registered trademark of Vizrt NDI AB.
 
 ```bash
 # Install frontend dependencies

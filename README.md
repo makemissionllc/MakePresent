@@ -999,3 +999,13 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **Found broken:** narrow windows / high zoom below ~740px effective width clipped the Output panel (`220px 1fr 220px` fixed grid under `overflow: hidden` — Show Output unreachable); the topbar spilled buttons off-screen (no wrap); Settings tabs clipped Audio/Logs (dialog `overflow: hidden`); browse dock forced horizontal scroll on fixed 220+280+300px minimums. Fits fine: 1024×768, ultrawide, 100–175% zoom.
 - **Fixes:** center column `minmax(0,1fr)` + `.body > * { min-width: 0 }` (`Editor.svelte:2849`/`2857`); relative sidebars at ≤960px (`:2867`); stacked-scroll degrade ≤700px (`:2879` — all regions in DOM order, lists capped `38vh`, grid min 140px; icon-only collapse rejected since it would hide features); wrapping topbar with truncating view name + hidden non-critical chrome ≤700px (`:2718`/`2743`/`2762`); wrapping preview rows (`:2980`); flexible dock columns with viewport-capped minimums (`:3932`/`3952`); scrollable Settings tabs + stacking Looks grid (`SettingsPanel.svelte:1434`/`1593`); stacking Look-editor sidebar (`LookEditorView.svelte:531`).
 - **Verify:** `npm run check` 0 errors 0 warnings, `vite build` clean. **Not visually verified** — no display tooling in this environment; recommend a manual resize/zoom pass on real hardware.
+
+---
+
+## Changed (2026-09-05) — Tier 2.5 Part C verification: left-to-right flow + fixed top-right Output status
+
+*Audit found the Part C arrangement already in place — verified, not re-implemented. One gap closed.*
+
+- **Layout confirmed** `src/components/Editor.svelte:1743`/`2091`/`2308`: left sidebar (Playlist/Library/Scripture) → center slide grid → right Output/Stage panel on responsive clamp columns. **Fixed block** `.output-sticky-top` (`:2309`, CSS `:2988`): preview + ON AIR badge + live status + Clear row pinned top-right while Stage sections scroll beneath.
+- **Fix:** `Show Output` moved inside the sticky block (`:2402`, still gated on hidden output) — previously below it, buryable by panel scroll. Template-only move, no logic or sizing change.
+- **Verify:** `npm run check` 0 errors 0 warnings. Structural reading only, no visual tooling in this environment.

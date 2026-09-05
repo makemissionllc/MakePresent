@@ -722,3 +722,14 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Settings (`SettingsPanel.svelte:1434`/`1441` tabs scroll + `flex:none`; `:1593` Looks grid stacks ≤560px with wrapping pills).**
 - **Look editor (`LookEditorView.svelte:531`):** sidebar becomes a top strip with wrapping pills ≤960px (same content).
 - **Verify:** `npm run check` 0/0, `vite build` clean. **Could not verify visually** — no display/browser tooling in this environment; validated by CSS reasoning + compile only. Recommend a manual resize pass (1024×768, ~700px narrow, 150–200% zoom) on a real machine; nothing in these changes affects logic, only container sizing, so risk is visual-only.
+
+---
+
+## Changed (2026-09-05) — Tier 2.5 Part C verification: left-to-right flow + fixed top-right Output status
+
+*Audit-first session: the Part C arrangement was verified already effectively in place, not re-implemented. One gap closed (Show Output button moved into the fixed block). No sizing regressions — reuses the established clamp()/sticky approach.*
+
+- **Verified in place `Editor.svelte:1743`/`2091`/`2308`:** left `<aside class="sidebar">` (Slides/Looks switch, Playlist, Scripture, Browse header, Library) → center `<main class="editor">` (slide grid / Look editor / detail form) → right `<aside class="sidebar output-panel">` (Output + Stage). Body grid uses the responsive clamp columns (`:2849`+) from the layout audit, so the arrangement holds across window sizes and zoom.
+- **Fixed top-right block `Editor.svelte:2309` `.output-sticky-top` (`:2988`, `position: sticky`, `z-index: 3`):** Display, Fullscreen, Transition, Output Look, live `SlideRender` preview + ON AIR badge, live `output-status`, and the Clear row stay pinned while Stage/message/overlay sections scroll beneath — always visible regardless of grid selection or panel scroll. In the ≤700px stacked mode the panel renders in place and the page scrolls (sticky has no room to travel; nothing hidden).
+- **Gap closed — Show Output inside the sticky block (`:2402`):** the button previously sat *below* `.output-sticky-top`, so a scrolled panel could bury the single most time-critical control. Moved inside (after the Clear row, still `{#if !output.visible}`-gated); template-only move, no logic, no new fixed widths.
+- **Verify:** `npm run check` 0 errors 0 warnings. Not visually verified (no display tooling); structural reading only.

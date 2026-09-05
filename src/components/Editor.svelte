@@ -2397,13 +2397,13 @@
           <button class="ghost" onclick={() => clearText()} title="Hide text, keep background">Clear text</button>
           <button class="ghost" onclick={() => clearBackground()} title="Hide background, keep text on black">Clear background</button>
         </div>
-      </div>
 
-      {#if !appState?.output.visible}
-        <button class="ghost show-output" onclick={() => showOutput()}>
-          Show Output
-        </button>
-      {/if}
+        {#if !appState?.output.visible}
+          <button class="ghost show-output" onclick={() => showOutput()}>
+            Show Output
+          </button>
+        {/if}
+      </div>
 
       <div class="section-title stage-title">Stage Display</div>
 

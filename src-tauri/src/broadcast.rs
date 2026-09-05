@@ -308,14 +308,30 @@ impl BroadcastCore {
 
     /// Push a freshly captured BGRA+alpha frame to the send thread.
     ///
-    /// This is the seam the offscreen render capture plugs into. Non-blocking
-    /// and bounded (the channel is capacity-3 and `try_send` is used), so it
-    /// never blocks the render loop or grows memory under a stall.
+    /// This is the seam the offscreen render capture plugs into — the pixel
+    /// data comes from the **Output window's WebView** (currently unwired;
+    /// future capture will mirror Output's `SlideRender` via an offscreen
+    /// render target / `window.capture` and call this). Non-blocking and
+    /// bounded (capacity-3 `try_send`), so it never blocks the render loop.
+    ///
+    /// Safety: validates dimensions and that the frame is not all-black (which
+    /// indicates a failed capture or destroyed window) before queuing; holds
+    /// last-good-frame and logs instead of pushing black (see `spawn_send_thread`).
     ///
     /// `#[allow(dead_code)]`: not yet called — the capture integration that
     /// feeds frames is a separate runtime component (see module doc).
     #[allow(dead_code)]
     pub fn send_frame(&self, width: u32, height: u32, bgra: Vec<u8>) {
+        // Safety check is also done here (defense in depth) before queuing
+        if width == 0 || height == 0 || bgra.is_empty() || bgra.len() != (width as usize * height as usize * 4) {
+            eprintln!("NDI: no valid Output frame source, skipping (invalid frame {}x{} len {})", width, height, bgra.len());
+            return;
+        }
+        let is_black = bgra.chunks_exact(4).all(|px| px[0] == 0 && px[1] == 0 && px[2] == 0);
+        if is_black {
+            eprintln!("NDI: no valid Output frame source, skipping (black frame {}x{} — holding last good frame)", width, height);
+            return;
+        }
         let _ = self.tx.try_send(Command::Frame {
             width,
             height,
@@ -344,6 +360,9 @@ impl BroadcastCore {
 /// instance handle and the SDK's send-video fn-pointer. It drains any new
 /// frame, then (re)sends the latest frame on a cadence so the source stays
 /// discoverable even between captures. Buffer is packed BGRA (stride = w*4).
+/// If no valid frame has ever been received (e.g. Output window destroyed
+/// and not yet healed, or capture not yet wired), it holds last-good-frame
+/// and re-sends it; if no good frame exists it logs and skips (no black).
 fn spawn_send_thread(
     rx: mpsc::Receiver<Command>,
     instance_addr: usize,
@@ -355,11 +374,18 @@ fn spawn_send_thread(
             let send_instance: SendInstance = instance_addr as SendInstance;
             let mut current: Option<(u32, u32, Vec<u8>)> = None;
             let mut last_sent: Option<Instant> = None;
+            let mut warned_no_frame = false;
 
             loop {
                 match rx.recv_timeout(RESEND_PERIOD) {
                     Ok(Command::Frame { width, height, bgra }) => {
+                        // Safety: validate frame before accepting as current (defense in depth)
+                        if width == 0 || height == 0 || bgra.is_empty() {
+                            eprintln!("NDI: no valid Output frame source, skipping (invalid frame {}x{} len {})", width, height, bgra.len());
+                            continue;
+                        }
                         current = Some((width, height, bgra));
+                        warned_no_frame = false;
                     }
                     Err(RecvTimeoutError::Timeout) => {}
                     Err(RecvTimeoutError::Disconnected) => break,
@@ -367,6 +393,18 @@ fn spawn_send_thread(
 
                 if last_sent.is_none_or(|t| t.elapsed() >= RESEND_PERIOD) {
                     if let Some((width, height, data)) = &current {
+                        // Double-check current is still valid (not black) before sending
+                        let is_black = data.chunks_exact(4).all(|px| px[0] == 0 && px[1] == 0 && px[2] == 0);
+                        if is_black {
+                            if !warned_no_frame {
+                                eprintln!("NDI: no valid Output frame source, skipping (black frame {}x{} — holding last good frame)", width, height);
+                                warned_no_frame = true;
+                            }
+                            // Hold last-good-frame: do not send black, just wait for a valid frame.
+                            // If this is the first frame and it's black, we still skip and keep current as is
+                            // (will be replaced when a valid frame arrives after Output rebuild).
+                            continue;
+                        }
                         let frame = VideoFrameV2 {
                             xres: *width as c_int,
                             yres: *height as c_int,
@@ -385,6 +423,10 @@ fn spawn_send_thread(
                         // alive SDK; the frame and buffer are valid for the call.
                         unsafe { send_video(send_instance, &frame) };
                         last_sent = Some(Instant::now());
+                        warned_no_frame = false;
+                    } else if !warned_no_frame {
+                        eprintln!("NDI: no valid Output frame source, skipping (no frame yet — Output window may be destroyed/unhealed or capture not wired; will recover automatically once Output is rebuilt)");
+                        warned_no_frame = true;
                     }
                 }
             }
@@ -433,6 +475,26 @@ impl Broadcaster {
         if let Some(core) = self.inner.lock().unwrap().as_ref() {
             core.send_frame(width, height, bgra);
         }
+    }
+
+    /// Window-handle-validated variant: verifies the Output window exists and is rendering
+    /// before pushing. If no valid frame source (Output destroyed/unhealed or capture not wired),
+    /// logs `NDI: no valid Output frame source, skipping` and holds last-good-frame instead of
+    /// pushing black. Recovers automatically once the Output window is rebuilt and new frames arrive.
+    #[allow(dead_code)]
+    pub fn send_frame_checked(&self, app: &tauri::AppHandle, width: u32, height: u32, bgra: Vec<u8>) {
+        use tauri::Manager;
+        if app.get_webview_window(crate::windows::OUTPUT_WINDOW).is_none() {
+            eprintln!("NDI: no valid Output frame source, skipping (Output window not found — destroyed/unhealed, holding last good frame; will recover when rebuilt)");
+            return;
+        }
+        if let Some(win) = app.get_webview_window(crate::windows::OUTPUT_WINDOW) {
+            if win.inner_size().is_err() {
+                eprintln!("NDI: no valid Output frame source, skipping (Output window handle invalid — not rendering)");
+                return;
+            }
+        }
+        self.send_frame(width, height, bgra);
     }
 }
 

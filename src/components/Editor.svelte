@@ -110,11 +110,9 @@
   // Project Hub (Startup launcher)
   let showHub = $state(false);
 
-  // Playlist templates (save/load reusable structures like "Worship", "Sermon")
+  // Saved playlists (reusable slide sequences) — surfaced in the View Hub + Save-as-Playlist
   let templates = $state<PlaylistTemplate[]>([]);
-  let showSaveTemplateModal = $state(false);
-  let showTemplatePicker = $state(false);
-  let templatePickerLoading = $state(false);
+  let showSavePlaylistModal = $state(false);
 
   // Global search (Ctrl/Cmd+K) — library + all Bibles + media cache
   let globalSearchOpen = $state(false);
@@ -1273,6 +1271,7 @@
 
   function openHub(): void {
     showHub = true;
+    void refreshPlaylists();
   }
 
   async function handleHubCreate(
@@ -1295,52 +1294,46 @@
     openHub();
   }
 
-  // Playlist templates
-  function openSaveTemplate(): void {
-    showSaveTemplateModal = true;
-  }
-
-  async function handleSaveTemplateConfirm(name: string): Promise<void> {
-    const trimmed = name.trim();
-    if (!trimmed) return;
+  // View Hub — create from a saved playlist (blank view + load, reusing existing backend)
+  async function handleHubCreateFromPlaylist(
+    playlistId: string,
+    opts: { title: string; aspect: string; theme: string; transition: string },
+  ): Promise<void> {
     try {
       errorMsg = null;
-      templates = await api.saveTemplate(trimmed);
-      showSaveTemplateModal = false;
+      welcomeDismissed = true;
+      // Create a blank view shell, then populate it from the saved playlist.
+      appState = await api.newProjectFromPreset("blank", opts.title, opts.aspect, opts.theme, opts.transition);
+      appState = await api.loadTemplate(playlistId);
+      const slides = appState.project.slides;
+      selectedId = slides[0]?.id ?? null;
+      showHub = false;
     } catch (e) {
       errorMsg = String(e);
     }
   }
 
-  async function openTemplatePicker(): Promise<void> {
-    showTemplatePicker = true;
-    templatePickerLoading = true;
+  async function refreshPlaylists(): Promise<void> {
     try {
       errorMsg = null;
       templates = await api.listTemplates();
     } catch (e) {
       errorMsg = String(e);
-    } finally {
-      templatePickerLoading = false;
     }
   }
 
-  async function handleLoadTemplate(templateId: string): Promise<void> {
-    try {
-      errorMsg = null;
-      appState = await api.loadTemplate(templateId);
-      const slides = appState.project.slides;
-      selectedId = slides[0]?.id ?? null;
-      showTemplatePicker = false;
-    } catch (e) {
-      errorMsg = String(e);
-    }
+  // Save-as-Playlist (reuse existing save_template backend — the "save it for next service" loop)
+  function openSavePlaylist(): void {
+    showSavePlaylistModal = true;
   }
 
-  async function handleDeleteTemplate(templateId: string): Promise<void> {
+  async function handleSavePlaylistConfirm(name: string): Promise<void> {
+    const trimmed = name.trim();
+    if (!trimmed) return;
     try {
       errorMsg = null;
-      templates = await api.deleteTemplate(templateId);
+      templates = await api.saveTemplate(trimmed);
+      showSavePlaylistModal = false;
     } catch (e) {
       errorMsg = String(e);
     }
@@ -1567,6 +1560,7 @@
           selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
           // Boot hub — Affinity-style launcher
           showHub = true;
+          void refreshPlaylists();
         }
       } catch (e) {
         if (!cancelled) errorMsg = String(e);
@@ -1623,7 +1617,7 @@
       <span class="kbd">Ctrl+K</span>
     </button>
     <span class="saved-label">{savedLabel}</span>
-    <button class="ghost" onclick={() => newProject()}>New project</button>
+    <button class="ghost" onclick={() => newProject()}>New view</button>
     <button class="ghost" onclick={() => clearOutput()}>Clear output</button>
     <button class="ghost" title="Settings" onclick={() => (settingsOpen = true)}>
       &#9881; Settings
@@ -1740,8 +1734,7 @@
         </ul>
         <button class="add" onclick={() => addSlide()}>+ Add slide</button>
         <div class="template-actions">
-          <button class="ghost template-btn" onclick={() => openSaveTemplate()} title="Save current playlist as a reusable template">Save as template</button>
-          <button class="ghost template-btn" onclick={() => void openTemplatePicker()} title="Load a saved template into the playlist">Load template</button>
+          <button class="ghost template-btn" onclick={() => openSavePlaylist()} title="Save this View's playlist as a reusable Playlist">Save as Playlist</button>
         </div>
         <div
           class="external-drop-zone"
@@ -2560,61 +2553,23 @@
 <ProjectHub
   open={showHub}
   recentName={project?.name ?? ""}
+  playlists={templates}
   onClose={() => (showHub = false)}
   onCreate={handleHubCreate}
+  onCreateFromPlaylist={handleHubCreateFromPlaylist}
 />
 
 <Modal
-  open={showSaveTemplateModal}
-  title="Save as template"
-  label="Template name — e.g. Pre-Service Loop, Worship, Sermon"
+  open={showSavePlaylistModal}
+  title="Save as Playlist"
+  label="Playlist name — e.g. Pre-Service Loop, Worship, Sermon"
   placeholder="e.g. Worship"
   initialValue=""
   confirmLabel="Save"
   cancelLabel="Cancel"
-  onConfirm={handleSaveTemplateConfirm}
-  onCancel={() => (showSaveTemplateModal = false)}
+  onConfirm={handleSavePlaylistConfirm}
+  onCancel={() => (showSavePlaylistModal = false)}
 />
-
-{#if showTemplatePicker}
-  <div
-    class="modal-backdrop"
-    onclick={() => (showTemplatePicker = false)}
-    onkeydown={(e) => e.key === "Escape" && (showTemplatePicker = false)}
-    role="presentation"
-  ></div>
-  <div class="modal-card template-picker" role="dialog" aria-modal="true" aria-label="Load template">
-    <header class="modal-header">
-      <h2>Load template</h2>
-      <button class="ghost modal-close" onclick={() => (showTemplatePicker = false)} aria-label="Close">×</button>
-    </header>
-    <p class="template-hint">Pick a saved playlist structure to populate this project. Media stays referenced by hash; library slides keep their library links.</p>
-    {#if templatePickerLoading}
-      <p class="browse-placeholder"><span class="media-spinner"></span> Loading…</p>
-    {:else if templates.length === 0}
-      <p class="browse-placeholder">No templates yet — use “Save as template” to create one (e.g. Pre-Service Loop, Worship, Sermon).</p>
-    {:else}
-      <ul class="template-list">
-        {#each templates as tmpl (tmpl.id)}
-          <li class="template-row">
-            <div class="template-meta">
-              <span class="template-name">{tmpl.name}</span>
-              <span class="template-count">{tmpl.items.length} {tmpl.items.length === 1 ? "slide" : "slides"}</span>
-              <span class="template-at">{tmpl.createdAt ? new Date(tmpl.createdAt).toLocaleDateString() : ""}</span>
-            </div>
-            <div class="template-actions-row">
-              <button class="ghost primary" onclick={() => void handleLoadTemplate(tmpl.id)}>Load</button>
-              <button class="ghost" onclick={() => void handleDeleteTemplate(tmpl.id)} title="Delete template">Delete</button>
-            </div>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-    <div class="modal-actions">
-      <button class="ghost" onclick={() => (showTemplatePicker = false)}>Close</button>
-    </div>
-  </div>
-{/if}
 
 <GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} />
 
@@ -3895,105 +3850,6 @@
     flex: 1;
     font-size: 11px;
     padding: 6px 8px;
-  }
-  .template-picker {
-    min-width: min(560px, 92vw);
-    max-width: 92vw;
-    max-height: 80vh;
-    overflow: auto;
-  }
-  .template-hint {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin: 8px 0 12px;
-    line-height: 1.4;
-  }
-  .template-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .template-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--panel-2);
-  }
-  .template-meta {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-  .template-name {
-    font-weight: 600;
-    font-size: 13px;
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .template-count {
-    font-size: 11px;
-    color: var(--text-dim);
-  }
-  .template-at {
-    font-size: 10px;
-    color: var(--text-dim);
-  }
-  .template-actions-row {
-    display: flex;
-    gap: 6px;
-    flex-shrink: 0;
-  }
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 40;
-  }
-  .modal-card.template-picker {
-    position: fixed;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 41;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 18px;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
-  }
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-  .modal-header h2 {
-    font-family: var(--font-display);
-    font-size: 14px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin: 0;
-  }
-  .modal-close {
-    font-size: 18px;
-    line-height: 1;
-    padding: 2px 8px;
-  }
-  .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    margin-top: 14px;
   }
 
   .field-hint {

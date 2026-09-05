@@ -150,7 +150,7 @@ All data lives under the app data directory
 | `session.json` | Crash-recovery bookkeeping (`clean_shutdown` flag). |
 | `settings.json` | Per-machine settings (displays, fullscreen, stage, default transition, look mappings). |
 | `library.json` | Reusable song/slide library. |
-| `templates.json` | Reusable playlist templates — stores slide refs (title/body/background/library refs), atomic writes. |
+| `templates.json` | Saved **Playlists** (reusable slide sequences) — stores slide refs (title/body/background/library refs), atomic writes. |
 | `logs/app.log` | Immediately-flushed, rotating event log (capped ~8000 lines). |
 | `media/<hash>.<ext>` | Managed copies of imported media, deduped by **SHA-256** content hash. |
 | `thumbnails/<hash>.jpg` | ffmpeg-generated thumbnails keyed by content hash. |
@@ -257,11 +257,11 @@ and shows a recovery notice when the prior exit was unclean.
 - *Scope note:* triggers drive slide *actions*; they don't navigate the whole
   UI (e.g. no playlist navigation via hardware yet).
 
-### Playlist templates
-- Save the **current playlist** as a named reusable template (e.g. “Pre-Service Loop”, “Worship”, “Sermon”) and load a template to **quickly populate a new project’s playlist**.
-- Templates store **slide references** — `title` / `body` / `background` (media hashed paths, not duplicated bytes) + `libraryId`/`librarySlideId` links — so a template is a lightweight structure, not a full copy of media or library content.
-- Persisted in `templates.json` with the **same atomic-write** pattern as `project.json`/`library.json` (temp file + `sync_all` + rename), and logged.
-- Editor: **Save as template** (Modal prompts name, upserts by name) + **Load template** picker (lists templates, shows slide count + date, Load / Delete); loading replaces the playlist with fresh ids (preserving library links and backgrounds), clears `live`, selects the first slide.
+### View Hub & Playlists
+- **One unified start flow:** opening the app (or the **New view** topbar button) shows the **View Hub** — the single entry point. Pick a **starting Playlist**: the built-in service Playlists (Sunday Morning Service, Midweek, Youth Event, Blank/Custom) **plus** any Playlists you previously saved, all in one list (`src/lib/components/ProjectHub.svelte:46`). Configure View-level settings (title/date, target resolution, theme, default transition) and **Create View**.
+- **A View** is the working document for a specific service — it owns a title/date, its live playlist, and its output settings (persisted in `project.json`).
+- **A Playlist** is a saved, reusable slide sequence — not tied to a date, just content + order. Playlists store **slide references** — `title` / `body` / `background` (media hashed paths, not duplicated bytes) + `libraryId`/`librarySlideId` links — so they're lightweight structures, not copies of media or library content. Persisted in `templates.json` with the **same atomic-write** pattern as `project.json`/`library.json` (temp file + `sync_all` + rename).
+- **During a View**, the playlist panel offers **Save as Playlist** (Modal prompts a name, upserts by name) — the "save it for next service" loop: run the View, then save its sequence back as a reusable Playlist for next time. Creating a View from a saved Playlist reuses the existing backend (`new_project_from_preset` + `load_template`), so library links and backgrounds are preserved and slides get fresh ids.
 
 ### Global search (Ctrl/Cmd+K)
 - **One overlay for everything** — `Ctrl+K` / `Cmd+K` (or topbar ⌕ Search) opens a search palette that queries the **song library**, **all cached/imported Bibles**, and the **media cache** simultaneously, showing categorized results for adapting quickly mid-service.
@@ -451,13 +451,13 @@ src-tauri/                                 Rust backend
 | `import_song_file` | Import .pro/.cho/.usr into Library (local parsers, no cloud) |
 | `set_song_arrangement` | Update a song's arrangement (reorder/duplicate/remove blocks) |
 
-**Templates**
+**Playlists** (backed by `templates.json`; internal command names unchanged)
 | Command | Purpose |
 |---|---|
-| `list_templates` | List saved playlist templates |
-| `save_template` | Save current playlist as a named template (atomic `templates.json`) |
-| `load_template` | Load a template into the playlist (fresh ids, preserve library/background refs) |
-| `delete_template` | Delete a saved template |
+| `list_templates` | List saved playlists (shown in the View Hub) |
+| `save_template` | Save the current View's playlist as a named reusable Playlist (atomic `templates.json`) |
+| `load_template` | Load a saved Playlist into a View (fresh ids, preserve library/background refs) |
+| `delete_template` | Delete a saved Playlist (backend; not currently surfaced in the UI) |
 
 **Stage message (stage-only)**
 | Command | Purpose |
@@ -593,6 +593,16 @@ All `#[tauri::command]` + live paths scanned for synchronous Windows OS calls th
 Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Blocking Audit.
 
 ---
+
+## Changed (2026-09-05) — Merge Project Hub ↔ Playlist Templates into one unified View/Playlist flow
+
+*Collapses the two separate systems (Project Hub's hardcoded preset cards vs. the separate save/load-template flow) into a single entry point. Display terminology renamed only: **"Project" → "View"** (the working document an operator runs a service from) and **"Template" → "Playlist"** (a saved, reusable slide sequence). Backend and data model untouched — fully backward compatible with existing `project.json` / `templates.json` on disk (see the `docs/PROJECT.md` changelog for full detail).*
+
+- **View Hub (unified starting point)** `src/lib/components/ProjectHub.svelte:106-209` — header "View Hub" (was "Project Hub"), gallery heading "Starting Playlist" (was "New from Template"), inspector "View Configuration", "View Title / Date", "Create View — N slides", "Recent View". The gallery is one `$derived` list `ProjectHub.svelte:46` merging the 4 built-in presets (`src/lib/presets.ts:3`) **plus** user-saved playlists from `list_templates` (`playlists` prop `ProjectHub.svelte:10`), each badged `♻ Saved`. No separate load-template flow remains.
+- **Create from a saved Playlist** `src/components/Editor.svelte:1298-1314` `handleHubCreateFromPlaylist` — reuses existing backend: `newProjectFromPreset("blank", …)` + `loadTemplate(playlistId)`; new `refreshPlaylists()` `Editor.svelte:1316-1323` feeds the hub at boot `Editor.svelte:1562-1563` and on open `Editor.svelte:1273-1274`.
+- **Save as Playlist** `Editor.svelte:1326-1338` (renamed from "Save as template", reuses `save_template`); modal "Save as Playlist" `Editor.svelte:2562-2571`; button "Save as Playlist" `Editor.svelte:1737`. The **Load template** picker modal + button were removed; `delete_template` remains in the backend/sync layer but is not surfaced in the UI.
+- **"New project" → "New View"** topbar button `Editor.svelte:1620`. Stale duplicate `src/components/ProjectHub.svelte` deleted (only `src/lib/components/ProjectHub.svelte` is used, `Editor.svelte:13`).
+- **Verify:** `npm run check` 0 errors 0 warnings; `cargo check` OK (3 pre-existing `dead_code`: `COPY_SUFFIX` `media.rs:16`, `AudioPlayer::is_active` `audio.rs:390`, `Slide::display_name` `project.rs:92`). Manual: boot → View Hub lists 4 built-in starting Playlists + any saved; create from a saved Playlist → View with theme/title applied and playlist populated (fresh ids, `live` cleared, first slide selected); Save as Playlist upserts; restart → Playlists persist in the hub; existing `project.json` / `templates.json` load unchanged.
 
 ## Changed (2026-09-04) — Targeted clear: clear_text / clear_background
 

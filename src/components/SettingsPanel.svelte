@@ -695,7 +695,7 @@
         <div class="panel-general">
           <p class="hint">
             These are per-machine settings: display assignments, fullscreen,
-            stage visibility, and the default transition. The project and
+            stage visibility, and the default transition. The current view and
             library are <em>not</em> part of this export.
           </p>
 
@@ -748,7 +748,7 @@
             Looks are named style profiles — font size, text colour, text
             position and whether the background is shown. Each output window
             (Main, Stage, NDI feed) renders the same live slide but applies
-            its assigned Look. They are stored with the project and update
+            its assigned Look. They are stored with the current view and update
             instantly while live.
           </p>
 

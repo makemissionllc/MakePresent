@@ -44,6 +44,16 @@
   }
 
   const gallery = $derived<GalleryItem[]>([
+    ...playlists.map((pt: PlaylistTemplate) => ({
+      kind: "playlist" as const,
+      id: pt.id,
+      name: pt.name,
+      category: "Saved",
+      description: `Saved reusable playlist — load to start a service.\nSaved ${new Date(pt.createdAt).toLocaleDateString()}.`,
+      slideCount: pt.items.length,
+      defaultAspect: "16:9",
+      playlistId: pt.id,
+    })),
     ...PRESETS.map((p: ServicePreset) => ({
       kind: "preset" as const,
       id: p.id,
@@ -53,16 +63,6 @@
       slideCount: p.playlistItems.length,
       defaultAspect: p.defaultAspect,
       presetId: p.id,
-    })),
-    ...playlists.map((pt: PlaylistTemplate) => ({
-      kind: "playlist" as const,
-      id: pt.id,
-      name: pt.name,
-      category: "Saved",
-      description: "Saved reusable playlist — load to start a service.\nSaved {new Date(pt.createdAt).toLocaleDateString()}.",
-      slideCount: pt.items.length,
-      defaultAspect: "16:9",
-      playlistId: pt.id,
     })),
   ]);
 

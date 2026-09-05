@@ -117,7 +117,7 @@
   let pendingSongTitle = $state("");
   let pendingSongBody = $state("");
 
-  // Project Hub (Startup launcher)
+  // View Hub (Startup launcher)
   let showHub = $state(false);
 
   // Saved playlists (reusable slide sequences) — surfaced in the View Hub + Save-as-Playlist
@@ -144,7 +144,7 @@
     },
     {
       eyebrow: "Output",
-      title: "Project when you're ready",
+      title: "Show it when you're ready",
       body: "Pick a display, then click Show Output. While live, ← and → move through slides.",
     },
     {
@@ -633,7 +633,7 @@
       return;
     }
     if (!project) {
-      errorMsg = "Project not loaded yet";
+      errorMsg = "View not loaded yet";
       dragOverIndex = null;
       isDragging = false;
       return;
@@ -830,7 +830,7 @@
     }
 
     if (!project) {
-      errorMsg = "Project not loaded yet";
+      errorMsg = "View not loaded yet";
       return;
     }
     const len = project.slides.length;
@@ -1703,7 +1703,7 @@
 <div class="shell">
   <header class="topbar">
     <h1>MakrStudio</h1>
-    <span class="project-name">{project?.name ?? "No project"}</span>
+    <span class="project-name">{project?.name ?? "No view"}</span>
     <span class="live-indicator" class:live={!!project?.live}>
       {#if project?.live}LIVE{:else}OFFLINE{/if}
     </span>

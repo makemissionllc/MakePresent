@@ -978,3 +978,14 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **First-run guided tour** `src/components/GuidedTour.svelte:1` — 4 non-blocking steps (`Editor.svelte:139`: Playlist → Output → Songs & Scripture → "Ignore all of this on Sunday morning"), Back/Next with always-visible Skip/×/`Esc` (`Editor.svelte:1456`), accent outline on the current target (`tour-highlight` `Editor.svelte:3688`). Auto-starts only on a brand-new install (`firstRun`, no `project.json`/`settings.json`) after the View Hub closes (`Editor.svelte:166`), never re-shows after dismissal (`Editor.svelte:189`).
 - **Help entry point** — topbar `? Help` button (`Editor.svelte:1722`) opens `src/components/HelpModal.svelte:1`: replay-the-tour button plus the full shortcuts list (`←/→` advance, `Ctrl+K` search, `Esc` close, `↑/↓/Enter` Scripture pick, `Enter`/`Esc` dialogs).
 - **Verify:** `npm run check` 0 errors 0 warnings, `vite build` clean. No Rust changes.
+
+---
+
+## Changed (2026-09-05) — View/Playlist audit follow-ups (display-string sweep)
+
+*Follow-up to the View/Playlist merge (verified already-shipped: unified View Hub gallery of hardcoded presets + `templates.json` playlists, `Save as Playlist` via `save_template`, display rename with internals kept). Four small audit findings, all display-text-only.*
+
+- **Saved-playlist date fix** `src/lib/components/ProjectHub.svelte:62` — plain string showed literal `{new Date(...)}` on saved cards; now interpolates (e.g. "Saved Sept 5, 2026"). **Gallery order** `ProjectHub.svelte:46` — saved Playlists now list first, matching the existing "appear at the top" note.
+- **View language** `src/components/Editor.svelte:1706` (`No view`), `:636`/`:833` (`View not loaded yet`), `:147` tour step (`Show it when you're ready`), `:120` comment; `src/components/SettingsPanel.svelte:697` (export hint) and `:751` (Looks hint).
+- **Internal/external naming map (for future work):** `New view` → `newProject()` → `new_project_from_preset`; `Save as Playlist` → `save_template`; hub create-from-playlist → `new_project_from_preset("blank")` + `load_template`. Backend structs/files unchanged (`Project`, `PlaylistTemplate`, `TemplateItem`, `project.json`, `templates.json`).
+- **Verify:** `npm run check` 0 errors 0 warnings, `cargo check` clean (3 pre-existing `dead_code`). Backward compat untouched (`#[serde(default)]` on newer `TemplateItem` fields, corrupt store → default, `load_template` mints fresh ids + clears live).

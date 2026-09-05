@@ -298,15 +298,13 @@ pub fn ensure_output(app: &AppHandle) -> Result<WebviewWindow, String> {
     #[cfg(windows)]
     {
         state.logger.log(
-            crate::logging::Level::Error,
-            "windows: ensure_output FALLBACK triggered — Output window was not pre-created! Scheduling deferred build (Windows inline deadlock avoidance).",
+            crate::logging::Level::Warn,
+            "windows: ensure_output FALLBACK — Output window not pre-created, building synchronously (fallback now completes, not just scheduled)",
         );
-        let app_for_run = app.clone();
-        let app_for_build = app.clone();
-        let _ = app_for_run.run_on_main_thread(move || {
-            mark_as_main_thread();
+        let app_clone = app.clone();
+        return run_on_main(&app, &state, "ensure_output_fallback", move || {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                WebviewWindow::builder(&app_for_build, OUTPUT_WINDOW, output_url())
+                WebviewWindow::builder(&app_clone, OUTPUT_WINDOW, output_url())
                     .title("MakrStudio - Output")
                     .decorations(false)
                     .resizable(false)
@@ -317,13 +315,84 @@ pub fn ensure_output(app: &AppHandle) -> Result<WebviewWindow, String> {
             match r {
                 Err(panic) => {
                     let msg = if let Some(s) = panic.downcast_ref::<&str>() { s.to_string() } else if let Some(s) = panic.downcast_ref::<String>() { s.clone() } else { "unknown panic".to_string() };
-                    app_for_build.state::<AppState>().logger.log(Level::Error, &format!("windows: deferred fallback Output PANICKED: {msg}"));
+                    app_clone.state::<AppState>().logger.log(
+                        Level::Error,
+                        &format!("windows: ensure_output fallback PANICKED: {msg}"),
+                    );
+                    Err(format!("output window creation panicked: {msg}"))
                 }
-                Ok(Err(e)) => app_for_build.state::<AppState>().logger.log(Level::Error, &format!("windows: deferred fallback Output FAILED: {e}")),
-                Ok(Ok(w)) => app_for_build.state::<AppState>().logger.log(Level::Info, &format!("windows: deferred fallback Output created ({})", describe_window(&w))),
+                Ok(Err(e)) => {
+                    app_clone.state::<AppState>().logger.log(
+                        Level::Error,
+                        &format!("windows: ensure_output fallback FAILED: {e}"),
+                    );
+                    Err(format!("failed to create output window: {e}"))
+                }
+                Ok(Ok(window)) => {
+                    // Attach self-healing handler (same as precreate)
+                    let app_for_handler = app_clone.clone();
+                    window.on_window_event(move |event| {
+                        if !matches!(event, WindowEvent::Destroyed) {
+                            return;
+                        }
+                        if APP_SHUTTING_DOWN.load(Ordering::SeqCst) {
+                            let st = app_for_handler.state::<AppState>();
+                            st.logger.log(
+                                Level::Info,
+                                "windows: output window destroyed during app shutdown — skipping self-healing",
+                            );
+                            return;
+                        }
+                        let st = app_for_handler.state::<AppState>();
+                        let settings = st.current_settings();
+                        let monitor_index = settings.output_display_index.unwrap_or(0);
+                        let fullscreen = settings.output_fullscreen;
+                        let start = std::time::Instant::now();
+                        st.logger.log(
+                            Level::Warn,
+                            "windows: output window destroyed unexpectedly — starting self-healing",
+                        );
+                        let app_heal = app_for_handler.clone();
+                        std::thread::spawn(move || {
+                            match move_output_to(&app_heal, monitor_index) {
+                                Ok(window) => {
+                                    if fullscreen {
+                                        let _ = window.set_fullscreen(true);
+                                    }
+                                    let elapsed = start.elapsed().as_millis();
+                                    let st = app_heal.state::<AppState>();
+                                    st.logger.log(
+                                        Level::Warn,
+                                        &format!(
+                                            "windows: self-healing complete — output window recreated on monitor #{monitor_index} in {elapsed}ms"
+                                        ),
+                                    );
+                                    let _ = crate::commands::snapshot_and_emit(&app_heal);
+                                }
+                                Err(e) => {
+                                    let elapsed = start.elapsed().as_millis();
+                                    let st = app_heal.state::<AppState>();
+                                    st.logger.log(
+                                        Level::Error,
+                                        &format!(
+                                            "windows: self-healing FAILED after {elapsed}ms — could not recreate output window: {e}"
+                                        ),
+                                    );
+                                }
+                            }
+                        });
+                    });
+                    app_clone.state::<AppState>().logger.log(
+                        Level::Info,
+                        &format!(
+                            "windows: ensure_output fallback created successfully ({})",
+                            describe_window(&window)
+                        ),
+                    );
+                    Ok(window)
+                }
             }
         });
-        return Err("output window not yet pre-created — deferred build scheduled (retry shortly)".to_string());
     }
     #[cfg(not(windows))]
     {
@@ -1011,11 +1080,10 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
             );
             msg
         })?;
-        let logger = &app_main.state::<AppState>().logger;
         let name = monitor.name().cloned().unwrap_or_else(|| "(unnamed)".to_string());
         let target_pos = *monitor.position();
         let target_size = monitor.size();
-        logger.log(
+        app_main.state::<AppState>().logger.log(
             crate::logging::Level::Info,
             &format!(
                 "windows: move_output_to: monitor #{monitor_index} \"{name}\" is {}x{} at ({}, {})",
@@ -1024,34 +1092,90 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
         );
 
         // Fast HashMap lookup — never calls builder().build() from a live handler (Windows deadlock avoidance).
+        // For self-healing (Destroyed handler) we are already on a spawned thread, so we can
+        // block on run_on_main and actually return the rebuilt window instead of fire-and-forget.
         let window = match app_main.get_webview_window(OUTPUT_WINDOW) {
             Some(w) => w,
             None => {
-                logger.log(
-                    crate::logging::Level::Error,
-                    "windows: move_output_to — Output window not pre-created! Scheduling deferred build (fallback)",
+                app_main.state::<AppState>().logger.log(
+                    crate::logging::Level::Warn,
+                    "windows: move_output_to — Output window not pre-created, building synchronously (self-healing fallback)",
                 );
                 #[cfg(windows)]
                 {
-                    let ac_for_run = app_main.clone();
-                    let ac_for_build = app_main.clone();
-                    let _ = ac_for_run.run_on_main_thread(move || {
-                        mark_as_main_thread();
-                        let r = WebviewWindow::builder(&ac_for_build, OUTPUT_WINDOW, output_url())
+                    let app_clone = app_main.clone();
+                    let app_clone_for_state = app_clone.clone();
+                    return run_on_main(&app_main, &*app_clone_for_state.state::<AppState>(), "move_output_to_create_output", move || {
+                        let window = WebviewWindow::builder(&app_clone, OUTPUT_WINDOW, output_url())
                             .title("MakrStudio - Output")
                             .decorations(false)
                             .resizable(false)
                             .fullscreen(false)
                             .visible(false)
-                            .build();
-                        if let Err(e) = r {
-                            ac_for_build.state::<AppState>().logger.log(
-                                crate::logging::Level::Error,
-                                &format!("windows: deferred Output fallback FAILED: {e}"),
+                            .build()
+                            .map_err(|e| format!("failed to create output window: {e}"))?;
+                        // Attach self-healing handler for future destroys (same as precreate)
+                        let app_for_handler = app_clone.clone();
+                        window.on_window_event(move |event| {
+                            if !matches!(event, WindowEvent::Destroyed) {
+                                return;
+                            }
+                            if APP_SHUTTING_DOWN.load(Ordering::SeqCst) {
+                                let st = app_for_handler.state::<AppState>();
+                                st.logger.log(
+                                    Level::Info,
+                                    "windows: output window destroyed during app shutdown — skipping self-healing",
+                                );
+                                return;
+                            }
+                            let st = app_for_handler.state::<AppState>();
+                            let settings = st.current_settings();
+                            let monitor_index = settings.output_display_index.unwrap_or(0);
+                            let fullscreen = settings.output_fullscreen;
+                            let start = std::time::Instant::now();
+                            st.logger.log(
+                                Level::Warn,
+                                "windows: output window destroyed unexpectedly — starting self-healing",
                             );
-                        }
+                            let app_heal = app_for_handler.clone();
+                            std::thread::spawn(move || {
+                                match move_output_to(&app_heal, monitor_index) {
+                                    Ok(window) => {
+                                        if fullscreen {
+                                            let _ = window.set_fullscreen(true);
+                                        }
+                                        let elapsed = start.elapsed().as_millis();
+                                        let st = app_heal.state::<AppState>();
+                                        st.logger.log(
+                                            Level::Warn,
+                                            &format!(
+                                                "windows: self-healing complete — output window recreated on monitor #{monitor_index} in {elapsed}ms"
+                                            ),
+                                        );
+                                        let _ = crate::commands::snapshot_and_emit(&app_heal);
+                                    }
+                                    Err(e) => {
+                                        let elapsed = start.elapsed().as_millis();
+                                        let st = app_heal.state::<AppState>();
+                                        st.logger.log(
+                                            Level::Error,
+                                            &format!(
+                                                "windows: self-healing FAILED after {elapsed}ms — could not recreate output window: {e}"
+                                            ),
+                                        );
+                                    }
+                                }
+                            });
+                        });
+                        app_clone.state::<AppState>().logger.log(
+                            Level::Info,
+                            &format!(
+                                "windows: move_output_to — Output window created via self-healing fallback ({})",
+                                describe_window(&window)
+                            ),
+                        );
+                        Ok(window)
                     });
-                    return Err("output window not pre-created — deferred build scheduled".to_string());
                 }
                 #[cfg(not(windows))]
                 {
@@ -1107,14 +1231,14 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
         // Debug trace of the exact pixel coordinates we place the window at.
         // Wayland window managers routinely ignore the generic hint, so this
         // (x, y) lets us confirm what the compositor actually honoured.
-        logger.log(
+        app_main.state::<AppState>().logger.log(
             crate::logging::Level::Debug,
             &format!(
                 "windows: move_output_to: placing at physical ({}, {}) from monitor #{monitor_index} \"{name}\" at ({}, {})",
                 place_pos.x, place_pos.y, target_pos.x, target_pos.y
             ),
         );
-        logger.log(
+        app_main.state::<AppState>().logger.log(
             crate::logging::Level::Info,
             &format!(
                 "windows: move_output_to: exit_fullscreen -> {:?}, set_size({}x{}) -> {:?}, set_position({}, {}) -> {:?}, show() -> {:?}; after: {}",

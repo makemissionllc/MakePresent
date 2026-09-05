@@ -598,33 +598,23 @@ pub fn run() {
                 std::thread::spawn(move || media::verify_on_startup(app));
             }
 
-            // Windows deadlock fix: pre-create Output+Stage hidden via deferred next-tick
-            // so live command handlers never call builder().build().
+            // Windows deadlock fix: pre-create Output+Stage hidden so live handlers never call builder().build().
+            // Previously deferred 180ms via run_on_main_thread from a spawned thread, which left a window
+            // where closing the Editor quickly (hide) could destroy the not-yet-created Output and self-healing
+            // would fail with "not pre-created". Now we create synchronously on the setup main thread
+            // (setup already runs on main, so no deadlock) and ensure the window exists before any user action.
             {
-                let handle = app.handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(180));
-                    let handle_clone = handle.clone();
-                    let dispatch = handle.run_on_main_thread(move || {
-                        crate::windows::mark_as_main_thread();
-                        crate::windows::precreate_hidden_windows(&handle_clone);
-                        let st = handle_clone.state::<AppState>();
-                        if st.current_settings().stage_visible {
-                            if let Some(idx) = st.current_settings().stage_display_index {
-                                match crate::windows::move_stage_to(&handle_clone, idx) {
-                                    Ok(_) => st.logger.log(Level::Info, "stage: restored on startup (deferred pre-create)"),
-                                    Err(e) => st.logger.log(Level::Warn, &format!("stage: deferred restore failed: {e}")),
-                                }
-                            }
+                // setup runs on the main thread, so we can call directly (mark already done above)
+                crate::windows::precreate_hidden_windows(app.handle());
+                let st = app.state::<AppState>();
+                if st.current_settings().stage_visible {
+                    if let Some(idx) = st.current_settings().stage_display_index {
+                        match crate::windows::move_stage_to(app.handle(), idx) {
+                            Ok(_) => st.logger.log(Level::Info, "stage: restored on startup (pre-create)"),
+                            Err(e) => st.logger.log(Level::Warn, &format!("stage: restore failed: {e}")),
                         }
-                    });
-                    if let Err(e) = dispatch {
-                        handle.state::<AppState>().logger.log(
-                            Level::Error,
-                            &format!("windows: deferred pre-create dispatch failed: {e}"),
-                        );
                     }
-                });
+                }
             }
 
             // Display disconnect/reconnect self-healing: poll available_monitors() every 3s

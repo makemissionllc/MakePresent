@@ -18,6 +18,9 @@ import type {
   MediaAsset,
   MidiDeviceInfo,
   MidiMessageView,
+  NdiMonitorStatus,
+  NdiPreviewFrame,
+  NdiSourceInfo,
   PlaylistTemplate,
   ScriptureMatch,
   ScriptureImportResult,
@@ -63,6 +66,30 @@ export function emitRenderAck(
 
 export function subscribeAck(cb: (update: AckUpdate) => void): Promise<UnlistenFn> {
   return listen<AckUpdate>("ack-update", (event) => cb(event.payload));
+}
+
+/**
+ * NDI receive confidence monitor — dedicated low-rate events, deliberately
+ * NOT the `state` broadcast (preview frames must never ride snapshot_emit).
+ */
+export function subscribeNdiSources(
+  cb: (sources: NdiSourceInfo[]) => void,
+): Promise<UnlistenFn> {
+  return listen<{ sources: NdiSourceInfo[] }>("ndi-sources", (event) =>
+    cb(event.payload.sources),
+  );
+}
+
+export function subscribeNdiPreview(
+  cb: (frame: NdiPreviewFrame) => void,
+): Promise<UnlistenFn> {
+  return listen<NdiPreviewFrame>("ndi-preview-frame", (event) => cb(event.payload));
+}
+
+export function subscribeNdiMonitorStatus(
+  cb: (status: NdiMonitorStatus) => void,
+): Promise<UnlistenFn> {
+  return listen<NdiMonitorStatus>("ndi-monitor-status", (event) => cb(event.payload));
 }
 
 export const api = {
@@ -148,6 +175,19 @@ export const api = {
 
   setNdiEnabled: (enabled: boolean) =>
     invoke<ClientState>("set_ndi_enabled", { enabled }),
+
+  startNdiScan: () => invoke<NdiSourceInfo[]>("start_ndi_scan"),
+
+  listNdiSources: () => invoke<NdiSourceInfo[]>("list_ndi_sources"),
+
+  ndiMonitorStatus: () => invoke<NdiMonitorStatus>("ndi_monitor_status"),
+
+  connectNdiSource: (name: string) =>
+    invoke<NdiMonitorStatus>("connect_ndi_source", { name }),
+
+  disconnectNdiSource: () => invoke<NdiMonitorStatus>("disconnect_ndi_source"),
+
+  stopNdiScan: () => invoke<void>("stop_ndi_scan"),
 
   importMedia: (path: string) => invoke<MediaAsset>("import_media", { path }),
 

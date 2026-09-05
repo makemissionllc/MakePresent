@@ -142,6 +142,35 @@ export interface BroadcastView {
   sourceName: string;
 }
 
+/** One NDI source found by the receive confidence monitor's finder. */
+export interface NdiSourceInfo {
+  name: string;
+  url: string;
+}
+
+export type NdiMonitorState =
+  | "off"
+  | "scanning"
+  | "connecting"
+  | "live"
+  | "stale"
+  | "error";
+
+/** Monitor liveness pushed over the dedicated `ndi-monitor-status` event. */
+export interface NdiMonitorStatus {
+  state: NdiMonitorState;
+  source: string | null;
+  message: string;
+}
+
+/** One low-rate preview frame over `ndi-preview-frame` (JPEG+base64). */
+export interface NdiPreviewFrame {
+  jpegBase64: string;
+  width: number;
+  height: number;
+  at: string;
+}
+
 export interface ClientState {
   project: Project;
   notice: Notice | null;

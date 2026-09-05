@@ -1,5 +1,6 @@
 use crate::broadcast::Broadcaster;
 use crate::logging::Logger;
+use crate::ndi_receive::NdiReceiveMonitor;
 use crate::midi::MidiListener;
 use crate::network::NetworkServer;
 use crate::osc::OscListener;
@@ -26,6 +27,9 @@ pub struct AppState {
     pub scripture: RwLock<Option<ScriptureIndex>>,
     /// NDI broadcaster (runtime-loaded SDK; inactive unless NDI is enabled).
     pub broadcaster: Broadcaster,
+    /// NDI receive confidence monitor (runtime-loaded SDK; fully independent
+    /// from the sender — separate toggle, thread, and SDK handles).
+    pub ndi_monitor: NdiReceiveMonitor,
     /// Native MIDI input listener (inactive unless a device is selected).
     pub midi: MidiListener,
     /// UDP OSC listener (inactive unless OSC is enabled).
@@ -68,6 +72,7 @@ impl Default for AppState {
             save_tx: Mutex::new(None),
             scripture: RwLock::new(None),
             broadcaster: Broadcaster::default(),
+            ndi_monitor: NdiReceiveMonitor::default(),
             midi: MidiListener::default(),
             osc: OscListener::default(),
             network: NetworkServer::default(),

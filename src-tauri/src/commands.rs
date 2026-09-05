@@ -912,6 +912,81 @@ pub fn set_ndi_enabled(app: AppHandle, enabled: bool) -> Result<ClientState, Str
     Ok(snap)
 }
 
+// ---------------------------------------------------------------------------
+// NDI receive confidence monitor — low-rate (~2 fps) preview of a network
+// source. Fully independent from the NDI *sender* above: separate toggle,
+// thread, and SDK handles. Deliberately returns small dedicated types and
+// NEVER calls snapshot_and_emit — preview frames ride the dedicated
+// `ndi-preview-frame` / `ndi-monitor-status` / `ndi-sources` events, so the
+// `state` broadcast (and every window listening to it) is untouched.
+// ---------------------------------------------------------------------------
+
+/// Start scanning for NDI sources (spawns the `ndi-monitor` thread; no-op
+/// when already running). Returns the current snapshot — usually empty on
+/// the first call, since mDNS discovery takes seconds to converge. The UI
+/// shows a "scanning…" state until `ndi-sources` events arrive.
+#[tauri::command]
+pub fn start_ndi_scan(app: AppHandle) -> Result<Vec<crate::ndi_receive::NdiSourceInfo>, String> {
+    let state = app.state::<AppState>();
+    match state.ndi_monitor.start_scan(&app) {
+        Ok(sources) => {
+            log(&app, Level::Info, "ndi-monitor: scanning for sources");
+            Ok(sources)
+        }
+        Err(e) => {
+            log(&app, Level::Error, &format!("ndi-monitor: could not start scan: {e}"));
+            Err(format!("could not start NDI scan: {e}"))
+        }
+    }
+}
+
+/// Current discovered-source snapshot (cheap clone; empty while converging).
+#[tauri::command]
+pub fn list_ndi_sources(app: AppHandle) -> Result<Vec<crate::ndi_receive::NdiSourceInfo>, String> {
+    Ok(app.state::<AppState>().ndi_monitor.list_sources())
+}
+
+/// Current monitor status (for panel init; live updates come via events).
+#[tauri::command]
+pub fn ndi_monitor_status(app: AppHandle) -> Result<crate::ndi_receive::NdiMonitorStatus, String> {
+    Ok(app.state::<AppState>().ndi_monitor.monitor_status())
+}
+
+/// Connect the preview to a source by exact name (starts the monitor thread
+/// first when it was never enabled).
+#[tauri::command]
+pub fn connect_ndi_source(app: AppHandle, name: String) -> Result<crate::ndi_receive::NdiMonitorStatus, String> {
+    let state = app.state::<AppState>();
+    match state.ndi_monitor.connect(&app, &name) {
+        Ok(status) => {
+            log(&app, Level::Info, &format!("ndi-monitor: connecting to \"{name}\""));
+            Ok(status)
+        }
+        Err(e) => {
+            log(&app, Level::Error, &format!("ndi-monitor: could not connect to \"{name}\": {e}"));
+            Err(e)
+        }
+    }
+}
+
+/// Tear down the receiver (scanning continues).
+#[tauri::command]
+pub fn disconnect_ndi_source(app: AppHandle) -> Result<crate::ndi_receive::NdiMonitorStatus, String> {
+    let state = app.state::<AppState>();
+    let status = state.ndi_monitor.disconnect(&app);
+    log(&app, Level::Info, "ndi-monitor: receiver disconnected");
+    Ok(status)
+}
+
+/// Full teardown: stop the monitor thread (bounded join), destroying the
+/// receiver, finder, and SDK handle in order. No leaked threads.
+#[tauri::command]
+pub fn stop_ndi_scan(app: AppHandle) -> Result<(), String> {
+    app.state::<AppState>().ndi_monitor.stop();
+    log(&app, Level::Info, "ndi-monitor: stopped");
+    Ok(())
+}
+
 #[tauri::command]
 pub fn new_project(app: AppHandle) -> Result<ClientState, String> {
     let state = app.state::<AppState>();

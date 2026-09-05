@@ -429,6 +429,14 @@ src-tauri/                                 Rust backend
 | `set_ndi_enabled` | Start/stop the runtime-loaded NDI sender |
 | `set_ndi_look` | Assign the Look for the NDI feed |
 
+**NDI camera monitor (receive, ~2 fps preview — independent from broadcast)**
+| Command | Purpose |
+|---|---|
+| `start_ndi_scan` / `stop_ndi_scan` | Start/stop the monitor thread + finder |
+| `list_ndi_sources` | Snapshot of discovered sources (empty while scanning) |
+| `ndi_monitor_status` | Current monitor status (live updates via events) |
+| `connect_ndi_source` / `disconnect_ndi_source` | Connect/disconnect the preview receiver |
+
 **MIDI / OSC triggers**
 | Command | Purpose |
 |---|---|
@@ -1054,3 +1062,27 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **Renderers:** ack on every applied state + 5s interval, fire-and-forget (`Output.svelte:96`, `Stage.svelte:40`); frozen renderers just stop acking. **Transport:** `emitRenderAck`/`subscribeAck` (`src/lib/sync.ts:55`/`64`).
 - **Editor** (`Editor.svelte:203`, 12s stale threshold, 1s ticker): `✓ Confirmed Ns ago` when fresh, amber `⚠ …may be frozen` alert when stale, dim idle pre-first-ack — per window, only while the window exists.
 - **Verify:** `npm run check` 0/0, `cargo check` clean, `cargo test` 54 passed. **Live run not possible here** (no display server) — needs a real run: indicators should cycle ≤5s normally; freezing Output should flip its line stale within ~12s.
+
+---
+
+## Changed (2026-09-05) — NDI receive confidence monitor (~2 fps preview)
+
+*Implements research option (a): a low-rate "is this camera alive" check, not live video. Fully independent from NDI send (separate toggle/thread/handles). Full detail in `docs/PROJECT.md`.*
+
+- **Backend** (`src-tauri/src/ndi_receive.rs:1`, new): same runtime-load pattern as send; header-verified FFI (`BGRX_BGRA = 0`, frame types 0/1/4/100). One `ndi-monitor` thread (`:579`) owns finder + receiver: mDNS discovery with "scanning…" semantics, `recv_create_v3` BGRX/BGRA-only (no YUV path), video-only capture at 250 ms timeout with mandatory immediate `recv_free_video_v2`, clean reverse-order teardown (`stop()` `:522`).
+- **Delivery:** 560 px downscale + JPEG q60 + base64 over a dedicated `ndi-preview-frame` event at ~2 fps — never `snapshot_and_emit`. `PreviewFrame` (`:293`) + `deliver_preview_frame` (`:306`) is the seam where MJPEG-over-localhost can later slot in untouched receiver-side. **Stale safety:** `Live` only while frames arrive; 4 s watchdog + immediate STALE on connection error, so a frozen last frame never reads as live.
+- **Wiring:** `AppState.ndi_monitor` (`state.rs:32`), 6 small-type commands (`commands.rs:929`, no snapshots), `finalize` teardown (`lib.rs:73`); new `image` (JPEG-only) + `base64` deps. Send path untouched.
+- **UI** (`SettingsPanel.svelte:839`): enable → scan → source buttons → preview with LIVE green-glow vs STALE amber + veil, semantic tokens only; closing Settings releases the receiver.
+- **Verify:** `cargo check` clean, `cargo test` 62 passed (8 new), `npm run check` 0/0. **Live round-trip verified in-env** (temp test, removed): local sender discovered via mDNS, BGRA captured, real-bytes downscale correct, clean teardown. **Hands-on backlog:** real camera selection, Windows SDK-missing messaging, long-run stability.
+
+---
+
+## Research (2026-09-05) — NDI receive / frame-pull from a network source
+
+*Findings only, no code. Pre-audit confirmed no receive capability exists — `src-tauri/src/broadcast.rs:147` resolves exactly 5 send-only symbols (`broadcast.rs:157-169`); the documented send-only scope stands. Full evaluation in `docs/PROJECT.md`.*
+
+- **Receive API is a separate, larger surface (~12+ entry points):** mDNS discovery (`NDIlib_find_create_v2`/`wait_for_sources`/`get_current_sources` — seconds to converge, needs a "scanning…" UI; Linux needs avahi-daemon) + receiver (`NDIlib_recv_create_v3`/`connect`/`capture_v2/v3` + **mandatory `free_video`** — new buffer-ownership discipline) + optional tally/metadata. Same DLL, same `NDIlib_initialize`.
+- **Licensing: no new burden** — basic find+receive is in the standard royalty-free SDK (same install/terms as send); only Advanced extras (compressed pass-through, HW decode) are royalty-based and unneeded. Key choice: request `NDIlib_recv_color_format_BGRX_BGRA` to get BGRA directly (matches the send-side format); `fastest`/`best` would force a new YUV→RGB path.
+- **Frontend options:** (a) base64 JPEG snapshots at **1–3 fps / 0.5–2s latency** — days of work, fine for a confidence monitor (must use a dedicated event, never the `state` broadcast); (b) local WebRTC bridge at 15–30 fps — a weeks-scale new subsystem (encoder + signaling + ICE), explicitly deferred; (c) third option found — **MJPEG over localhost HTTP at ~10–15 fps**, JPEG-encode-only, the sweet spot if (a) feels too choppy.
+- **Complexity vs send — confirmed ~3–4×:** discovery UX, must-free ownership, dynamic per-frame formats, new `image` dep, two blocking loops, plus the whole pixels→webview delivery design. Windows risks flagged: blocking SDK calls stay on dedicated threads (never handlers/main — same rule as the freeze saga), frames must never ride the `state` event (message-loop saturation, same bug class), and the receiver's auto-reconnect means a stale-frame-mistaken-for-live hazard without a fresh/stale indicator.
+- **Recommendation: scope down** — at most the (a) confidence monitor (2 fps + source picker + stale indicator), designed so (c) can replace the transport later; defer (b) indefinitely. Deferring even (a) is defensible if no service flow needs the camera in-app. Remains the heaviest Tier 3 item, now better-bounded.

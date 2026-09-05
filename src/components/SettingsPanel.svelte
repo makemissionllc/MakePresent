@@ -1,6 +1,13 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-  import { api, subscribeMidiMessage } from "../lib/sync";
+  import {
+    api,
+    subscribeMidiMessage,
+    subscribeNdiMonitorStatus,
+    subscribeNdiPreview,
+    subscribeNdiSources,
+  } from "../lib/sync";
   import type {
     AudioDeviceInfo,
     AudioStateView,
@@ -11,6 +18,9 @@
     LookPatch,
     MidiDeviceInfo,
     MidiMessageView,
+    NdiMonitorStatus,
+    NdiPreviewFrame,
+    NdiSourceInfo,
     Positioning,
     StageNetworkInfo,
     TextPosition,
@@ -234,6 +244,96 @@
       .then((s) => (appState = s))
       .catch((e: unknown) => (lookErr = String(e)));
   }
+
+  // NDI receive confidence monitor — low-rate (~2 fps) preview of a network
+  // camera, fully independent from the NDI broadcast toggle above. Frames
+  // arrive over a dedicated event (never the state broadcast); the badge
+  // shows LIVE only while frames are fresh, STALE otherwise.
+  let ndiMonOn = $state(false);
+  let ndiMonSources = $state<NdiSourceInfo[]>([]);
+  let ndiMonStatus = $state<NdiMonitorStatus>({
+    state: "off",
+    source: null,
+    message: "Monitor off.",
+  });
+  let ndiMonFrame = $state<NdiPreviewFrame | null>(null);
+  let ndiMonErr = $state<string | null>(null);
+  let ndiMonUnlisten: Array<() => void> = [];
+  let ndiMonPoll: ReturnType<typeof setInterval> | null = null;
+  const ndiMonBadge = $derived(
+    ndiMonStatus.state === "live"
+      ? "LIVE"
+      : ndiMonStatus.state === "stale"
+        ? "STALE"
+        : ndiMonStatus.state.toUpperCase(),
+  );
+
+  async function setNdiMonitorOn(on: boolean): Promise<void> {
+    ndiMonErr = null;
+    if (!on) {
+      stopNdiMonitor();
+      return;
+    }
+    try {
+      ndiMonSources = await api.startNdiScan();
+      ndiMonStatus = await api.ndiMonitorStatus();
+      ndiMonUnlisten.push(await subscribeNdiSources((s) => (ndiMonSources = s)));
+      ndiMonUnlisten.push(
+        await subscribeNdiMonitorStatus((s) => (ndiMonStatus = s)),
+      );
+      ndiMonUnlisten.push(await subscribeNdiPreview((f) => (ndiMonFrame = f)));
+      // Event-driven updates are primary; a slow poll is the backstop so a
+      // missed event can never leave the picker permanently empty.
+      if (ndiMonPoll) clearInterval(ndiMonPoll);
+      ndiMonPoll = setInterval(() => {
+        void api
+          .listNdiSources()
+          .then((s) => (ndiMonSources = s))
+          .catch(() => {});
+      }, 2500);
+      ndiMonOn = true;
+    } catch (e: unknown) {
+      stopNdiMonitor();
+      ndiMonErr = String(e);
+    }
+  }
+
+  function connectNdiSource(name: string): void {
+    ndiMonErr = null;
+    // Drop the previous source's frame immediately — it must never read as
+    // the newly selected source's picture while connecting.
+    ndiMonFrame = null;
+    void api
+      .connectNdiSource(name)
+      .then((s) => (ndiMonStatus = s))
+      .catch((e: unknown) => (ndiMonErr = String(e)));
+  }
+
+  function stopNdiMonitor(): void {
+    for (const u of ndiMonUnlisten) {
+      try {
+        u();
+      } catch {
+        /* already gone */
+      }
+    }
+    ndiMonUnlisten = [];
+    if (ndiMonPoll) {
+      clearInterval(ndiMonPoll);
+      ndiMonPoll = null;
+    }
+    // Fully independent teardown: receiver, then the finder thread. The NDI
+    // *broadcast* above is untouched by either call.
+    void api.disconnectNdiSource().catch(() => {});
+    void api.stopNdiScan().catch(() => {});
+    ndiMonOn = false;
+    ndiMonFrame = null;
+    ndiMonStatus = { state: "off", source: null, message: "Monitor off." };
+  }
+
+  // The monitor exists for this panel: closing Settings releases the NDI
+  // receiver instead of holding a camera connection with no viewer.
+  onDestroy(stopNdiMonitor);
 
   const summary = $derived(
     appState
@@ -731,6 +831,74 @@
               keeps working normally if it is absent. Assign a Look to the NDI
               feed under <em>Looks</em>.
             </p>
+          </div>
+
+          <div class="bcast-block">
+            <div class="bcast-title">
+              <span class="assign-title">
+                NDI camera monitor <span class="muted-note">(preview ~2 fps)</span>
+              </span>
+              <label class="check">
+                <input
+                  type="checkbox"
+                  checked={ndiMonOn}
+                  onchange={(e) =>
+                    void setNdiMonitorOn((e.target as HTMLInputElement).checked)}
+                />
+                Enabled
+              </label>
+            </div>
+            <p class="hint">
+              Watches a network camera at low rate — an "is it alive and
+              pointed at the right thing" check, not live video. Fully
+              separate from NDI broadcast above; needs the same free NDI® SDK.
+            </p>
+            {#if ndiMonOn}
+              {#if ndiMonErr}
+                <p class="status err">{ndiMonErr}</p>
+              {/if}
+              <div class="ndimon-row">
+                <span class="ndimon-badge" data-s={ndiMonStatus.state}>
+                  {ndiMonBadge}
+                </span>
+                <span class="ndimon-msg">{ndiMonStatus.message}</span>
+              </div>
+              {#if ndiMonSources.length === 0}
+                <p class="hint">
+                  Scanning for NDI sources… discovery takes a few seconds.
+                </p>
+              {:else}
+                <div class="ndimon-sources" role="listbox" aria-label="NDI sources">
+                  {#each ndiMonSources as s (s.name)}
+                    <button
+                      class:on={ndiMonStatus.source === s.name}
+                      onclick={() => connectNdiSource(s.name)}
+                      title={s.url || s.name}
+                    >
+                      {s.name}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+              {#if ndiMonFrame}
+                <div
+                  class="ndimon-preview"
+                  data-s={ndiMonStatus.state === "live" ? "live" : "stale"}
+                >
+                  <img
+                    src="data:image/jpeg;base64,{ndiMonFrame.jpegBase64}"
+                    alt={ndiMonStatus.source
+                      ? `NDI preview of ${ndiMonStatus.source}`
+                      : "NDI preview"}
+                  />
+                  {#if ndiMonStatus.state !== "live"}
+                    <div class="ndimon-staleveil">
+                      STALE — last frame, not live
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+            {/if}
           </div>
 
           <div class="actions">
@@ -1548,6 +1716,103 @@
 
   .bcast-block a {
     color: var(--accent);
+  }
+
+  .muted-note {
+    font-weight: normal;
+    font-size: 12px;
+    color: var(--semantic-idle, #64748b);
+  }
+
+  /* NDI receive confidence monitor — LIVE/STALE reuse the design-system
+     semantic tokens (no new colors invented). */
+  .ndimon-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ndimon-badge {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--semantic-neutral, #94a3b8);
+    color: var(--semantic-idle, #64748b);
+    background: var(--semantic-neutral-bg, rgba(148, 163, 184, 0.08));
+    white-space: nowrap;
+  }
+
+  .ndimon-badge[data-s="live"] {
+    color: var(--semantic-live, #1f9d6a);
+    background: var(--semantic-live-bg, rgba(31, 157, 106, 0.14));
+    border-color: var(--semantic-live-border, rgba(31, 157, 106, 0.32));
+    box-shadow: var(--semantic-live-glow, 0 0 12px rgba(31, 157, 106, 0.35));
+  }
+
+  .ndimon-badge[data-s="stale"] {
+    color: var(--semantic-warning, #f7b538);
+    background: var(--semantic-warning-bg, rgba(247, 181, 56, 0.14));
+    border-color: var(--semantic-warning-border, rgba(247, 181, 56, 0.32));
+  }
+
+  .ndimon-badge[data-s="error"] {
+    color: var(--semantic-error, #e11d48);
+    background: var(--semantic-error-bg, rgba(225, 29, 72, 0.12));
+    border-color: var(--semantic-error-border, rgba(225, 29, 72, 0.28));
+  }
+
+  .ndimon-msg {
+    font-size: 12px;
+    color: var(--text);
+    opacity: 0.85;
+  }
+
+  .ndimon-sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .ndimon-sources button.on {
+    border-color: var(--semantic-live, #1f9d6a);
+    color: var(--semantic-live, #1f9d6a);
+  }
+
+  .ndimon-preview {
+    position: relative;
+    max-width: 420px;
+  }
+
+  .ndimon-preview img {
+    display: block;
+    width: 100%;
+    border-radius: 8px;
+    border: 2px solid var(--border);
+  }
+
+  .ndimon-preview[data-s="live"] img {
+    border-color: var(--semantic-live-border, rgba(31, 157, 106, 0.32));
+    box-shadow: var(--semantic-live-glow, 0 0 12px rgba(31, 157, 106, 0.35));
+  }
+
+  .ndimon-preview[data-s="stale"] img {
+    border-color: var(--semantic-warning, #f7b538);
+  }
+
+  .ndimon-staleveil {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 3px 10px;
+    border-radius: 999px;
+    color: var(--semantic-warning, #f7b538);
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid var(--semantic-warning, #f7b538);
   }
 
   .status {

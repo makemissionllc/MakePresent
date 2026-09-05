@@ -4,6 +4,7 @@ mod broadcast;
 mod logging;
 mod media;
 mod midi;
+mod ndi_receive;
 mod network;
 mod osc;
 mod project;
@@ -67,6 +68,9 @@ fn finalize(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     // Tear down NDI before the SDK lib could be unloaded / windows close.
     state.broadcaster.stop();
+    // Stop the receive confidence monitor (joins its thread; destroys the
+    // receiver, finder, and SDK handle in order — independent from send).
+    state.ndi_monitor.stop();
     // Stop external input listeners on a clean exit.
     state.midi.stop();
     state.osc.stop();
@@ -663,6 +667,12 @@ pub fn run() {
             commands::set_stage_look,
             commands::set_ndi_look,
             commands::set_ndi_enabled,
+            commands::start_ndi_scan,
+            commands::list_ndi_sources,
+            commands::ndi_monitor_status,
+            commands::connect_ndi_source,
+            commands::disconnect_ndi_source,
+            commands::stop_ndi_scan,
             commands::clear_output,
             commands::clear_text,
             commands::clear_background,

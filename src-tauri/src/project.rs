@@ -41,6 +41,18 @@ pub enum Background {
         #[serde(default)]
         duration_ms: Option<u64>,
     },
+    /// Live camera / capture-card input (UVC webcam or an HDMI capture card
+    /// presenting as one). Rendered by the webview via getUserMedia — no Rust
+    /// video processing happens for this variant, and it holds no file
+    /// reference, so the media-cache verifier skips it. `device_id` is the
+    /// browser media-device id for exact matching; `label` is the human name
+    /// shown in the UI and the fallback match when ids rotate across restarts.
+    LiveCamera {
+        #[serde(default, rename = "deviceId")]
+        device_id: Option<String>,
+        #[serde(default)]
+        label: String,
+    },
 }
 
 impl Default for Background {

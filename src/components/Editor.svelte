@@ -5,7 +5,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { api, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
   import type { Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, PlaylistTemplate, ScriptureMatch, Slide } from "../lib/types";
-  import { isMedia } from "../lib/types";
+  import { isMedia, isLiveCamera } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
   import SlideRender from "./SlideRender.svelte";
@@ -1168,6 +1168,74 @@
     }
   }
 
+  // Live camera picker — enumerate UVC webcams / capture cards via the
+  // webview's media APIs. No Rust involvement; the slide stores only which
+  // device to use ({type:'live_camera', deviceId, label}).
+  let showCameraPicker = $state(false);
+  let cameraDevices = $state<MediaDeviceInfo[]>([]);
+  let cameraLoading = $state(false);
+  let cameraError = $state<string | null>(null);
+
+  async function refreshCameras(): Promise<void> {
+    cameraLoading = true;
+    cameraError = null;
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) {
+        throw new Error("unsupported");
+      }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      cameraDevices = devices.filter((d) => d.kind === "videoinput");
+      if (cameraDevices.length === 0) {
+        cameraError =
+          "No cameras found — plug in a webcam or capture card, then Refresh.";
+      }
+    } catch {
+      cameraError = "Camera enumeration is unavailable in this window.";
+      cameraDevices = [];
+    } finally {
+      cameraLoading = false;
+    }
+  }
+
+  function openCameraPicker(): void {
+    showCameraPicker = true;
+    void refreshCameras();
+  }
+
+  // Browsers hide device labels until camera permission is granted — one
+  // explicit gesture triggers the prompt, then we re-enumerate for names.
+  async function enableCameraAccess(): Promise<void> {
+    cameraLoading = true;
+    cameraError = null;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
+      stream.getTracks().forEach((t) => t.stop());
+      await refreshCameras();
+    } catch {
+      cameraError =
+        "Camera access denied — allow camera access for MakrStudio, then try again.";
+    } finally {
+      cameraLoading = false;
+    }
+  }
+
+  function selectCamera(d: MediaDeviceInfo): void {
+    if (!selected) return;
+    showCameraPicker = false;
+    void run(() =>
+      api.updateSlide(selected.id, {
+        background: {
+          type: "live_camera",
+          deviceId: d.deviceId || null,
+          label: d.label || "Camera",
+        },
+      }),
+    );
+  }
+
   function deleteSlide(slide: Slide): void {
     const wasSelected = selectedId === slide.id;
     void (async () => {
@@ -1809,6 +1877,7 @@
               >
                 <span
                   class="swatch"
+                  class:camera={isLiveCamera(slide.background)}
                   style:background-color={slide.background.type === "solid"
                     ? slide.background.color
                     : "#000"}
@@ -1817,7 +1886,8 @@
                     : "none"}
                   style:background-size="cover"
                   style:background-position="center"
-                ></span>
+                  title={isLiveCamera(slide.background) ? `Live camera: ${slide.background.label || "camera"}` : undefined}
+                >{#if isLiveCamera(slide.background)}<span aria-hidden="true">🎥</span>{/if}</span>
                 <span class="slide-label">{slideDisplayName(slide)}</span>
                 {#if slide.autoAdvanceSecs != null}<span class="auto-badge" title="Auto-advance after {slide.autoAdvanceSecs}s">↻ {slide.autoAdvanceSecs}s</span>{/if}
                 {#if project?.live === slide.id}<span class="live-dot"></span>{/if}
@@ -2198,6 +2268,23 @@
                   </button>
                 </span>
               {/if}
+              {#if isLiveCamera(selected.background)}
+                <span class="media-swatch-wrap">
+                  <span
+                    class="swatch media selected camera-badge"
+                    style:background-color="#000"
+                    title={`Live camera: ${selected.background.label || "camera"} — pick 🎥 below to change`}
+                  ><span aria-hidden="true">🎥</span></span>
+                  <span class="camera-name">{selected.background.label || "Live camera"}</span>
+                  <button
+                    class="media-remove"
+                    title="Remove camera background"
+                    onclick={() => setColor(selected, PALETTE[0] ?? "#000000")}
+                  >
+                    &times;
+                  </button>
+                </span>
+              {/if}
               <button
                 class="media-add"
                 title="Add image or video background"
@@ -2210,7 +2297,50 @@
                   +
                 {/if}
               </button>
+              <button
+                class="media-add"
+                type="button"
+                title="Use a live camera / capture card as background"
+                onclick={() => openCameraPicker()}
+              >
+                <span aria-hidden="true">🎥</span>
+              </button>
             </div>
+            {#if showCameraPicker}
+              <div class="camera-picker" role="dialog" aria-label="Choose a camera">
+                <div class="camera-picker-head">
+                  <span>Live camera background</span>
+                  <button class="ghost camera-picker-close" title="Close" aria-label="Close camera picker" onclick={() => (showCameraPicker = false)}>&times;</button>
+                </div>
+                {#if cameraLoading}
+                  <span class="media-spinner" aria-hidden="true"></span>
+                {:else if cameraDevices.length > 0}
+                  <ul class="camera-list">
+                    {#each cameraDevices as d (d.deviceId)}
+                      <li>
+                        <button class="camera-entry" onclick={() => selectCamera(d)}>
+                          <span aria-hidden="true">🎥</span>
+                          <span>{d.label || "Camera (grant access to see its name)"}</span>
+                        </button>
+                      </li>
+                    {/each}
+                  </ul>
+                  {#if cameraDevices.every((d) => !d.label)}
+                    <button class="ghost" onclick={() => void enableCameraAccess()}>Enable camera access (shows device names)</button>
+                  {/if}
+                  <button class="ghost" onclick={() => void refreshCameras()}>Refresh</button>
+                {:else}
+                  <div class="camera-actions">
+                    <button class="ghost" onclick={() => void enableCameraAccess()}>Enable camera access</button>
+                    <button class="ghost" onclick={() => void refreshCameras()}>Refresh</button>
+                  </div>
+                {/if}
+                {#if cameraError}
+                  <p class="camera-error" role="alert">{cameraError}</p>
+                {/if}
+                <span class="field-hint">Muted, like recorded video — camera audio stays on your mixer, never through the app.</span>
+              </div>
+            {/if}
           </div>
           <label>
             Auto-advance
@@ -2368,6 +2498,7 @@
                 showText={project?.showText ?? true}
                 showBackground={project?.showBackground ?? true}
                 overlay={appState?.overlay ?? null}
+                enableCamera={true}
               />
             {:else}
               <div class="preview-empty">No slide</div>
@@ -3280,6 +3411,81 @@
     border: 2px solid var(--border);
     border-top-color: var(--accent);
     animation: spin 0.9s linear infinite;
+  }
+
+  /* Live-camera picker + badges — same quiet chrome as the media swatches. */
+  .swatch.camera,
+  .camera-badge {
+    display: grid;
+    place-items: center;
+    font-size: 10px;
+  }
+  .camera-name {
+    font-size: 11px;
+    color: var(--text-dim);
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    align-self: center;
+  }
+  .camera-picker {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .camera-picker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+  }
+  .camera-picker-close {
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 16px;
+    line-height: 1;
+    padding: 0 2px;
+    cursor: pointer;
+  }
+  .camera-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+  .camera-entry {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-align: left;
+    font-size: 12px;
+  }
+  .camera-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .camera-error {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--danger-text, #fda4af);
   }
 
   .live-dot {

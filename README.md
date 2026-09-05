@@ -1021,3 +1021,14 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **Routing:** `list_audio_devices` (`commands.rs:1609`) + `set_audio_device` persisted in Settings (`commands.rs:1693`, `project.rs:886`), fallback to system default.
 - **UI:** Settings → Audio tab (`SettingsPanel.svelte:1306`) — device selector, load, transport, volume slider, status; slide-independent. Known gap: `seek_audio` is backend-only (no position polling, so no progress UI yet).
 - **Verify:** `npm run check` 0/0, `cargo check` clean (3 pre-existing `dead_code`). **Hand test still required on real hardware** — play/pause/stop/volume through a selected device with the app responsive throughout.
+
+---
+
+## Changed (2026-09-05) — Live camera / capture-card slide backgrounds (getUserMedia, no new Rust deps)
+
+*Pre-audit confirmed no camera feature existed. UVC webcams / capture cards are consumed via the webview's native getUserMedia — no Rust video processing, no new dependencies.*
+
+- **Backend:** `Background::LiveCamera { device_id, label }` (`src-tauri/src/project.rs:45`, serde-defaulted, legacy files unaffected) — stores only which device; skipped by the media verifier (`media.rs:84`). **Contract:** `LiveCameraBackground` + `isLiveCamera` (`src/lib/types.ts:23`/`36`).
+- **Lifecycle** (`src/components/CameraFeed.svelte:1`): exact-id → label → default resolution, always muted (camera audio stays on the mixer — flagged decision), tracks stopped on unmount, explicit denied/unplugged/busy messages (never silent). Streams open only on Output live + fade-overlap frames (`Output.svelte:127`/`141`) and the Editor live preview (`Editor.svelte:2495`); grid/Stage/Look previews show a 🎥 placeholder (`SlideRender.svelte:222`, `enableCamera` `:17`).
+- **Editor:** 🎥 picker button with device enumeration, permission gesture, Refresh, and clear errors (`Editor.svelte:1090`/`2280`); badges on background field + playlist swatches.
+- **Verify:** `npm run check` 0/0, `cargo check` clean, `cargo test` 53 passed, `vite build` clean. **Hand test required on real hardware** — permission grant, live full-bleed muted feed, device release on advance-away, denied-permission message, label-fallback reload. Webview camera-permission persistence is the flagged unknown.

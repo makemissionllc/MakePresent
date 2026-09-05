@@ -18,7 +18,19 @@ export interface VideoBackground {
   durationMs: number | null;
 }
 
-export type Background = SolidBackground | ImageBackground | VideoBackground;
+export type Background =
+  | SolidBackground
+  | ImageBackground
+  | VideoBackground
+  | LiveCameraBackground;
+
+export interface LiveCameraBackground {
+  type: "live_camera";
+  /** Browser media-device id for exact matching; null = match by label, then default camera. */
+  deviceId?: string | null;
+  /** Human device name shown in the UI; fallback match when ids rotate across restarts. */
+  label: string;
+}
 
 export interface MediaAsset {
   background: Background;
@@ -30,6 +42,10 @@ export interface MediaAsset {
 
 export function isMedia(bg: Background): bg is ImageBackground | VideoBackground {
   return bg.type === "image" || bg.type === "video";
+}
+
+export function isLiveCamera(bg: Background): bg is LiveCameraBackground {
+  return bg.type === "live_camera";
 }
 
 export interface Slide {

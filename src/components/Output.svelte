@@ -47,6 +47,10 @@
   // "likely next"). Its media is preloaded here — in the window that will
   // actually play it — so a cut to it starts instantly instead of decoding
   // on demand mid-service. Exactly ONE hidden element is kept, never a pile.
+  // Camera streams open only on the live + brief fade-overlap leaving frames
+  // (plus the Editor live preview) — the on-deck preloader stays file-only,
+  // since warming a hidden camera stream would double device contention for
+  // nothing visible. Unmount stops all tracks (CameraFeed).
   const onDeck = $derived(appState?.onDeck ?? null);
 
   // The Output is a dumb renderer: it only choreographs the fade. The backend
@@ -124,7 +128,7 @@
         class:gpu={crossfading}
         style:opacity={inOpacity}
       >
-        <SlideRender slide={shown} {look} {showText} {showBackground} />
+        <SlideRender slide={shown} {look} {showText} {showBackground} enableCamera={true} />
       </div>
     {/if}
   {:else if !leaving}
@@ -138,7 +142,7 @@
         class:gpu={crossfading}
         style:opacity={outOpacity}
       >
-        <SlideRender slide={leaving} {look} {showText} {showBackground} />
+        <SlideRender slide={leaving} {look} {showText} {showBackground} enableCamera={true} />
       </div>
     {/if}
   {/if}

@@ -4,6 +4,7 @@
   import { fitText } from "../lib/fitText";
   import { hasChords, stripChords, parseChordLine } from "../lib/chords";
   import type { Overlay } from "../lib/types";
+  import CameraFeed from "./CameraFeed.svelte";
 
   interface Props {
     slide: Slide;
@@ -14,9 +15,14 @@
     isStage?: boolean;
     /** Independent overlay layer for Output (lower-third / logo) — background at z0, main at z1, overlay at z2 */
     overlay?: Overlay | null;
+    /** Open a live camera stream for live_camera backgrounds. False renders a
+        quiet placeholder instead — grid thumbs, Stage, and Look previews must
+        leave this off so capture devices are only open on Output (live +
+        brief fade overlap) and the Editor live preview. */
+    enableCamera?: boolean;
   }
 
-  let { slide, look, showText = true, showBackground = true, isStage = false, overlay = null }: Props = $props();
+  let { slide, look, showText = true, showBackground = true, isStage = false, overlay = null, enableCamera = false }: Props = $props();
 
   const effectiveShowBackground = $derived(showBackground && look.showBackground);
   const effectiveShowText = $derived(showText);
@@ -64,6 +70,18 @@
         playsinline
         preload="auto"
       ></video>
+    {:else if slide.background.type === "live_camera"}
+      {#if enableCamera}
+        <CameraFeed
+          deviceId={slide.background.deviceId ?? null}
+          label={slide.background.label}
+        />
+      {:else}
+        <div class="camera-placeholder" title={slide.background.label || "Live camera"}>
+          <span aria-hidden="true">🎥</span>
+          <span>{slide.background.label || "Live camera"}</span>
+        </div>
+      {/if}
     {/if}
   {/if}
   {#if effectiveShowText && slide.title}
@@ -198,6 +216,21 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  /* Quiet stand-in where the camera must stay closed (grid thumbs, Stage,
+     Look previews, Editor non-preview spots): dark box, no stream. */
+  .camera-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    background: #000;
+    color: var(--text-dim);
+    font-size: 11px;
   }
 
   .look-title,

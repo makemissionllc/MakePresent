@@ -81,6 +81,8 @@ pub fn background_media(bg: &Background) -> Option<MediaRef> {
             duration_ms: *duration_ms,
         }),
         Background::Solid { .. } => None,
+        // Live camera holds no file reference — nothing to verify or rebuild.
+        Background::LiveCamera { .. } => None,
     }
 }
 

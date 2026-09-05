@@ -45,6 +45,8 @@
     "longDescription": "MakrStudio - native Windows presentation app with live output, stage display, and scripture integration.",
     "resources": {
       "resources/kjv.json": "kjv.json",
+      "resources/NDI_Runtime_V6.exe": "NDI_Runtime_V6.exe",
+      "resources/NDI_VERSION.txt": "NDI_VERSION.txt",
       "../src/assets/fonts/ArchivoBlack-Regular.ttf": "fonts/ArchivoBlack-Regular.ttf",
       "../src/assets/fonts/ArchivoBlack-OFL.txt": "fonts/ArchivoBlack-OFL.txt",
       "../src/assets/fonts/Inter-Regular.ttf": "fonts/Inter-Regular.ttf",
@@ -66,7 +68,8 @@
         "installMode": "both",
         "languages": ["English"],
         "displayLanguageSelector": false,
-        "compression": "lzma"
+        "compression": "lzma",
+        "installerHooks": "./windows/hooks.nsi"
       },
       "wix": {
         "language": "en-US"

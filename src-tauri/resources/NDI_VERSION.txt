@@ -1,0 +1,35 @@
+# NDI Redistributable bundled with MakrStudio
+# -------------------------------------------------
+# Version: NDI 6 Runtime — 6.0.1 (Build Apr 16 2026) — NDI SDK 6.x
+# Source: https://downloads.ndi.tv/SDK/NDI_SDK/NDI%206%20Runtime.exe
+#   Redirect via https://ndi.link/NDIRedistV6 (official NDI distribution page)
+#   Docs: https://docs.ndi.video/all/developing-with-ndi/sdk/software-distribution
+# File: src-tauri/resources/NDI_Runtime_V6.exe (9648232 bytes, etag 0eb95b6963ec0cdc762f2da0c4b83d32, last-modified Thu, 16 Apr 2026 15:16:23 GMT)
+# Bundled: 2026-09-02
+#
+# Terms: NDI® is a registered trademark of Vizrt NDI AB. The NDI SDK Redistributable
+# may be distributed within our installer per https://docs.ndi.video/all/developing-with-ndi/sdk/software-distribution
+# ("You may distribute the NDI redistributable and install them within your own installer.
+#  However, you must make all reasonable efforts to keep the versions you distribute up to date.
+#  You may use the command line with /verysilent to install without any user intervention...")
+#
+# Usage: The MakrStudio NSIS installer (src-tauri/windows/hooks.nsi) runs this
+# redistributable silently (/verysilent) as part of MakrStudio's own install, mirroring
+# how WebView2 is handled via embedBootstrapper (tauri.conf.json bundle.windows.webviewInstallMode).
+#
+# Maintenance reminder (per NDI terms): Check for a newer redistributable at
+#   https://ndi.link/NDIRedistV6  (or https://ndi.video/tools/ > Download NDI Tools)
+# at least quarterly and prior to each MakrStudio release. Replace the file above
+# and update this NDI_VERSION.txt. The redistributable is small (~9-12 MB, DLL-only)
+# — do NOT vendor the full NDI SDK (NDI_SDK/*) which is ~300MB.
+#
+# Runtime detection order (src-tauri/src/broadcast.rs:147 load_ndi):
+#   1) NDI_RUNTIME_DIR_V5 env var (set by the official redistributable installer to
+#      C:\Program Files\NDI\NDI 6 Runtime\  — still named V5 for compat, also check V6)
+#   2) Fallback: look for Processing.NDI.Lib.x64.dll next to the MakrStudio .exe
+#      (legacy manual SDK placement). Both bundled and manual SDKs work.
+#
+# Linux/macOS: Still require manual libndi.so.5 / libndi.dylib install (see README.md).
+# Windows: No manual step after this bundling — fresh install on a clean VM should
+# show in logs/app.log: "ndi: broadcast enabled — source \"MakrStudio - Sunday Output\""
+# with no "NDI SDK not found" error, and OBS (obs-ndi) should discover it automatically.

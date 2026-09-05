@@ -1009,3 +1009,15 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **Layout confirmed** `src/components/Editor.svelte:1743`/`2091`/`2308`: left sidebar (Playlist/Library/Scripture) → center slide grid → right Output/Stage panel on responsive clamp columns. **Fixed block** `.output-sticky-top` (`:2309`, CSS `:2988`): preview + ON AIR badge + live status + Clear row pinned top-right while Stage sections scroll beneath.
 - **Fix:** `Show Output` moved inside the sticky block (`:2402`, still gated on hidden output) — previously below it, buryable by panel scroll. Template-only move, no logic or sizing change.
 - **Verify:** `npm run check` 0 errors 0 warnings. Structural reading only, no visual tooling in this environment.
+
+---
+
+## Changed (2026-09-05) — Backing-track audio verification (already shipped, no new code)
+
+*Audit verified every requested item already implemented (`64b2f4d`); no code changed, verification recorded here.*
+
+- **Video definitively muted** (`src/components/Output.svelte:164`/`180`, `SlideRender.svelte:63`/`144` — hardcoded `muted` on all video frames) — the audio system cannot conflict with video backgrounds.
+- **Backend** (`src-tauri/src/audio.rs`): rodio 0.17/cpal 0.15 (`Cargo.toml:48-51`), single player on a dedicated thread (`:118`) via mpsc commands (`:154-226`); load/play/pause/stop/volume/seek (`:323-375`); zero main-thread/window calls — no Windows deadlock surface.
+- **Routing:** `list_audio_devices` (`commands.rs:1609`) + `set_audio_device` persisted in Settings (`commands.rs:1693`, `project.rs:886`), fallback to system default.
+- **UI:** Settings → Audio tab (`SettingsPanel.svelte:1306`) — device selector, load, transport, volume slider, status; slide-independent. Known gap: `seek_audio` is backend-only (no position polling, so no progress UI yet).
+- **Verify:** `npm run check` 0/0, `cargo check` clean (3 pre-existing `dead_code`). **Hand test still required on real hardware** — play/pause/stop/volume through a selected device with the app responsive throughout.

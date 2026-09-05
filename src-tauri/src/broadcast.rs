@@ -141,50 +141,99 @@ pub fn lib_filename() -> &'static str {
 
 /// Load the NDI SDK and resolve the functions the sender needs.
 ///
+/// Runtime detection order (Windows, per NDI docs https://docs.ndi.video/all/developing-with-ndi/sdk/software-distribution):
+///  1) `NDI_RUNTIME_DIR_V6` / `NDI_RUNTIME_DIR_V5` env var set by the official
+///     NDI 6 Runtime redistributable installer (e.g. `C:\Program Files\NDI\NDI 6 Runtime\`)
+///     — preferred when bundled via MakrStudio's silent NSIS install (`/verysilent`) or
+///     when user installed the redistributable manually. Checked first so a system-wide
+///     runtime is found even if no DLL sits next to the .exe.
+///  2) Fallback: `Processing.NDI.Lib.x64.dll` next to the MakrStudio .exe / on PATH
+///     (legacy manual SDK placement, also used on Linux/macOS via `libndi.so.5`).
+/// Both bundled and manually-installed SDKs work. See `src-tauri/resources/NDI_VERSION.txt`.
+///
 /// # Safety
 /// All resolved symbols are required, stable entry points of the SDK; the
 /// returned `NdiLib` keeps the library loaded for as long as it is held.
 unsafe fn load_ndi() -> Result<NdiLib, String> {
     let file = lib_filename();
-    let lib = Library::new(file)
-        .map_err(|e| format!("NDI SDK not found (looked for \"{file}\"): {e}"))?;
 
-    // Resolve the required SDK entry points inside a block, copy the raw
-    // function pointers out, then move `lib` into the struct once the borrows
-    // from `lib.get(...)` have ended.
-    let err_of = |n: &str, e: libloading::Error| format!("failed to resolve NDI symbol \"{n}\": {e}");
+    // Build ordered list of candidate paths to try
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    // 1) NDI_RUNTIME_DIR_V6 (future) then V5 (current redistributable uses V5 for compat)
+    for env_key in ["NDI_RUNTIME_DIR_V6", "NDI_RUNTIME_DIR_V5"] {
+        if let Ok(dir) = std::env::var(env_key) {
+            let trimmed = dir.trim().trim_matches('"');
+            if !trimmed.is_empty() {
+                let p = std::path::Path::new(trimmed).join(file);
+                candidates.push(p);
+            }
+        }
+    }
+    // 2) Fallback: bare filename (next to .exe / system search path)
+    candidates.push(std::path::PathBuf::from(file));
 
-    let (initialize, destroy, send_create, send_destroy, send_video) = {
-        let initialize: Symbol<unsafe extern "C" fn() -> c_int> =
-            lib.get(b"NDIlib_initialize").map_err(|e| err_of("NDIlib_initialize", e))?;
-        let destroy: Symbol<unsafe extern "C" fn()> =
-            lib.get(b"NDIlib_destroy").map_err(|e| err_of("NDIlib_destroy", e))?;
-        let send_create: Symbol<
-            unsafe extern "C" fn(*const SendCreate, *const c_char) -> SendInstance,
-        > = lib.get(b"NDIlib_send_create").map_err(|e| err_of("NDIlib_send_create", e))?;
-        let send_destroy: Symbol<unsafe extern "C" fn(SendInstance)> =
-            lib.get(b"NDIlib_send_destroy").map_err(|e| err_of("NDIlib_send_destroy", e))?;
-        let send_video: Symbol<
-            unsafe extern "C" fn(SendInstance, *const VideoFrameV2) -> c_int,
-        > = lib.get(b"NDIlib_send_send_video_v2").map_err(|e| err_of("NDIlib_send_send_video_v2", e))?;
+    let mut last_err: Option<String> = None;
+    for candidate in &candidates {
+        // Library::new accepts both &str and &Path; use Path for env-var joins, str for bare filename
+        let lib_res = Library::new(candidate);
+        let lib = match lib_res {
+            Ok(l) => l,
+            Err(e) => {
+                last_err = Some(format!("\"{}\" -> {e}", candidate.display()));
+                continue;
+            }
+        };
 
-        (
-            *initialize,
-            *destroy,
-            *send_create,
-            *send_destroy,
-            *send_video,
-        )
-    };
+        let err_of = |n: &str, e: libloading::Error| format!("failed to resolve NDI symbol \"{n}\": {e}");
+        let resolved = (|| {
+            let initialize: Symbol<unsafe extern "C" fn() -> c_int> =
+                lib.get(b"NDIlib_initialize").map_err(|e| err_of("NDIlib_initialize", e))?;
+            let destroy: Symbol<unsafe extern "C" fn()> =
+                lib.get(b"NDIlib_destroy").map_err(|e| err_of("NDIlib_destroy", e))?;
+            let send_create: Symbol<
+                unsafe extern "C" fn(*const SendCreate, *const c_char) -> SendInstance,
+            > = lib.get(b"NDIlib_send_create").map_err(|e| err_of("NDIlib_send_create", e))?;
+            let send_destroy: Symbol<unsafe extern "C" fn(SendInstance)> =
+                lib.get(b"NDIlib_send_destroy").map_err(|e| err_of("NDIlib_send_destroy", e))?;
+            let send_video: Symbol<
+                unsafe extern "C" fn(SendInstance, *const VideoFrameV2) -> c_int,
+            > = lib.get(b"NDIlib_send_send_video_v2").map_err(|e| err_of("NDIlib_send_send_video_v2", e))?;
+            Ok::<_, String>((
+                *initialize,
+                *destroy,
+                *send_create,
+                *send_destroy,
+                *send_video,
+            ))
+        })();
 
-    Ok(NdiLib {
-        _lib: lib,
-        initialize,
-        destroy,
-        send_create,
-        send_destroy,
-        send_video,
-    })
+        match resolved {
+            Ok((initialize, destroy, send_create, send_destroy, send_video)) => {
+                return Ok(NdiLib {
+                    _lib: lib,
+                    initialize,
+                    destroy,
+                    send_create,
+                    send_destroy,
+                    send_video,
+                });
+            }
+            Err(e) => {
+                last_err = Some(format!("\"{}\" -> {e}", candidate.display()));
+                continue;
+            }
+        }
+    }
+
+    let tried = candidates
+        .iter()
+        .map(|p| format!("\"{}\"", p.display()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let detail = last_err.unwrap_or_else(|| "no candidates tried".to_string());
+    Err(format!(
+        "NDI SDK not found (tried {tried}): {detail} — install the NDI Runtime via MakrStudio's bundled installer (auto, /verysilent) or manually from https://ndi.link/NDIRedistV6 (Windows) / https://downloads.ndi.tv/SDK/NDI_SDK_Linux/Install_NDI_SDK_v6_Linux.tar.gz (Linux)"
+    ))
 }
 
 /// Messages pushed by any render thread to the dedicated send thread.

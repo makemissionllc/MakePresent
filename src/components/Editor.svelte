@@ -13,6 +13,16 @@
   import ProjectHub from "../lib/components/ProjectHub.svelte";
   import GlobalSearch from "./GlobalSearch.svelte";
   import LookEditorView from "./LookEditorView.svelte";
+  import GuidedTour from "./GuidedTour.svelte";
+  import HelpModal from "./HelpModal.svelte";
+  import {
+    dismissHint,
+    dismissTour,
+    loadOnboarding,
+    markUsed,
+    resetTourDismissal,
+    showHint,
+  } from "../lib/onboarding";
 
   const PALETTE = [
     "#1a1a24",
@@ -116,6 +126,76 @@
 
   // Global search (Ctrl/Cmd+K) — library + all Bibles + media cache
   let globalSearchOpen = $state(false);
+
+  // Contextual onboarding — quiet inline hints + one-time guided tour.
+  // All flags persist in localStorage (see lib/onboarding.ts); a hint hides
+  // forever once its feature is used OR its × is clicked.
+  let onboarding = $state(loadOnboarding());
+  let tourActive = $state(false);
+  let tourStep = $state(0);
+  let tourAutoStarted = $state(false);
+  let helpOpen = $state(false);
+
+  const TOUR_STEPS = [
+    {
+      eyebrow: "Playlist",
+      title: "Build your service here",
+      body: "Add slides, drag songs or verses in, drag to reorder. Click a slide to put it live.",
+    },
+    {
+      eyebrow: "Output",
+      title: "Project when you're ready",
+      body: "Pick a display, then click Show Output. While live, ← and → move through slides.",
+    },
+    {
+      eyebrow: "Songs & Scripture",
+      title: "Your songs and verses live here",
+      body: "Search Scripture, browse by book → chapter → verse, or pull a song into the playlist. Ctrl+K searches everything at once.",
+    },
+    {
+      eyebrow: "You're set",
+      title: "Ignore all of this on Sunday morning",
+      body: "Nothing here blocks the app — set any slide live right now. The ? Help button replays this tour and lists shortcuts.",
+    },
+  ];
+
+  /** Brand-new install only (no project/settings on disk), after the View Hub
+      closes so the targets are visible. Never re-shows once dismissed. */
+  $effect(() => {
+    if (
+      !tourAutoStarted &&
+      !tourActive &&
+      !showHub &&
+      appState !== null &&
+      appState.firstRun === true &&
+      !onboarding.tourDismissed
+    ) {
+      tourAutoStarted = true;
+      tourStep = 0;
+      tourActive = true;
+    }
+  });
+
+  const showTour = $derived(tourActive && !showHub && appState !== null);
+
+  function use(feature: string): void {
+    onboarding = markUsed(onboarding, feature);
+  }
+
+  function dismiss(key: string): void {
+    onboarding = dismissHint(onboarding, key);
+  }
+
+  function endTour(): void {
+    tourActive = false;
+    onboarding = dismissTour(onboarding);
+  }
+
+  function replayTour(): void {
+    onboarding = resetTourDismissal(onboarding);
+    tourStep = 0;
+    tourActive = true;
+  }
 
   // Stage message (nursery alerts, countdowns, operator notes) — stage-only, never Output
   let stageMessageDraft = $state("");
@@ -467,6 +547,7 @@
       const verses = await api.getChapter(bibleId, book, chapter);
       chapterVerses = verses;
       selectedChapter = chapter;
+      use("browse");
     } catch (e) {
       browseError = String(e);
       chapterVerses = [];
@@ -494,6 +575,7 @@
   function insertBrowseVerse(v: ChapterVerse): void {
     if (!selectedBook || selectedChapter == null) return;
     const ref = `${selectedBook} ${selectedChapter}:${v.verse}`;
+    use("browse");
     void run(() => api.addSlide(ref, v.text));
   }
 
@@ -569,6 +651,9 @@
       isDragging = false;
       return;
     }
+    // Any recognised drop onto the playlist counts as "used drag-and-drop" —
+    // the inline hint hides itself from here on.
+    use("dragdrop");
 
     if (payload.type === "playlist-reorder" && payload.slideId) {
       const fromIdx = project.slides.findIndex((s) => s.id === payload.slideId);
@@ -776,6 +861,7 @@
           }
           insertIdx++;
           errorMsg = null;
+          use("dragdrop");
         } catch (err) {
           errorMsg = String(err);
         }
@@ -894,6 +980,7 @@
         library = lib;
         errorMsg = null;
         libraryDragError = null;
+        use("songs");
       } catch (err) {
         const msg = String(err);
         errorMsg = msg;
@@ -1125,10 +1212,12 @@
   }
 
   function toggleStage(): void {
+    use("stage");
     void api.toggleStage().catch((e: unknown) => (errorMsg = String(e)));
   }
 
   function addToPlaylist(song: LibrarySong): void {
+    use("songs");
     void api
       .addSongToPlaylist(song.id)
       .then((s) => (appState = s))
@@ -1153,6 +1242,7 @@
     const title = pendingSongTitle;
     showAddSongBodyModal = false;
     pendingSongTitle = "";
+    use("songs");
     void api
       .addLibrarySong(title, body)
       .then((l) => (library = l))
@@ -1166,6 +1256,7 @@
     showSongEditor = false;
     pendingSongTitle = "";
     pendingSongBody = "";
+    use("songs");
     void api
       .addLibrarySong(title, undefined, undefined, slides as any)
       .then((l) => (library = l))
@@ -1354,6 +1445,7 @@
     if (mod && isK) {
       e.preventDefault();
       globalSearchOpen = !globalSearchOpen;
+      if (globalSearchOpen) use("shortcuts");
       return;
     }
     if (e.key === "Escape" && globalSearchOpen) {
@@ -1361,13 +1453,20 @@
       globalSearchOpen = false;
       return;
     }
+    if (e.key === "Escape" && tourActive) {
+      e.preventDefault();
+      endTour();
+      return;
+    }
     if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && !isTextInputFocused()) {
       // Reuse existing next/previous logic — same path as triggers/UI clicks
       if (e.key === "ArrowRight") {
         e.preventDefault();
+        use("shortcuts");
         void api.nextSlide().then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
       } else {
         e.preventDefault();
+        use("shortcuts");
         void api.prevSlide().then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
       }
     }
@@ -1391,6 +1490,7 @@
     }
     try {
       errorMsg = null;
+      use("stage");
       appState = await api.setStageMessage(msg, dur);
     } catch (e) {
       errorMsg = String(e);
@@ -1619,6 +1719,9 @@
     <span class="saved-label">{savedLabel}</span>
     <button class="ghost" onclick={() => newProject()}>New view</button>
     <button class="ghost" onclick={() => clearOutput()}>Clear output</button>
+    <button class="ghost help-trigger" title="Help — guided tour and keyboard shortcuts" onclick={() => (helpOpen = true)}>
+      ? Help
+    </button>
     <button class="ghost" title="Settings" onclick={() => (settingsOpen = true)}>
       &#9881; Settings
     </button>
@@ -1656,10 +1759,13 @@
 
       <div class="workspace-switch">
         <button class="ws-btn" class:active={centralView === "slides"} onclick={() => (centralView = "slides")} title="Slide grid — primary workspace">Slides</button>
-        <button class="ws-btn" class:active={centralView === "looks"} onclick={() => (centralView = "looks")} title="Look editor — background, text style, layout">Looks</button>
+        <button class="ws-btn" class:active={centralView === "looks"} onclick={() => { centralView = "looks"; use("looks"); }} title="Look editor — background, text style, layout">Looks</button>
       </div>
+      {#if showHint(onboarding, "looks")}
+        <p class="hint-line">Looks set fonts &amp; layout per screen — try the Looks tab.<button class="hint-x" title="Dismiss" aria-label="Dismiss Looks hint" onclick={() => dismiss("looks")}>×</button></p>
+      {/if}
 
-      <div class="sidebar-section playlist-section" class:has-content={(project?.slides.length ?? 0) > 0}>
+      <div class="sidebar-section playlist-section" class:has-content={(project?.slides.length ?? 0) > 0} class:tour-highlight={showTour && tourStep === 0}>
         <div class="section-title">Playlist</div>
         <ul
           class="slide-list"
@@ -1733,6 +1839,12 @@
           {/if}
         </ul>
         <button class="add" onclick={() => addSlide()}>+ Add slide</button>
+        {#if showHint(onboarding, "dragdrop")}
+          <p class="hint-line">Drag songs, verses, or images here — or click to add. Drag slides to reorder.<button class="hint-x" title="Dismiss" aria-label="Dismiss drag-and-drop hint" onclick={() => dismiss("dragdrop")}>×</button></p>
+        {/if}
+        {#if showHint(onboarding, "shortcuts")}
+          <p class="hint-line"><kbd>←</kbd> <kbd>→</kbd> advance live slides · <kbd>Ctrl+K</kbd> searches everything.<button class="hint-x" title="Dismiss" aria-label="Dismiss shortcuts hint" onclick={() => dismiss("shortcuts")}>×</button></p>
+        {/if}
         <div class="template-actions">
           <button class="ghost template-btn" onclick={() => openSavePlaylist()} title="Save this View's playlist as a reusable Playlist">Save as Playlist</button>
         </div>
@@ -1839,13 +1951,15 @@
         </div>
       </div>
 
-      <div class="browse-panel">
+      <div class="browse-panel" class:tour-highlight={showTour && tourStep === 2}>
         <button class="browse-header" onclick={() => (browseCollapsed = !browseCollapsed)} aria-expanded={!browseCollapsed}>
           <span class="section-title" style="margin:0; border:none; padding:0;">Browse Scripture</span>
           <span class="browse-toggle">{browseCollapsed ? "▸ Show" : "▾ Hide"}</span>
         </button>
         {#if !browseCollapsed}
           <p class="browse-hint">Browsing as full-width panel below — click a verse to add as slide (drag secondary).</p>
+        {:else if showHint(onboarding, "browse")}
+          <p class="hint-line">Bible verses live here — Show to browse book → chapter → verse.<button class="hint-x" title="Dismiss" aria-label="Dismiss browse hint" onclick={() => dismiss("browse")}>×</button></p>
         {/if}
       </div>
 
@@ -1855,6 +1969,7 @@
         aria-label="Library — drop .pro/.cho/.usr files"
         class:has-content={librarySongs.length > 0 || librarySearch.trim().length > 0}
         class:library-drag-active={libraryDragActive}
+        class:tour-highlight={showTour && tourStep === 2}
         ondragover={(e) => handleLibraryDragOver(e)}
         ondragleave={(e) => handleLibraryDragLeave(e)}
         ondrop={(e) => {
@@ -1947,6 +2062,9 @@
             <li class="empty">No songs yet. Add one below.</li>
           {/each}
         </ul>
+        {#if librarySongs.length === 0 && showHint(onboarding, "songs")}
+          <p class="hint-line">Songs live here — + Add song, or drop .pro / .cho / .usr files.<button class="hint-x" title="Dismiss" aria-label="Dismiss library hint" onclick={() => dismiss("songs")}>×</button></p>
+        {/if}
         <button class="add" onclick={() => addLibrarySong()}>+ Add song</button>
         <div
           class="library-drop-zone"
@@ -2187,7 +2305,7 @@
       {/if}
     </main>
 
-    <aside class="sidebar output-panel">
+    <aside class="sidebar output-panel" class:tour-highlight={showTour && tourStep === 1}>
       <div class="output-sticky-top">
         <div class="section-title">Output</div>
 
@@ -2292,6 +2410,9 @@
       <button class="ghost" onclick={() => toggleStage()}>
         {appState?.stage.visible ? "Hide stage" : "Show stage"}
       </button>
+      {#if !appState?.stage.visible && showHint(onboarding, "stage")}
+        <p class="hint-line">For the platform: Show stage, then Send a message — Output never sees it.<button class="hint-x" title="Dismiss" aria-label="Dismiss stage hint" onclick={() => dismiss("stage")}>×</button></p>
+      {/if}
 
       <label>
         Display
@@ -2572,6 +2693,19 @@
 />
 
 <GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} />
+
+{#if showTour}
+  <GuidedTour
+    step={tourStep}
+    steps={TOUR_STEPS}
+    onNext={() => (tourStep = Math.min(tourStep + 1, TOUR_STEPS.length - 1))}
+    onBack={() => (tourStep = Math.max(tourStep - 1, 0))}
+    onDone={() => endTour()}
+    onSkip={() => endTour()}
+  />
+{/if}
+
+<HelpModal open={helpOpen} onClose={() => (helpOpen = false)} onReplayTour={() => replayTour()} />
 
 <style>
   .shell {
@@ -3509,6 +3643,52 @@
   .welcome p {
     margin: 3px 0 0;
     color: var(--text-dim);
+  }
+
+  /* Contextual onboarding — quiet one-line hints. Muted text, no popups;
+     each hides forever once its feature is used or its × is clicked. */
+  .hint-line {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-dim);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .hint-line kbd {
+    font-family: var(--font-mono, monospace);
+    font-size: 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 4px;
+    background: var(--panel);
+    white-space: nowrap;
+  }
+  .hint-x {
+    margin-left: auto;
+    flex: none;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    padding: 0 2px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .hint-x:hover {
+    color: var(--text);
+  }
+
+  /* Guided-tour target highlight — gentle accent outline on the panel the
+     current step describes. The card itself never blocks the rest of the UI. */
+  .tour-highlight {
+    outline: 2px solid var(--accent, #4f8cff);
+    outline-offset: -2px;
+    border-radius: 8px;
   }
 
   .welcome-dismiss {

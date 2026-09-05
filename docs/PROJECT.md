@@ -655,3 +655,31 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **GPU lost `Output.svelte:232` `.frame.gpu` only while `crossfading` — fullscreen discarded layer mid-fade.**
 - **Fix `Output.svelte:226` `contain: layout style paint` + `will-change: opacity; transform: translateZ(0); backface-visibility:hidden; isolation:isolate` on `.frame` + `Output.svelte:206` `.stage` `isolation: isolate; contain: layout style` — size can follow viewport, promotion persists, heavy `will-change` stays on `.gpu`.**
 - **Verify:** `npm run check` 0/0, `cargo check` 4 `dead_code`. Manual fullscreen Fade now seamless.**
+
+---
+
+## Changed (2026-09-05) — Contextual onboarding: empty-state hints, guided tour, Help + shortcuts
+
+*Priority #3 from the original project goals (design principle: prefer contextual hints and empty-state guidance over a separate manual). Extends the Phase 3 first-run welcome banner. Frontend only — Svelte + CSS + localStorage, no new deps, no backend change.*
+
+**Audit — features added since the welcome banner with no visible discovery path for a first-time volunteer:**
+
+1. View Hub / View + Playlist flow (`New view` topbar, `Save as Playlist`, starting-Playlist gallery)
+2. Browse Scripture panel (collapsed by default behind `▸ Show`)
+3. Drag-and-drop (playlist reorder, library song/verse → playlist, scripture → playlist, OS image/video files → new slide, `.pro`/`.cho`/`.usr` → Library)
+4. Arrow-key slide navigation (`←`/`→` via `next_slide`/`prev_slide`) and global search (`Ctrl/Cmd+K`)
+5. Looks (Slides/Looks workspace switch, dedicated Look editor, per-output Output/Stage/NDI look mapping, absolute bounding-box canvas)
+6. Stage Display (Show/Hide toggle, stage-only message banner, Output-only overlays)
+7. Targeted clear (`Clear text` / `Clear background` beside `Clear output`)
+8. Slide grid + detail editing (click thumbnail to edit, slide name vs on-screen title, `Aa` Title Case, spellcheck, auto-advance `↻`)
+9. Library song editor + arrangement chips + song-file import
+10. Media backgrounds (`Add media` image/video import, managed hash cache)
+11. Scripture autocomplete + `bible-api.com` fallback + OpenLP import + drop-XML `bibles/` folder
+12. Settings sections: General (display/fullscreen/transition), Looks, Triggers (MIDI/OSC), Network (stage web + PIN), Audio (backing track), Logs — plus NDI broadcast toggle and system-tray standby
+
+**Implemented `src/lib/onboarding.ts:1` (localStorage store `makrstudio.onboarding.v1`):** `tourDismissed` + per-feature `used` + per-hint `dismissed` (`loadOnboarding`/`markUsed`/`dismissHint`/`dismissTour`/`resetTourDismissal`/`showHint`). Try/catch throughout — blocked storage never breaks the app.
+
+- **Empty-state hints `Editor.svelte:1764`/`1842`/`1845`/`1961`/`2065`/`2413` (`hint-line` `Editor.svelte:3650`, muted 11px, one line, × each):** playlist drag + reorder (`dragdrop`, `use` on any recognised drop `Editor.svelte:656` / media-file success `Editor.svelte:864`), playlist `←/→` + `Ctrl+K` (`shortcuts`, `use` on arrow/Ctrl+K `Editor.svelte:1448`/`1465`/`1469`), Looks tab (`looks`, `use` on switch `Editor.svelte:1762`), Browse Scripture collapsed (`browse`, `use` on chapter load/verse insert `Editor.svelte:550`/`578`), Library empty (`songs`, `use` on add/import `Editor.svelte:983`/`1215`/`1245`/`1259`/`1220`), Stage hidden (`stage`, `use` on toggle/send `Editor.svelte:1215`/`1493`). Each hides forever once its feature is used or dismissed — returning operators see at most quiet lines, never popups.
+- **Guided tour `src/components/GuidedTour.svelte:1` (non-blocking bottom card, `pointer-events:none` layer `GuidedTour.svelte:34`):** 4 steps `Editor.svelte:139` (Playlist → Output → Songs & Scripture → "Ignore all of this on Sunday morning"), Back/Next + always-visible Skip/×, `Esc` ends it `Editor.svelte:1456`. Auto-starts only when `firstRun` (no `project.json`/`settings.json`, `project.rs:934`) + tour never dismissed + View Hub closed so targets are visible (`$effect` `Editor.svelte:166`, `showTour` `Editor.svelte:179`); `endTour` persists `tourDismissed` (`Editor.svelte:189`) so it never re-shows. Current step's panel gets an accent outline (`tour-highlight` `Editor.svelte:3688`, bound `Editor.svelte:1768`/`1954`/`1972`/`2308`). Nothing blocks input — a slide can go live mid-tour.
+- **Help entry point `src/components/HelpModal.svelte:1` + topbar `? Help` `Editor.svelte:1722`:** replays the tour on demand (`replayTour` `Editor.svelte:194`) and lists every shortcut (`←/→`, `Ctrl+K`, `Esc`, `↑/↓/Enter` in Scripture, `Enter/Esc` in dialogs) plus the drag-alternative note.
+- **Verify:** `npm run check` 0 errors 0 warnings, `vite build` clean (editor bundle 153.62 kB). No Rust touched — `cargo check` unaffected. Tone check-in pending with user (this entry records the audit + implementation for that review).

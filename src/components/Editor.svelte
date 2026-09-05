@@ -2718,6 +2718,8 @@
   .topbar {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    row-gap: 8px;
     gap: 12px;
     padding: 8px 14px;
     background: var(--panel);
@@ -2742,6 +2744,10 @@
 
   .project-name {
     color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   .spacer {
@@ -2751,6 +2757,19 @@
   .saved-label {
     font-size: 12px;
     color: var(--text-dim);
+  }
+
+  /* Narrow windows: the view name yields first and non-critical chrome hides,
+     so Search / New view / Clear output / Help / Settings never get pushed
+     off-screen. */
+  @media (max-width: 700px) {
+    .topbar {
+      gap: 8px;
+    }
+    .saved-label,
+    .search-trigger .kbd {
+      display: none;
+    }
   }
 
   .search-trigger {
@@ -2825,24 +2844,54 @@
 
   /* Windows 11 DPI/snap guard: avoid hardcoded 280px sidebars which clip at 125%/150%
      scaling and during snap. Use viewport-relative clamp + flex so the center editor always
-     has room and sidebars shrink proportionally. */
+     has room and sidebars shrink proportionally. The center uses minmax(0,1fr) and every
+     direct child gets min-width:0 so min-content can never force the row wider than the
+     window (inner lists scroll instead of clipping). */
   .body {
     flex: 1 1 0;
     display: grid;
-    grid-template-columns: clamp(220px, 18vw, 300px) minmax(320px, 1fr) clamp(220px, 18vw, 300px);
+    grid-template-columns: clamp(200px, 18vw, 300px) minmax(0, 1fr) clamp(200px, 18vw, 300px);
     min-height: 0;
     overflow: hidden;
+  }
+  .body > * {
+    min-width: 0;
   }
 
   @media (max-width: 1180px) {
     .body {
-      grid-template-columns: clamp(200px, 20vw, 260px) minmax(280px, 1fr) clamp(200px, 20vw, 260px);
+      grid-template-columns: clamp(180px, 20vw, 260px) minmax(0, 1fr) clamp(180px, 20vw, 260px);
     }
   }
 
   @media (max-width: 960px) {
     .body {
-      grid-template-columns: 220px 1fr 220px;
+      grid-template-columns: minmax(150px, 24vw) minmax(0, 1fr) minmax(150px, 24vw);
+    }
+  }
+
+  /* Graceful degrade below ~700px effective width (e.g. a 1024px window at 150%
+     zoom, or a small laptop at 175%+): stack the three regions in DOM order and
+     let the page scroll. Nothing is hidden, collapsed, or overlapped — Show
+     Output, the live status badges, and Settings stay reachable via scroll.
+     Inner lists keep bounded heights so they scroll in place instead of making
+     the page infinitely tall. */
+  @media (max-width: 700px) {
+    .body {
+      grid-template-columns: 1fr;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    .sidebar {
+      overflow: visible;
+    }
+    .sidebar-section .slide-list,
+    .sidebar-section .song-list,
+    .sidebar-section .scripture-list {
+      max-height: 38vh;
+    }
+    .slide-grid {
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     }
   }
 
@@ -2979,6 +3028,7 @@
   /* Preview thumbnail + ON AIR badge — uses existing SlideRender at small size */
   .preview-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     margin: 4px 0 8px;
@@ -3861,7 +3911,10 @@
     font-style: italic;
   }
 
-  /* Bottom-docked full-width Browse panel — pushes main content up, not overlay */
+  /* Bottom-docked full-width Browse panel — pushes main content up, not overlay.
+     Columns are flexible (shrink proportionally) with viewport-capped minimums
+     so the dock never forces a horizontal scrollbar until the window is truly
+     tiny; below 960px it stacks vertically. */
   .browse-dock {
     display: flex;
     gap: 16px;
@@ -3876,8 +3929,8 @@
     resize: vertical;
   }
   .browse-dock-left {
-    width: 220px;
-    min-width: 180px;
+    flex: 0 1 220px;
+    min-width: min(160px, 100%);
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -3886,8 +3939,8 @@
     overflow-y: auto;
   }
   .browse-dock-middle {
-    width: 280px;
-    min-width: 220px;
+    flex: 0 1 280px;
+    min-width: min(200px, 100%);
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -3896,8 +3949,8 @@
     overflow-y: auto;
   }
   .browse-dock-right {
-    flex: 1;
-    min-width: 300px;
+    flex: 1 1 280px;
+    min-width: min(240px, 100%);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -3943,9 +3996,11 @@
       overflow-y: auto;
     }
     .browse-dock-left,
-    .browse-dock-middle {
+    .browse-dock-middle,
+    .browse-dock-right {
       width: 100%;
       min-width: 0;
+      flex: none;
       border-right: none;
       border-bottom: 1px solid var(--border);
       padding-right: 0;

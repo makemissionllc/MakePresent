@@ -989,3 +989,13 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **View language** `src/components/Editor.svelte:1706` (`No view`), `:636`/`:833` (`View not loaded yet`), `:147` tour step (`Show it when you're ready`), `:120` comment; `src/components/SettingsPanel.svelte:697` (export hint) and `:751` (Looks hint).
 - **Internal/external naming map (for future work):** `New view` → `newProject()` → `new_project_from_preset`; `Save as Playlist` → `save_template`; hub create-from-playlist → `new_project_from_preset("blank")` + `load_template`. Backend structs/files unchanged (`Project`, `PlaylistTemplate`, `TemplateItem`, `project.json`, `templates.json`).
 - **Verify:** `npm run check` 0 errors 0 warnings, `cargo check` clean (3 pre-existing `dead_code`). Backward compat untouched (`#[serde(default)]` on newer `TemplateItem` fields, corrupt store → default, `load_template` mints fresh ids + clears live).
+
+---
+
+## Changed (2026-09-05) — Responsive Editor layout audit (beyond the WINDOWS.md DPI fixes)
+
+*Pure container sizing — no feature logic changed, nothing hidden or removed. Full audit matrix + root causes in `docs/PROJECT.md`.*
+
+- **Found broken:** narrow windows / high zoom below ~740px effective width clipped the Output panel (`220px 1fr 220px` fixed grid under `overflow: hidden` — Show Output unreachable); the topbar spilled buttons off-screen (no wrap); Settings tabs clipped Audio/Logs (dialog `overflow: hidden`); browse dock forced horizontal scroll on fixed 220+280+300px minimums. Fits fine: 1024×768, ultrawide, 100–175% zoom.
+- **Fixes:** center column `minmax(0,1fr)` + `.body > * { min-width: 0 }` (`Editor.svelte:2849`/`2857`); relative sidebars at ≤960px (`:2867`); stacked-scroll degrade ≤700px (`:2879` — all regions in DOM order, lists capped `38vh`, grid min 140px; icon-only collapse rejected since it would hide features); wrapping topbar with truncating view name + hidden non-critical chrome ≤700px (`:2718`/`2743`/`2762`); wrapping preview rows (`:2980`); flexible dock columns with viewport-capped minimums (`:3932`/`3952`); scrollable Settings tabs + stacking Looks grid (`SettingsPanel.svelte:1434`/`1593`); stacking Look-editor sidebar (`LookEditorView.svelte:531`).
+- **Verify:** `npm run check` 0 errors 0 warnings, `vite build` clean. **Not visually verified** — no display tooling in this environment; recommend a manual resize/zoom pass on real hardware.

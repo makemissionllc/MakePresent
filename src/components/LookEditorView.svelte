@@ -520,4 +520,28 @@
     padding: 8px;
     border-radius: 6px;
   }
+
+  /* Narrow center column (small windows / high zoom): the fixed 220px sidebar
+     would leave the preview postage-stamp sized, so stack it as a top strip
+     with wrapping pills instead. Same content, no logic change. */
+  @media (max-width: 960px) {
+    .look-editor-view {
+      flex-direction: column;
+    }
+    .looks-sidebar {
+      width: 100%;
+      flex: none;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+      padding-right: 0;
+      padding-bottom: 10px;
+    }
+    .looks-list {
+      flex-direction: row;
+      flex-wrap: wrap;
+    }
+    .look-pill {
+      flex: 1 1 140px;
+    }
+  }
 </style>

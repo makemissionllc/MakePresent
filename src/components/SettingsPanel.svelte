@@ -1436,6 +1436,9 @@
     gap: 4px;
     padding: 10px 14px 0;
     border-bottom: 1px solid var(--border);
+    /* Six tabs overflow narrow dialogs (dialog is overflow:hidden) — scroll
+       the tab strip instead of clipping Audio/Logs out of reach. */
+    overflow-x: auto;
   }
 
   .tab {
@@ -1445,6 +1448,7 @@
     border-radius: 6px 6px 0 0;
     padding: 8px 14px;
     color: var(--text-dim);
+    flex: none;
   }
 
   .tab.active {
@@ -1594,6 +1598,21 @@
     display: grid;
     grid-template-columns: 200px 1fr;
     gap: 16px;
+  }
+
+  /* Narrow dialogs (92vw on small windows / high zoom): stack the Looks list
+     above the editor instead of squeezing both into 200px + scraps. */
+  @media (max-width: 560px) {
+    .looks-layout {
+      grid-template-columns: 1fr;
+    }
+    .looks-list {
+      flex-direction: row;
+      flex-wrap: wrap;
+    }
+    .look-pill {
+      flex: 1 1 140px;
+    }
   }
 
   .looks-list {

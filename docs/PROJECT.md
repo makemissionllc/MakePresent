@@ -695,3 +695,30 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Leftover "project" display strings → view language** `Editor.svelte:1706` `No project` → `No view`, `Editor.svelte:636`/`833` `Project not loaded yet` → `View not loaded yet`, `SettingsPanel.svelte:697` export hint `The project and library` → `The current view and library`, `SettingsPanel.svelte:751` Looks hint `stored with the project` → `stored with the current view`, tour step `Editor.svelte:147` `Project when you're ready` → `Show it when you're ready` (was verb, reworded to avoid the noun entirely), stale comment `Editor.svelte:120` `Project Hub` → `View Hub`.
 - **Deliberately untouched:** all internal names (`new_project_from_preset`, `load_template`/`save_template`, `PlaylistTemplate`, `templates.json`, `project.json`, `TemplateItem`, CSS classes `template-actions`/`project-name`) — display-only rename per the MakrStudio-rename caution. Future-confusion note: the `New view` button calls `newProject()` → `api.newProjectFromPreset`, and `Save as Playlist` calls `api.saveTemplate` — command names still say project/template; see README Changed entry for the mapping.
 - **Verify:** `npm run check` 0 errors 0 warnings, `cargo check` clean (3 pre-existing `dead_code`: `COPY_SUFFIX` `media.rs:16`, `ensure_stage` `windows.rs:460`, `AudioPlayer::is_active` `audio.rs:390`).
+
+---
+
+## Changed (2026-09-05) — Responsive Editor layout audit (beyond the WINDOWS.md DPI fixes)
+
+*Pure container sizing — no grid/flow/Look-editor logic touched, nothing hidden or removed. Root-cause pattern per the Windows blocking-call audit: `overflow: hidden` + fixed minimums = controls clipped with no way to reach them.*
+
+**Audit (reasoned matrix, no visual tooling in this env — CSS px = device px / zoom):**
+
+- **1024×768 @100%: fits.** Body `220+~380+220`, grid 2-col, dock 866px min < 1024, Hub/Settings/dialogs viewport-capped. No issue.
+- **Narrow-but-tall (~700px wide): BROKEN.** `≤960px` rule was fixed `220px 1fr 220px` under `.body { overflow: hidden }` — center min-content (~300px: preview + 180px grid min) pushed the total past 700px, clipping the right Output panel; Show Output / live badge unreachable with no scroll.
+- **Ultrawide / 1920 @100–175%: fits.** Sidebars clamp at 300px, `auto-fill` grid + `flex:1` dock absorb the rest; Hub capped at 1180px.
+- **200% zoom (960 effective px) and small laptops at 150–175%: at-risk zone below ~740px effective** (e.g. 1024px window @150% = 682px) — same fixed-min clipping as narrow windows.
+- **Topbar: BROKEN at narrow widths.** Single-line flex, no wrap/overflow — Search/New view/Clear/Help/Settings spilled off-screen right, unreachable (shell never scrolls).
+- **Settings tabs: BROKEN in narrow dialogs.** Six tabs in an `overflow: hidden` dialog — Audio/Logs clipped out of reach. Settings Looks `200px 1fr` grid squeezed similarly.
+- **Browse dock: survivable but wasteful.** Fixed `220+280+300px` minimums (~766px+) forced a horizontal scrollbar; stacked mode (≤960px) kept a stale `min-width: 300px` on the right column. Already-responsive: slide grid (`auto-fill minmax(180px,1fr)`), all modals/palette/Hub (`min(Npx,9xvw)` + internal scroll), Look editor internals (flex/%/`aspect-ratio`) except its fixed 220px sidebar.
+
+**Fixes (relative units, guaranteed control visibility):**
+
+- **Body grid `Editor.svelte:2849`** — center `minmax(320px,1fr)` → `minmax(0,1fr)` at all breakpoints, `.body > * { min-width: 0 }` (`:2857`) so min-content never forces overflow; ≤960px rule `220px 1fr 220px` → `minmax(150px,24vw) minmax(0,1fr) minmax(150px,24vw)` (`:2867`).
+- **Graceful stacked degrade ≤700px (`:2879`, step-4 decision: stack + scroll, NOT icon-only collapse** — collapsing would hide features, i.e. change what's shown; stacking keeps every control reachable): single column in DOM order, page scrolls, inner lists capped at `38vh`, grid min drops to 140px.
+- **Topbar (`:2718`/`2743`/`2762`):** `flex-wrap: wrap`, view name truncates with ellipsis + `min-width: 0`, `saved-label`/search `kbd` hidden ≤700px — Settings et al can never be pushed off-screen.
+- **Preview rows (`:2980`):** `flex-wrap: wrap` so ON AIR badges wrap instead of overlapping.
+- **Browse dock (`:3914`/`3932`/`3952`/`3992`):** columns `flex: 0 1 220px` / `0 1 280px` / `1 1 280px` with `min-width: min(Npx,100%)`; stacked mode clears the stale 300px min.
+- **Settings (`SettingsPanel.svelte:1434`/`1441` tabs scroll + `flex:none`; `:1593` Looks grid stacks ≤560px with wrapping pills).**
+- **Look editor (`LookEditorView.svelte:531`):** sidebar becomes a top strip with wrapping pills ≤960px (same content).
+- **Verify:** `npm run check` 0/0, `vite build` clean. **Could not verify visually** — no display/browser tooling in this environment; validated by CSS reasoning + compile only. Recommend a manual resize pass (1024×768, ~700px narrow, 150–200% zoom) on a real machine; nothing in these changes affects logic, only container sizing, so risk is visual-only.

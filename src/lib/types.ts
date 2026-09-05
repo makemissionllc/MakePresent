@@ -287,6 +287,19 @@ export interface AutosaveEvent {
   message?: string;
 }
 
+/** Proof a dumb-renderer window is alive and applied state. `at` is stamped
+    by the backend on receipt; `liveId` is informational (freshness = `at`). */
+export interface RenderAck {
+  at: string;
+  liveId?: string | null;
+}
+
+/** Latest ack per renderer window — tiny fan-out event, never a snapshot. */
+export interface AckUpdate {
+  output: RenderAck | null;
+  stage: RenderAck | null;
+}
+
 export interface ExportReport {
   path: string;
   fields: string[];

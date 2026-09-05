@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { api, subscribeState } from "../lib/sync";
+  import { api, emitRenderAck, subscribeState } from "../lib/sync";
   import type { ClientState, Look, Slide } from "../lib/types";
   import SlideRender from "./SlideRender.svelte";
 
   const FADE_MS = 400;
+  /** Render-ack heartbeat cadence — slow enough to be noise-free, fast enough
+      that the Editor's stale threshold (12s) trips promptly on a freeze. */
+  const ACK_MS = 5000;
 
   // The slide currently occupying the Output (or null = black screen).
   let shown = $state<Slide | null>(null);
@@ -99,19 +102,28 @@
 
   onMount(() => {
     let un: () => void = () => {};
+    let ackTimer: number | undefined;
+    // One-way ack: confirm each applied state + a slow heartbeat so a
+    // frozen-but-not-updating window is still detectable. Fire-and-forget —
+    // never awaits anything, so a stalled backend can't hang this window.
+    const ack = () => emitRenderAck("output", live?.id ?? null);
     void (async () => {
       un = await subscribeState((s) => {
         appState = s;
+        ack();
       });
       try {
         appState = await api.getState();
+        ack();
       } catch (e) {
         console.error("Failed to fetch initial appState", e);
       }
     })();
+    ackTimer = window.setInterval(ack, ACK_MS);
     return () => {
       un();
       window.clearTimeout(timer);
+      if (ackTimer !== undefined) window.clearInterval(ackTimer);
       leaving = null;
       inOpacity = 1;
       outOpacity = 1;

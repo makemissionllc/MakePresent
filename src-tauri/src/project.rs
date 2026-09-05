@@ -414,6 +414,26 @@ pub struct Notice {
     pub at: Option<String>,
 }
 
+/// Render acknowledgment from a dumb-renderer window (Output/Stage): proof it
+/// is alive and applied state. Stamped by the backend on receipt (never trusts
+/// the sender's clock). `live_id` is informational only — freshness is judged
+/// on `at`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderAck {
+    pub at: String,
+    pub live_id: Option<String>,
+}
+
+/// Latest ack per renderer window, fanned out as a tiny event (never a full
+/// snapshot — acks arrive every few seconds and must not churn the UI).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AckUpdate {
+    pub output: Option<RenderAck>,
+    pub stage: Option<RenderAck>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputView {

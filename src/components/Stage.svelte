@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, subscribeState } from "../lib/sync";
+  import { api, emitRenderAck, subscribeState } from "../lib/sync";
   import type { ClientState, Look } from "../lib/types";
   import { fitText } from "../lib/fitText";
   import SlideRender from "./SlideRender.svelte";
@@ -8,6 +8,11 @@
 
   let appState = $state<ClientState | null>(null);
   let currentTime = $state("--:--:--");
+
+  /** Same render-ack heartbeat as Output (see Output.svelte) — confirms the
+      Stage renderer is alive and applied state, so the Editor can warn on a
+      silent freeze instead of only noticing at the screen. */
+  const ACK_MS = 5000;
 
   const current = $derived(appState?.current ?? null);
   const next = $derived(appState?.next ?? null);
@@ -29,27 +34,33 @@
   onMount(() => {
     let un: () => void = () => {};
     let clock: number | undefined;
+    let ackTimer: number | undefined;
 
     const tick = () => {
       currentTime = new Date().toLocaleTimeString([], { hour12: false });
     };
+    const ack = () => emitRenderAck("stage", current?.id ?? null);
 
     void (async () => {
       un = await subscribeState((s) => {
         appState = s;
+        ack();
       });
       try {
         appState = await api.getState();
+        ack();
       } catch (e) {
         console.error("Failed to fetch initial appState", e);
       }
     })();
     tick();
     clock = window.setInterval(tick, 1000);
+    ackTimer = window.setInterval(ack, ACK_MS);
 
     return () => {
       un();
       if (clock !== undefined) window.clearInterval(clock);
+      if (ackTimer !== undefined) window.clearInterval(ackTimer);
     };
   });
 </script>

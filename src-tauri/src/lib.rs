@@ -19,7 +19,7 @@ use state::AppState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{Emitter, Listener, Manager, RunEvent, WindowEvent};
 
 /// Set to `true` the moment the user chooses "Quit" from the system tray. When
 /// set, the application really exits; otherwise `ExitRequested` is prevented so
@@ -401,6 +401,33 @@ pub fn run() {
                     Level::Info,
                     &format!("audio: volume restored to {:.0}%", audio_cfg.audio_volume * 100.0),
                 );
+            }
+
+            // Render-ack heartbeat (Phase 1 of the live-thumbnail research):
+            // Output/Stage windows fire one-way `emit` events after applying
+            // state plus a slow interval heartbeat — never a blocking
+            // round-trip. Recording is two lock writes + one tiny fan-out
+            // event: no snapshot, no autosave, nothing touches windows, so the
+            // Windows main-thread fixes are unaffected. A frozen renderer
+            // simply stops acking and the Editor's indicator goes stale.
+            for which in ["output", "stage"] {
+                let handle = app.handle().clone();
+                let event_name = format!("{which}-ack");
+                let which_owned = which.to_string();
+                app.listen(event_name, move |event| {
+                    let live_id: Option<String> = serde_json::from_str::<serde_json::Value>(
+                        event.payload(),
+                    )
+                    .ok()
+                    .and_then(|v| {
+                        v.get("liveId")
+                            .and_then(|l| l.as_str())
+                            .map(|s| s.to_string())
+                    });
+                    let st = handle.state::<AppState>();
+                    let update = st.record_ack(&which_owned, live_id);
+                    let _ = handle.emit("ack-update", update);
+                });
             }
 
             // Stage Network: restore the local WebSocket server if it was left

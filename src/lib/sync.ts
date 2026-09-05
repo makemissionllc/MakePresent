@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AckUpdate,
   AudioDeviceInfo,
   AudioStateView,
   AutosaveEvent,
@@ -44,6 +45,24 @@ export function subscribeMidiMessage(
   cb: (msg: MidiMessageView) => void,
 ): Promise<UnlistenFn> {
   return listen<MidiMessageView>("midi-message", (event) => cb(event.payload));
+}
+
+/**
+ * One-way render-ack from a dumb-renderer window (Output/Stage) to the
+ * backend — fire-and-forget `emit`, never a blocking round-trip. The backend
+ * stamps receipt time and fans out a tiny `ack-update` (no snapshot).
+ */
+export function emitRenderAck(
+  which: "output" | "stage",
+  liveId: string | null,
+): void {
+  void emit(`${which}-ack`, { liveId }).catch(() => {
+    // Backend not listening (e.g. browser preview) — acks are best-effort.
+  });
+}
+
+export function subscribeAck(cb: (update: AckUpdate) => void): Promise<UnlistenFn> {
+  return listen<AckUpdate>("ack-update", (event) => cb(event.payload));
 }
 
 export const api = {

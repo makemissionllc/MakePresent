@@ -3,8 +3,8 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
-  import { api, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, PlaylistTemplate, ScriptureMatch, Slide } from "../lib/types";
+  import { api, subscribeAck, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
+  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, PlaylistTemplate, ScriptureMatch, Slide } from "../lib/types";
   import { isMedia, isLiveCamera } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
@@ -195,6 +195,26 @@
     onboarding = resetTourDismissal(onboarding);
     tourStep = 0;
     tourActive = true;
+  }
+
+  // Render-ack heartbeat (Phase 1 of the live-thumbnail research): the latest
+  // per-window proof-of-life. Fresh = renderer applied state recently; stale =
+  // early warning that Output/Stage silently stopped responding.
+  let ack = $state<AckUpdate | null>(null);
+  let nowMs = $state(Date.now());
+  const ACK_STALE_MS = 12000;
+
+  function ackAgeMs(at: string | null | undefined): number | null {
+    if (!at) return null;
+    const t = Date.parse(at);
+    if (!Number.isFinite(t)) return null;
+    return Math.max(0, nowMs - t);
+  }
+
+  function ackLabel(ageMs: number | null): string {
+    if (ageMs === null) return "Waiting for confirmation…";
+    if (ageMs < 1500) return "Confirmed just now";
+    return `Confirmed ${Math.round(ageMs / 1000)}s ago`;
   }
 
   // Stage message (nursery alerts, countdowns, operator notes) — stage-only, never Output
@@ -1650,6 +1670,7 @@
     let unSub: () => void = () => {};
     let unAuto: () => void = () => {};
     let unLib: () => void = () => {};
+    let unAck: () => void = () => {};
     let unFileDrop: (() => void) | null = null;
     let unFileDrop2: (() => void) | null = null;
     let cancelled = false;
@@ -1722,6 +1743,15 @@
       if (cancelled) { libSub(); return; }
       unLib = libSub;
       try {
+        const ackSub = await subscribeAck((u) => {
+          if (!cancelled) ack = u;
+        });
+        if (cancelled) { ackSub(); return; }
+        unAck = ackSub;
+      } catch {
+        // ack events unavailable (browser preview) — indicators stay idle.
+      }
+      try {
         const s = await api.getState();
         if (!cancelled) {
           appState = s;
@@ -1742,11 +1772,17 @@
     })();
 
     window.addEventListener("keydown", handleGlobalKeydown);
+    // 1s ticker so "Confirmed Ns ago" ages live without new events.
+    const ackClock = window.setInterval(() => {
+      nowMs = Date.now();
+    }, 1000);
     return () => {
       cancelled = true;
       unSub();
       unAuto();
       unLib();
+      unAck();
+      window.clearInterval(ackClock);
       if (unFileDrop) unFileDrop();
       if (unFileDrop2) unFileDrop2();
       window.removeEventListener("keydown", handleGlobalKeydown);
@@ -2507,6 +2543,17 @@
           <span class="on-air-badge" class:on={isOnAir} class:off={!isOnAir}>{isOnAir ? "ON AIR" : "OFF"}</span>
         </div>
 
+        {#if appState?.output.visible}
+          {@const outAge = ackAgeMs(ack?.output?.at)}
+          {#if outAge === null}
+            <p class="ack-line idle" title="The Output window confirms each applied state plus a heartbeat every 5s.">Waiting for Output confirmation…</p>
+          {:else if outAge <= ACK_STALE_MS}
+            <p class="ack-line ok" title={`Output confirmed at ${ack?.output?.at ?? "unknown time"}`}>✓ {ackLabel(outAge)}</p>
+          {:else}
+            <p class="ack-line stale" role="alert" title={`Last Output confirmation at ${ack?.output?.at ?? "unknown time"}`}>⚠ No confirmation for {Math.round(outAge / 1000)}s — Output may be frozen</p>
+          {/if}
+        {/if}
+
         <div class="output-status" class:live={!!(appState?.output.visible && project?.live)}>
           {#if appState?.output.visible}
             {#if project?.live}
@@ -2583,6 +2630,17 @@
         </div>
         <span class="on-air-badge" class:on={isStageOnAir} class:off={!isStageOnAir}>{isStageOnAir ? "ON AIR" : "OFF"}</span>
       </div>
+
+      {#if appState?.stage.visible}
+        {@const stageAge = ackAgeMs(ack?.stage?.at)}
+        {#if stageAge === null}
+          <p class="ack-line idle" title="The Stage window confirms each applied state plus a heartbeat every 5s.">Waiting for Stage confirmation…</p>
+        {:else if stageAge <= ACK_STALE_MS}
+          <p class="ack-line ok" title={`Stage confirmed at ${ack?.stage?.at ?? "unknown time"}`}>✓ {ackLabel(stageAge)}</p>
+        {:else}
+          <p class="ack-line stale" role="alert" title={`Last Stage confirmation at ${ack?.stage?.at ?? "unknown time"}`}>⚠ No confirmation for {Math.round(stageAge / 1000)}s — Stage may be frozen</p>
+        {/if}
+      {/if}
 
       <div class="output-status">
         {#if appState?.stage.visible}
@@ -3218,6 +3276,29 @@
     background: var(--semantic-error-bg);
     color: var(--semantic-error);
     border-color: var(--semantic-error-border);
+  }
+
+  /* Render-ack heartbeat indicator — quiet when healthy, loud only on stale.
+     Shown only while the corresponding window exists. */
+  .ack-line {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .ack-line.ok {
+    color: var(--text-dim);
+  }
+  .ack-line.idle {
+    color: var(--text-dim);
+    opacity: 0.75;
+  }
+  .ack-line.stale {
+    color: var(--semantic-warning, #f7b538);
+    background: var(--semantic-warning-bg, rgba(247, 181, 56, 0.12));
+    border: 1px solid var(--semantic-warning, #f7b538);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-weight: 600;
   }
 
   .clear-row {

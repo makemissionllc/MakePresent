@@ -4,7 +4,7 @@ use crate::midi::MidiListener;
 use crate::network::NetworkServer;
 use crate::osc::OscListener;
 use crate::audio::AudioPlayer;
-use crate::project::{Library, Notice, Overlay, Project, Settings};
+use crate::project::{now_iso, Library, Notice, Overlay, Project, RenderAck, AckUpdate, Settings};
 use crate::scripture::ScriptureIndex;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -49,6 +49,11 @@ pub struct AppState {
     /// Single-track backing audio player (rodio on cpal) — dedicated thread, not tied to slides.
     /// ONE track at a time, routable to a specific output device, independent of system default.
     pub audio: AudioPlayer,
+    /// Last render-ack per dumb-renderer window (Output/Stage heartbeat).
+    /// Updated from one-way frontend events only — never triggers autosave or
+    /// a full snapshot; Editor reads it via the tiny `ack-update` event.
+    pub output_ack: RwLock<Option<RenderAck>>,
+    pub stage_ack: RwLock<Option<RenderAck>>,
 }
 
 impl Default for AppState {
@@ -71,6 +76,8 @@ impl Default for AppState {
             stage_message_gen: AtomicU64::new(0),
             overlay: RwLock::new(None),
             audio: AudioPlayer::default(),
+            output_ack: RwLock::new(None),
+            stage_ack: RwLock::new(None),
         }
     }
 }
@@ -115,5 +122,42 @@ impl AppState {
 
     pub fn current_stage_message_gen(&self) -> u64 {
         self.stage_message_gen.load(Ordering::SeqCst)
+    }
+
+    /// Record a one-way render-ack from a dumb-renderer window. Stamps receipt
+    /// time on the backend clock and returns the latest per-window picture for
+    /// fan-out. Lock-hold is two short writes — never blocks, never saves.
+    pub fn record_ack(&self, window: &str, live_id: Option<String>) -> AckUpdate {
+        let ack = RenderAck {
+            at: now_iso(),
+            live_id,
+        };
+        match window {
+            "stage" => *self.stage_ack.write().unwrap() = Some(ack),
+            _ => *self.output_ack.write().unwrap() = Some(ack),
+        }
+        AckUpdate {
+            output: self.output_ack.read().unwrap().clone(),
+            stage: self.stage_ack.read().unwrap().clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ack_tracks_windows_independently() {
+        let state = AppState::default();
+        // Unknown window names fall through to output (fail-open, never drops).
+        let u = state.record_ack("output", Some("slide-1".to_string()));
+        assert!(u.output.is_some());
+        assert_eq!(u.output.as_ref().unwrap().live_id.as_deref(), Some("slide-1"));
+        assert!(u.stage.is_none());
+        let u = state.record_ack("stage", None);
+        assert!(u.output.is_some());
+        assert!(u.stage.is_some());
+        assert_eq!(u.stage.as_ref().unwrap().live_id, None);
     }
 }

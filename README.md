@@ -1043,3 +1043,14 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **GDI/PrintWindow disqualified** — returns black for GPU-composited WebView2 windows (kills the xcap/`tauri-plugin-screenshots` route for our Output).
 - **Viable Windows vehicle:** Windows.Graphics.Capture via the `windows-capture` crate (GPU-buffer read, HWND from Tauri, dedicated thread — no deadlock surface). **Linux deferred explicitly** (X11-only vs Wayland portal complexity).
 - **Recommendation (two-phase):** Phase 1 now — Output render-ack heartbeat (~30 lines, zero deps, cross-platform, catches the historically real freeze case); Phase 2 later — Windows-only WGC thumbnails. Phase 2 is a real project, so no code written this session.
+
+---
+
+## Changed (2026-09-05) — Phase 1 render-ack heartbeat (Output/Stage proof-of-life)
+
+*One-way acks + 5s heartbeat, backend receipt-stamping, Editor confirmed/stale indicators. Zero new deps, no snapshot churn.*
+
+- **Backend:** `RenderAck`/`AckUpdate` (`src-tauri/src/project.rs:422`), `output_ack`/`stage_ack` + `record_ack` (`state.rs:56`/`131` — lock writes only, never saves), setup listeners fanning out tiny `ack-update` events (`lib.rs:406`, no window calls — deadlock fixes unaffected). Unit-tested (`state.rs:143`).
+- **Renderers:** ack on every applied state + 5s interval, fire-and-forget (`Output.svelte:96`, `Stage.svelte:40`); frozen renderers just stop acking. **Transport:** `emitRenderAck`/`subscribeAck` (`src/lib/sync.ts:55`/`64`).
+- **Editor** (`Editor.svelte:203`, 12s stale threshold, 1s ticker): `✓ Confirmed Ns ago` when fresh, amber `⚠ …may be frozen` alert when stale, dim idle pre-first-ack — per window, only while the window exists.
+- **Verify:** `npm run check` 0/0, `cargo check` clean, `cargo test` 54 passed. **Live run not possible here** (no display server) — needs a real run: indicators should cycle ≤5s normally; freezing Output should flip its line stale within ~12s.

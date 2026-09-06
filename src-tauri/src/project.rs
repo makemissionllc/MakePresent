@@ -72,6 +72,15 @@ pub enum Transition {
     Fade,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SlideKind {
+    #[default]
+    Generic,
+    Song,
+    Scripture,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Slide {
@@ -87,6 +96,10 @@ pub struct Slide {
     /// and new slides before an explicit name is set show `title` as label).
     #[serde(default)]
     pub name: Option<String>,
+    /// Kind tag inferred from creation origin — Scripture (Add Scripture/Browse), Song (Library), Generic (manual + Add slide).
+    /// Stored as metadata, not user-editable. `Generic` is the default for legacy slides and manual slides.
+    #[serde(default)]
+    pub kind: SlideKind,
     pub title: String,
     pub body: String,
     pub background: Background,
@@ -224,6 +237,11 @@ pub struct Look {
     /// Geometry of the body box (absolute mode).
     #[serde(default)]
     pub body_box: BoxGeometry,
+    /// Optional default background for slides of a kind that uses this Look.
+    /// When a new slide is created with a kind whose default Look has a background,
+    /// that background is copied to the new slide (one-time, not a live link).
+    #[serde(default)]
+    pub background: Option<Background>,
 }
 
 fn default_title_font() -> String {
@@ -248,6 +266,7 @@ impl Look {
             positioning: Positioning::Auto,
             title_box: BoxGeometry::default(),
             body_box: BoxGeometry::default(),
+            background: None,
         }
     }
 
@@ -265,6 +284,7 @@ impl Look {
             positioning: Positioning::Auto,
             title_box: BoxGeometry::default(),
             body_box: BoxGeometry::default(),
+            background: None,
         }
     }
 }
@@ -312,6 +332,7 @@ impl Project {
                 library_id: None,
                 library_slide_id: None,
                 name: Some("Welcome to MakrStudio".to_string()),
+                kind: SlideKind::Generic,
                 title: "Welcome to MakrStudio".to_string(),
                 body: "This is the Phase 1 test slide.".to_string(),
                 background: Background::default(),
@@ -348,6 +369,7 @@ impl Project {
                     library_id: None,
                     library_slide_id: None,
                     name: Some(it.title.clone()),
+                    kind: SlideKind::Generic,
                     title: it.title.clone(),
                     body: it.content.clone().unwrap_or_default(),
                     background: Background::default(),
@@ -524,6 +546,7 @@ pub struct ClientState {
     pub stage_look_id: Option<String>,
     /// Look id assigned to the NDI feed (None -> first look).
     pub ndi_look_id: Option<String>,
+    pub default_looks: DefaultLooks,
     /// Whether the native MIDI input listener is enabled.
     pub midi_enabled: bool,
     /// Stable id of the selected MIDI input device (None when unset).
@@ -810,6 +833,8 @@ impl Default for Library {
 pub struct TemplateItem {
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub kind: SlideKind,
     pub title: String,
     pub body: String,
     pub background: Background,
@@ -932,6 +957,20 @@ pub struct Settings {
     /// Volume for the backing track (0.0..1.5, 1.0 = 100%). Clamped at command layer.
     #[serde(default = "default_audio_volume")]
     pub audio_volume: f32,
+    /// Default Look per slide kind — Scripture/Song/Generic, each optionally a Look id.
+    /// `None` means follow the global Main Look. Stored as metadata, one-time copy at creation.
+    #[serde(default)]
+    pub default_looks: DefaultLooks,
+}
+
+/// Default Look mapping per slide kind — Scripture/Song/Generic.
+/// Each optionally points to a Look id; `None` means fallback to Main Look.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DefaultLooks {
+    pub scripture: Option<String>,
+    pub song: Option<String>,
+    pub generic: Option<String>,
 }
 
 fn default_osc_port() -> u16 {
@@ -970,6 +1009,7 @@ impl Default for Settings {
             stage_network_pin: String::new(),
             audio_output_device_id: None,
             audio_volume: default_audio_volume(),
+            default_looks: Default::default(),
         }
     }
 }

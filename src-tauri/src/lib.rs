@@ -656,6 +656,8 @@ pub fn run() {
             commands::set_output_look,
             commands::set_stage_look,
             commands::set_ndi_look,
+            commands::get_default_looks,
+            commands::set_default_look,
             commands::set_ndi_enabled,
             commands::start_ndi_scan,
             commands::list_ndi_sources,

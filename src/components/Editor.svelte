@@ -489,7 +489,7 @@
     scriptureResults = [];
     scriptureOpen = false;
     scriptureIdx = -1;
-    void run(() => api.addSlide(match.reference, match.text));
+    void run(() => api.addSlide(match.reference, match.text, undefined, "scripture"));
   }
 
   function onScriptureKeydown(e: KeyboardEvent): void {
@@ -595,8 +595,7 @@
   function insertBrowseVerse(v: ChapterVerse): void {
     if (!selectedBook || selectedChapter == null) return;
     const ref = `${selectedBook} ${selectedChapter}:${v.verse}`;
-    use("browse");
-    void run(() => api.addSlide(ref, v.text));
+    void run(() => api.addSlide(ref, v.text, undefined, "scripture"));
   }
 
   // Drag-and-drop — native HTML5, no library
@@ -720,7 +719,7 @@
       }
       void (async () => {
         try {
-          const s = await api.addSlide(verse.title, verse.body);
+          const s = await api.addSlide(verse.title, verse.body, undefined, "song");
           appState = s;
           if (targetIdx < (s.project.slides.length - 1)) {
             const ids = s.project.slides.map((x) => x.id);
@@ -735,7 +734,7 @@
     } else if (payload.type === "scripture" && payload.reference && payload.text !== undefined) {
       void (async () => {
         try {
-          const s = await api.addSlide(payload.reference, payload.text);
+          const s = await api.addSlide(payload.reference, payload.text, undefined, "scripture");
           appState = s;
           const newId = s.project.slides.at(-1)?.id;
           if (newId && targetIdx < s.project.slides.length - 1) {
@@ -2122,7 +2121,7 @@
                   class="library-verse"
                   draggable="true"
                   ondragstart={(e) => onLibraryVerseDragStart(e, song, verse)}
-                  onclick={() => void api.addSlide(verse.title, verse.body).then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)))}
+                  onclick={() => void api.addSlide(verse.title, verse.body, undefined, "song").then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)))}
                   title="Drag verse to playlist • Click to add as slide"
                 >
                   <span class="verse-title">{verse.title || "Untitled verse"}</span>
@@ -2196,7 +2195,7 @@
 
     <main class="editor">
       {#if centralView === "looks"}
-        <LookEditorView appState={appState} onUpdate={(s) => (appState = s)} onError={(m) => (errorMsg = m)} />
+        <LookEditorView appState={appState} onUpdate={(s: ClientState) => (appState = s)} onError={(m: string) => (errorMsg = m)} />
       {:else if showDetail && selected}
         <div class="detail-header">
           <button class="ghost" onclick={() => closeDetail()} title="Back to grid">← Grid</button>

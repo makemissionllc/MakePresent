@@ -48,12 +48,15 @@ export function isLiveCamera(bg: Background): bg is LiveCameraBackground {
   return bg.type === "live_camera";
 }
 
+export type SlideKind = "generic" | "song" | "scripture";
+
 export interface Slide {
   id: string;
   libraryId: string | null;
   librarySlideId: string | null;
   /** Display name for grid/playlist labels — distinct from on-screen `title`. None = follow title. */
   name?: string | null;
+  kind?: SlideKind | null;
   title: string;
   body: string;
   background: Background;
@@ -85,6 +88,7 @@ export interface Look {
   positioning: Positioning;
   titleBox: BoxGeometry;
   bodyBox: BoxGeometry;
+  background?: Background | null;
 }
 
 export type Transition = "cut" | "fade";
@@ -116,6 +120,7 @@ export interface LookPatch {
   positioning?: Positioning;
   titleBox?: BoxGeometry;
   bodyBox?: BoxGeometry;
+  background?: Background | null;
 }
 
 export interface Notice {
@@ -174,6 +179,12 @@ export interface NdiPreviewFrame {
   at: string;
 }
 
+export interface DefaultLooks {
+  scripture: string | null;
+  song: string | null;
+  generic: string | null;
+}
+
 export interface ClientState {
   project: Project;
   notice: Notice | null;
@@ -189,6 +200,7 @@ export interface ClientState {
   outputLookId: string | null;
   stageLookId: string | null;
   ndiLookId: string | null;
+  defaultLooks: DefaultLooks;
   midiEnabled: boolean;
   midiDeviceId: string | null;
   oscEnabled: boolean;

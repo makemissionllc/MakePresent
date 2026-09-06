@@ -1,8 +1,13 @@
 <script lang="ts">
+  import { convertFileSrc } from "@tauri-apps/api/core";
+  import { open } from "@tauri-apps/plugin-dialog";
   import { api } from "../lib/sync";
-  import type { BoxGeometry, ClientState, Look, LookPatch, Positioning, TextPosition } from "../lib/types";
+  import type { Background, BoxGeometry, ClientState, Look, LookPatch, Positioning, TextPosition } from "../lib/types";
+  import { isMedia } from "../lib/types";
   import SlideRender from "./SlideRender.svelte";
   import type { Slide } from "../lib/types";
+
+  const PALETTE = ["#1a1a24", "#0f2b4a", "#123a5c", "#1f3a2f", "#3a2b1f", "#3d1f1f", "#2b2b3d", "#000000"];
 
   interface Props {
     appState: ClientState | null;
@@ -42,6 +47,7 @@
       positioning: updated.positioning,
       titleBox: updated.titleBox,
       bodyBox: updated.bodyBox,
+      background: updated.background ?? null,
     };
     if (commitTimer) clearTimeout(commitTimer);
     commitTimer = setTimeout(() => {
@@ -170,12 +176,36 @@
       libraryId: null,
       librarySlideId: null,
       name: "Sample",
+      kind: "generic",
       title: "Welcome to MakrStudio",
       body: "Great is Thy faithfulness\nMorning by morning new mercies I see",
       background: { type: "solid", color: "#123a5c" },
       autoAdvanceSecs: null,
     };
   });
+
+  function fileUrl(path: string): string {
+    try { return convertFileSrc(path); } catch { return ""; }
+  }
+
+  function setLookBackgroundColor(color: string): void {
+    if (!draft) return;
+    setDraft("background", { type: "solid", color } as Background);
+  }
+
+  function clearLookBackground(): void {
+    if (!draft) return;
+    setDraft("background", null);
+  }
+
+  async function pickLookBackgroundMedia(): Promise<void> {
+    try {
+      const picked = await open({ multiple: false, filters: [{ name: "Images", extensions: ["png","jpg","jpeg","gif","webp","bmp","tiff","svg","avif"] }, { name: "Videos", extensions: ["mp4","m4v","mov","webm","mkv","avi","ogv"] }] });
+      if (typeof picked !== "string") return;
+      const asset = await api.importMedia(picked);
+      setDraft("background", asset.background);
+    } catch (e) { lookErr = String(e); }
+  }
 </script>
 
 <div class="look-editor-view">
@@ -255,6 +285,31 @@
           <input type="checkbox" checked={draft.showBackground} onchange={(e) => setDraft("showBackground", (e.target as HTMLInputElement).checked)} />
           Show background
         </label>
+        <div class="field">
+          <span class="field-label">Default background for new slides using this Look</span>
+          <div class="swatches">
+            {#each PALETTE as color}
+              <button class="swatch" style:background-color={color} class:selected={draft.background?.type === "solid" && draft.background.color.toLowerCase() === color} onclick={() => setLookBackgroundColor(color)} title={color}></button>
+            {/each}
+            <label class="custom-color">
+              <input type="color" value={draft.background?.type === "solid" ? draft.background.color : "#123a5c"} oninput={(e) => setLookBackgroundColor((e.target as HTMLInputElement).value)} />
+              <span>Custom</span>
+            </label>
+            {#if draft.background && isMedia(draft.background)}
+              <span class="media-swatch-wrap">
+                <button class="swatch media selected" style:background-color="#000" title={draft.background.type === "video" ? "Video" : "Image"}>
+                  <img src={fileUrl(draft.background.thumb)} alt="" draggable="false" onerror={(e) => { const t = e.currentTarget as unknown as HTMLImageElement; t.style.display = "none"; }} />
+                </button>
+                <button class="media-remove" title="Remove" onclick={() => clearLookBackground()}>×</button>
+              </span>
+            {/if}
+            <button class="media-add" title="Pick image/video for Look background" onclick={() => pickLookBackgroundMedia()}>+</button>
+            {#if draft.background}
+              <button class="ghost" onclick={() => clearLookBackground()} title="Clear Look background">Clear</button>
+            {/if}
+          </div>
+          <span class="field-hint">When this Look is set as default for a kind (Scripture/Song/Generic), new slides of that kind will start with this background (one-time copy).</span>
+        </div>
         <label>
           Text position
           <select value={draft.textPosition} onchange={(e) => setDraft("textPosition", (e.target as HTMLSelectElement).value as TextPosition)}>

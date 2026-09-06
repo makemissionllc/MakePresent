@@ -114,8 +114,8 @@ export const api = {
 
   newProject: () => invoke<ClientState>("new_project"),
 
-  addSlide: (title?: string, body?: string, name?: string) =>
-    invoke<ClientState>("add_slide", { title, body, name }),
+  addSlide: (title?: string, body?: string, name?: string, kind?: string) =>
+    invoke<ClientState>("add_slide", { title, body, name, kind }),
 
   updateSlide: (
     slideId: string,
@@ -172,6 +172,11 @@ export const api = {
 
   setNdiLook: (lookId: string | null) =>
     invoke<ClientState>("set_ndi_look", { lookId }),
+
+  getDefaultLooks: () => invoke<import("./types").DefaultLooks>("get_default_looks"),
+
+  setDefaultLook: (kind: string, lookId: string | null) =>
+    invoke<ClientState>("set_default_look", { kind, lookId }),
 
   setNdiEnabled: (enabled: boolean) =>
     invoke<ClientState>("set_ndi_enabled", { enabled }),

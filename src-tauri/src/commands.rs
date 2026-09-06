@@ -2,7 +2,7 @@ use crate::logging::{Level, LogEntry};
 use crate::project::{
     is_first_run, now_iso, Background, BroadcastView, ClientState, Library, LibrarySlide,
     BoxGeometry, LibrarySong, Look, OutputView, Overlay, PlaylistTemplate, Positioning, Project,
-    Settings, Slide, StageView, TemplateItem, TextPosition, Transition, write_settings,
+    Settings, Slide, SlideKind, StageView, TemplateItem, TextPosition, Transition, write_settings,
 };
 use crate::scripture::ScriptureMatch;
 use crate::state::AppState;
@@ -61,6 +61,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
             last_frame_at: state.broadcaster.last_frame_at(),
             is_stale: state.broadcaster.is_stale(),
         },
+        default_looks: settings.default_looks.clone(),
         first_run: is_first_run(&state.app_data_dir()),
         default_transition: settings.default_transition,
         current,
@@ -432,14 +433,34 @@ pub fn add_song_to_playlist(app: AppHandle, song_id: String) -> Result<ClientSta
 
     mutate(&app, |project| {
         for slide in &flattened {
+            // One-time copy of default Look background for Song kind, if configured; otherwise use song's own background
+            let bg = {
+                let state = app.state::<AppState>();
+                let settings = state.current_settings();
+                if let Some(id) = &settings.default_looks.song {
+                    if let Some(look) = project.find_look(id) {
+                        if let Some(bg) = &look.background {
+                            Some(bg.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            .unwrap_or_else(|| song.default_background.clone());
             project.slides.push(Slide {
                 id: Uuid::new_v4().to_string(),
                 library_id: Some(song.id.clone()),
                 library_slide_id: Some(slide.id.clone()),
                 name: Some(slide.title.clone()),
+                kind: SlideKind::Song,
                 title: slide.title.clone(),
                 body: slide.body.clone(),
-                background: song.default_background.clone(),
+                background: bg,
                 auto_advance_secs: None,
             });
         }
@@ -700,6 +721,8 @@ pub struct LookPatch {
     pub positioning: Option<Positioning>,
     pub title_box: Option<BoxGeometry>,
     pub body_box: Option<BoxGeometry>,
+    #[serde(default)]
+    pub background: Option<Option<Background>>,
 }
 
 /// Create a new Look (when `look_id` is None) or update an existing one with
@@ -785,6 +808,9 @@ fn apply_look_patch(look: &mut Look, patch: LookPatch) {
     if let Some(body_box) = patch.body_box {
         look.body_box = clamp_box(body_box);
     }
+    if let Some(background) = patch.background {
+        look.background = background;
+    }
 }
 
 /// Clamp a bounding box's geometry to valid percent ranges so the renderer can
@@ -854,6 +880,40 @@ pub fn set_stage_look(app: AppHandle, look_id: Option<String>) -> Result<ClientS
 #[tauri::command]
 pub fn set_ndi_look(app: AppHandle, look_id: Option<String>) -> Result<ClientState, String> {
     set_look_mapping(&app, "ndi", look_id)
+}
+
+#[tauri::command]
+pub fn get_default_looks(app: AppHandle) -> crate::project::DefaultLooks {
+    app.state::<AppState>().current_settings().default_looks.clone()
+}
+
+#[tauri::command]
+pub fn set_default_look(app: AppHandle, kind: String, look_id: Option<String>) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    if let Some(id) = &look_id {
+        let exists = state.project.read().unwrap().find_look(id).is_some();
+        if !exists {
+            return Err(format!("look {id} not found"));
+        }
+    }
+    let mut settings = state.current_settings();
+    match kind.as_str() {
+        "scripture" => settings.default_looks.scripture = look_id.clone(),
+        "song" => settings.default_looks.song = look_id.clone(),
+        "generic" => settings.default_looks.generic = look_id.clone(),
+        _ => return Err(format!("unknown kind {kind} — expected scripture, song, or generic")),
+    }
+    state.apply_settings(settings);
+    let _ = crate::project::write_settings(&state.app_data_dir(), &state.current_settings());
+    log(
+        &app,
+        Level::Info,
+        &format!(
+            "default look: {kind} -> {}",
+            look_id.unwrap_or_else(|| "none (Main)".to_string())
+        ),
+    );
+    Ok(snapshot(&app))
 }
 
 fn set_look_mapping(
@@ -1102,6 +1162,7 @@ pub fn save_template(app: AppHandle, name: String) -> Result<Vec<PlaylistTemplat
             .iter()
             .map(|s| TemplateItem {
                 name: s.name.clone(),
+                kind: s.kind,
                 title: s.title.clone(),
                 body: s.body.clone(),
                 background: s.background.clone(),
@@ -1121,6 +1182,7 @@ pub fn save_template(app: AppHandle, name: String) -> Result<Vec<PlaylistTemplat
             .iter()
             .map(|s| TemplateItem {
                 name: s.name.clone(),
+                kind: s.kind,
                 title: s.title.clone(),
                 body: s.body.clone(),
                 background: s.background.clone(),
@@ -1162,6 +1224,7 @@ pub fn load_template(app: AppHandle, template_id: String) -> Result<ClientState,
             library_id: it.library_id.clone(),
             library_slide_id: it.library_slide_id.clone(),
             name: it.name.clone().or_else(|| Some(it.title.clone())),
+            kind: it.kind,
             title: it.title.clone(),
             body: it.body.clone(),
             background: it.background.clone(),
@@ -1200,23 +1263,45 @@ pub fn delete_template(app: AppHandle, template_id: String) -> Result<Vec<Playli
     Ok(store.templates)
 }
 
+fn background_for_kind(app: &AppHandle, kind: &SlideKind) -> Background {
+    let state = app.state::<AppState>();
+    let settings = state.current_settings();
+    let look_id = match kind {
+        SlideKind::Scripture => &settings.default_looks.scripture,
+        SlideKind::Song => &settings.default_looks.song,
+        SlideKind::Generic => &settings.default_looks.generic,
+    };
+    if let Some(id) = look_id {
+        if let Some(look) = state.project.read().unwrap().find_look(id) {
+            if let Some(bg) = &look.background {
+                return bg.clone();
+            }
+        }
+    }
+    Background::default()
+}
+
 #[tauri::command]
 pub fn add_slide(
     app: AppHandle,
     title: Option<String>,
     body: Option<String>,
     name: Option<String>,
+    kind: Option<SlideKind>,
 ) -> Result<ClientState, String> {
+    let kind_val = kind.unwrap_or(SlideKind::Generic);
     let title_val = title.unwrap_or_else(|| "New Slide".to_string());
     let name_val = name.or_else(|| Some(title_val.clone()));
+    let bg = background_for_kind(&app, &kind_val);
     let slide = Slide {
         id: Uuid::new_v4().to_string(),
         library_id: None,
         library_slide_id: None,
         name: name_val,
+        kind: kind_val,
         title: title_val,
         body: body.unwrap_or_default(),
-        background: Background::default(),
+        background: bg,
         auto_advance_secs: None,
     };
     let slide_title = slide.title.clone();

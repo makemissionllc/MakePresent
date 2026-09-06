@@ -127,7 +127,7 @@
   async function insertScripture(m: ScriptureMatch): Promise<void> {
     inserting = `scr-${m.reference}`;
     try {
-      await api.addSlide(m.reference, m.text);
+      await api.addSlide(m.reference, m.text, undefined, "scripture");
       onClose();
     } catch (e) {
       errorMsg = String(e);

@@ -112,6 +112,7 @@
       positioning: updated.positioning,
       titleBox: updated.titleBox,
       bodyBox: updated.bodyBox,
+      background: updated.background ?? null,
     };
     if (commitTimer) clearTimeout(commitTimer);
     commitTimer = setTimeout(() => {
@@ -153,6 +154,11 @@
         activeLookId = null;
       })
       .catch((e: unknown) => (lookErr = String(e)));
+  }
+
+  function setDefaultLook(kind: string, id: string | null): void {
+    lookErr = null;
+    void api.setDefaultLook(kind, id).then((s) => (appState = s)).catch((e: unknown) => (lookErr = String(e)));
   }
 
   function assignTo(target: "output" | "stage" | "ndi", id: string | null): void {
@@ -1189,6 +1195,47 @@
                           assignTo("ndi", (e.target as HTMLSelectElement).value || null)}
                       >
                         <option value="">Auto (first Look)</option>
+                        {#each looks as lk (lk.id)}
+                          <option value={lk.id}>{lk.name}</option>
+                        {/each}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div class="assign-block">
+                    <span class="assign-title">Default Look for new slides</span>
+                    <p class="hint" style="margin:0 0 8px">When a new slide is created, its background is copied from the default Look for its kind (one-time, not a live link). Change the default later doesn't retroactively change existing slides.</p>
+                    <label>
+                      Scripture — Add Scripture / Browse
+                      <select
+                        value={appState?.defaultLooks?.scripture ?? ""}
+                        onchange={(e) => setDefaultLook("scripture", (e.target as HTMLSelectElement).value || null)}
+                      >
+                        <option value="">Main (default)</option>
+                        {#each looks as lk (lk.id)}
+                          <option value={lk.id}>{lk.name}</option>
+                        {/each}
+                      </select>
+                    </label>
+                    <label>
+                      Song — Library / Add song
+                      <select
+                        value={appState?.defaultLooks?.song ?? ""}
+                        onchange={(e) => setDefaultLook("song", (e.target as HTMLSelectElement).value || null)}
+                      >
+                        <option value="">Main (default)</option>
+                        {#each looks as lk (lk.id)}
+                          <option value={lk.id}>{lk.name}</option>
+                        {/each}
+                      </select>
+                    </label>
+                    <label>
+                      Generic — + Add slide / Media
+                      <select
+                        value={appState?.defaultLooks?.generic ?? ""}
+                        onchange={(e) => setDefaultLook("generic", (e.target as HTMLSelectElement).value || null)}
+                      >
+                        <option value="">Main (default)</option>
                         {#each looks as lk (lk.id)}
                           <option value={lk.id}>{lk.name}</option>
                         {/each}

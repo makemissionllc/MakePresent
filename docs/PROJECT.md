@@ -905,3 +905,23 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Fix `Editor.svelte:810` `handleExternalFiles` (both HTML5 and OS `tauri://drag-drop` paths) + `GlobalSearch.svelte:139` `insertMedia`** `base` → `api.addSlide("", "", base)` (`sync.ts:117` `addSlide(title?,body?,name?)` → `commands.rs:1098` `add_slide` `name=Some(base)`, `title=""`) then `updateSlide({ background })` (`commands.rs:1127`). Previously `addSlide(base, "")` set `Title` to filename. Both `onPlaylistDrag*`/`external-drop-zone` (`Editor.svelte:440`/`1256`) and `handleTauriPaths` (`Editor.svelte:1460` `ALLOWED_EXTS` vs `SONG_EXTS`) share `handleExternalFiles`, so internal and OS drops both fixed. `Title` empty + `background: Image/Video/LiveCamera` (`types.ts:47` `isLiveCamera`, `project.rs:50`) → no text overlay (`SlideRender` `title` empty); `slideDisplayName` (`Editor.svelte:130` `name`→`title`→`Untitled`) still shows `name` in grid/playlist. Manual caption via `Title`/`Body` (`Editor.svelte:1933` `commitTitle`/`commitBody`) still works.
 
 - **Verify:** Drag `photo.jpg` onto playlist → grid label `photo` (`name`), `Output` shows full-bleed image with no text; detail → type `Title` → caption appears; `npm run check` 0/0, `cargo check` 4 `dead_code`.
+
+---
+
+## Changed (2026-09-02) — Slide kind + default Look per kind (Scripture/Song/Generic)
+
+*Tag slides with a kind at creation (Scripture via Add/Browse Scripture, Song via Library, Generic via + Add slide) and add a Default Look mapping per kind — Scripture/Song/Generic each optionally point to a Look, defaulting to Main if unset — reusing the existing Look system rather than a separate mechanism. When a new slide is created, if a default Look is configured, its background is copied one-time at creation (not a live link). Operator can still override any slide's background manually.*
+
+- **Tag `project.rs:76` `SlideKind { Generic, Song, Scripture }` + `project.rs:90` `Slide { kind: SlideKind #[serde(default)] }` (`Generic` default) + `project.rs:210` `Look { background: Option<Background> }` + `project.rs:933` `DefaultLooks { scripture,song,generic }` + `project.rs:920` `Settings { default_looks }` + `project.rs:540` `ClientState { default_looks }` + `project.rs:324` `new()` `kind: Generic` + `project.rs:352` `from_preset` `kind: Generic`. Legacy files without `kind`/`background`/`default_looks` deserialize via `#[serde(default)]`.
+
+- **Backend `commands.rs:1245` `background_for_kind` → `Look.background.clone()` if `Some`, else `Background::default()` + `commands.rs:1290` `add_slide(..., kind)` `kind_val` + `bg` + `Slide { kind, background: bg }` + `commands.rs:415` `add_song_to_playlist` `kind: Song` `bg = default_looks.song → Look.background or song.default_background` + `commands.rs:1188` `load_template` `kind: it.kind` + `project.rs:800` `TemplateItem { kind }` + `commands.rs:865` `set_default_look(kind, look_id)` / `get_default_looks` + `lib.rs:652` handlers + `LookPatch` `background`.
+
+- **Contract `types.ts:51` `SlideKind` + `types.ts:53` `Slide { kind? }` + `types.ts:90` `Look { background? }` + `types.ts:185` `DefaultLooks` + `types.ts:195` `ClientState { defaultLooks }` + `sync.ts:117` `addSlide(..., kind?)` + `sync.ts:160` `getDefaultLooks`/`setDefaultLook`.
+
+- **Create paths `Editor.svelte:383` `addSlide("New Slide")` (Generic) + `Editor.svelte:492` `selectScripture` `addSlide(ref, text, undefined, "scripture")` + `Editor.svelte:599` `insertBrowseVerse` `scripture` + `Editor.svelte:723` `library-verse` `song` + `Editor.svelte:734` `scripture` drag + `Editor.svelte:864` `handleExternalFiles` `addSlide("", "", base)` (Generic) + `Editor.svelte:2125` `song` + `GlobalSearch.svelte:130` `scripture` + `GlobalSearch.svelte:143` `media` (Generic). `add_song_to_playlist` `Song`.
+
+- **Settings UI `SettingsPanel.svelte:1170` Looks tab `Default Look for new slides` — Scripture/Song/Generic each `[dropdown Main (default) / Look list]` `value={appState?.defaultLooks?.scripture}` `onchange setDefaultLook`, hint one-time copy.
+
+- **Look background `LookEditorView.svelte:180` `sampleSlide` `kind: generic` + `LookEditorView.svelte:254` `scheduleCommit` `background` + `LookEditorView.svelte:283` `Default background` swatches + `SettingsPanel.svelte:92` `scheduleCommit` `background`.
+
+- **Verify:** Set `Settings → Looks → Default Look for new slides → Scripture` to a Look with background, then `Add Scripture psalm 23` or `Browse Genesis 1:1` → new `kind: scripture` slide has that `background` without manual selection; change default later doesn't affect it; `npm run check` 0/0, `cargo check` 4 `dead_code`.

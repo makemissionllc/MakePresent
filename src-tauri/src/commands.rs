@@ -704,6 +704,23 @@ fn transition_value(t: Transition) -> &'static str {
     }
 }
 
+/// A thin patch for one per-element `TextStyle`. All fields optional; only the
+/// provided ones are applied, matching how `LookPatch`/`update_slide` work for
+/// the editor's optimistic input handling.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextStylePatch {
+    pub align: Option<crate::project::HAlign>,
+    pub line_height: Option<f32>,
+    pub shadow_blur: Option<f32>,
+    pub shadow_x: Option<f32>,
+    pub shadow_y: Option<f32>,
+    pub outline_width: Option<f32>,
+    pub outline_color: Option<String>,
+    pub bg_color: Option<String>,
+    pub bg_opacity: Option<f32>,
+}
+
 /// A thin patch for editing one Look. All fields optional; only the provided
 /// ones are applied, matching how `update_slide` works for the editor's
 /// optimistic input handling.
@@ -718,6 +735,8 @@ pub struct LookPatch {
     pub text_color: Option<String>,
     pub show_background: Option<bool>,
     pub text_position: Option<TextPosition>,
+    pub title_style: Option<TextStylePatch>,
+    pub body_style: Option<TextStylePatch>,
     pub positioning: Option<Positioning>,
     pub title_box: Option<BoxGeometry>,
     pub body_box: Option<BoxGeometry>,
@@ -799,6 +818,12 @@ fn apply_look_patch(look: &mut Look, patch: LookPatch) {
     if let Some(text_position) = patch.text_position {
         look.text_position = text_position;
     }
+    if let Some(title_style) = patch.title_style {
+        apply_text_style_patch(&mut look.title_style, title_style);
+    }
+    if let Some(body_style) = patch.body_style {
+        apply_text_style_patch(&mut look.body_style, body_style);
+    }
     if let Some(positioning) = patch.positioning {
         look.positioning = positioning;
     }
@@ -810,6 +835,42 @@ fn apply_look_patch(look: &mut Look, patch: LookPatch) {
     }
     if let Some(background) = patch.background {
         look.background = background;
+    }
+}
+
+/// Merge one `TextStylePatch` into a live `TextStyle`, clamping numerics to
+/// sane renderer ranges so a hand-edited patch can never break layout.
+fn apply_text_style_patch(style: &mut crate::project::TextStyle, patch: TextStylePatch) {
+    if let Some(align) = patch.align {
+        style.align = align;
+    }
+    if let Some(line_height) = patch.line_height {
+        style.line_height = line_height.clamp(0.8, 3.0);
+    }
+    if let Some(shadow_blur) = patch.shadow_blur {
+        style.shadow_blur = shadow_blur.clamp(0.0, 60.0);
+    }
+    if let Some(shadow_x) = patch.shadow_x {
+        style.shadow_x = shadow_x.clamp(-50.0, 50.0);
+    }
+    if let Some(shadow_y) = patch.shadow_y {
+        style.shadow_y = shadow_y.clamp(-50.0, 50.0);
+    }
+    if let Some(outline_width) = patch.outline_width {
+        style.outline_width = outline_width.clamp(0.0, 8.0);
+    }
+    if let Some(outline_color) = patch.outline_color {
+        if !outline_color.trim().is_empty() {
+            style.outline_color = outline_color;
+        }
+    }
+    if let Some(bg_color) = patch.bg_color {
+        if !bg_color.trim().is_empty() {
+            style.bg_color = bg_color;
+        }
+    }
+    if let Some(bg_opacity) = patch.bg_opacity {
+        style.bg_opacity = bg_opacity.clamp(0.0, 1.0);
     }
 }
 

@@ -294,7 +294,7 @@ Startup creates **only the Editor window**.
 src-tauri/src/
   lib.rs        App lifecycle: setup (recovery, logger, autosave worker, tray/standby), finalize, commands
   state.rs      AppState — the single source of truth
-  project.rs    Domain model (Project/Slide/Settings/Library/Template/Look+geometry), persistence, autosave worker (templates.json atomic)
+  project.rs    Domain model (Project/Slide/Settings/Library/Template/Look+geometry+text-style), persistence, autosave worker (templates.json atomic)
   windows.rs    Window lifecycle: Output + Stage + Editor respawn, display picking
   media.rs      Media import/cache: copy+hash, ffmpeg thumbnails, startup verification
   broadcast.rs  NDI sender: runtime-loaded SDK (libloading), dedicated send thread
@@ -310,9 +310,10 @@ src/
   editor.ts / Editor.svelte     Operator's window (playlist, edit, output/stage controls, settings)
   output.ts / Output.svelte     Dumb projection renderer (cut/fade crossfade)
   stage.ts / Stage.svelte       Dumb performer-facing renderer (current + next)
-  components/SlideRender.svelte Shared slide+Look renderer (auto + absolute box layout)
-  components/SettingsPanel.svelte Settings modal (General / Looks+box editor / Triggers / Network / Logs)
-  lib/types.ts                  Shared client contract (incl. Trigger/TriggerAction/MidiDeviceInfo/Look+BoxGeometry)
+  components/SlideRender.svelte Shared slide+Look renderer (auto + absolute box layout, per-element align/shadow/outline/line-height/readability bar)
+  components/SettingsPanel.svelte Settings modal (General / Looks+box editor+text-style / Triggers / Network / Logs)
+  components/LookStyleFields.svelte Shared per-element Title/Body style controls (used by the central Look editor + Settings → Looks)
+  lib/types.ts                  Shared client contract (incl. Trigger/TriggerAction/MidiDeviceInfo/Look+BoxGeometry+TextStyle)
   lib/sync.ts                   Tauri invoke + event subscriptions (incl. midi-message)
   lib/fitText.ts                Auto-shrink text (auto + absolute box modes)
 ```
@@ -925,3 +926,16 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Look background `LookEditorView.svelte:180` `sampleSlide` `kind: generic` + `LookEditorView.svelte:254` `scheduleCommit` `background` + `LookEditorView.svelte:283` `Default background` swatches + `SettingsPanel.svelte:92` `scheduleCommit` `background`.
 
 - **Verify:** Set `Settings → Looks → Default Look for new slides → Scripture` to a Look with background, then `Add Scripture psalm 23` or `Browse Genesis 1:1` → new `kind: scripture` slide has that `background` without manual selection; change default later doesn't affect it; `npm run check` 0/0, `cargo check` 4 `dead_code`.
+
+---
+
+## Changed (2026-09-06) — Per-element Look text styling (shadow, outline, line height, align, readability bar)
+
+*FreeShow-textbox-inspired styling controls on the existing Look editor — styling only, no drag/resize WYSIWYG canvas (out of scope). All controls ride the optimistic-draft path, so the live preview updates instantly like every existing Look control.*
+
+- **No third element:** scripture reference/translation line *is* the slide title (`scripture.rs:713` `add_slide` title = reference), so Title + Body `TextStyle`s cover all slide kinds.
+- **Center defaults confirmed:** vertical `textPosition` already `Center` everywhere (`project.rs:132` `#[default]`, `main_default`/`stage_default` `project.rs:378/398`, both `addLook`s). New horizontal `HAlign` (`project.rs:204`, `#[default] Center`) per element, so new Looks start centred on both axes.
+- **Model `project.rs:218` `TextStyle { align, lineHeight, shadowBlur, shadowX, shadowY, outlineWidth, outlineColor, bgColor, bgOpacity }`** on `Look` as `title_style`/`body_style` (`project.rs:339/342`, serde-defaulted constructors `title_default`/`body_default` `project.rs:285/295` reproducing historic rendering, so legacy `project.json` loads unchanged). Patch path: `commands.rs:712` `TextStylePatch` + `commands.rs:843` `apply_text_style_patch` (clamped). Contract: `types.ts:71/80/96/109/140/175`.
+- **Render `SlideRender.svelte:35`** (shared by Output/Stage/preview): per-element align/shadow (`none` when zeroed)/`-webkit-text-stroke` outline/`rgba()` bar with `box-decoration-break: clone`; line height via container vars (`SlideRender.svelte:85/334/344`) so `fitText` measurement stays accurate; styles in the `fitText` `deps` token (`SlideRender.svelte:81`).
+- **UI `LookStyleFields.svelte:1`** (shared Title/Body sections) mounted in `LookEditorView.svelte:338` (`uid="lev"`) and `SettingsPanel.svelte:1068` (`uid="sp"`), via `setStyle` merges (`LookEditorView.svelte:75`, `SettingsPanel.svelte:107`) into the existing debounced commits.
+- **Verify:** `npm run check` 0/0; `cargo check` OK (3 pre-existing `dead_code`: `audio.rs:390`, `media.rs:16`, `project.rs:117`); `npm run build` clean. `cargo test` fails to compile pre-existing on HEAD (`commands.rs:3113` `Settings { default_looks }` literal, unrelated). Phone stage page (`network.rs:499`) is a separate renderer and ignores the new fields — noted follow-up, not this change.

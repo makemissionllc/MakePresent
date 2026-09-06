@@ -196,6 +196,111 @@ impl Default for BoxGeometry {
     }
 }
 
+/// Horizontal alignment of one text element within its frame/box.
+/// Center is the default: projection text reads best centred, and both the
+/// built-in Main/Stage Looks plus every newly created Look start centred.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HAlign {
+    Left,
+    #[default]
+    Center,
+    Right,
+}
+
+/// Per-text-element styling (FreeShow textbox-inspired): one `TextStyle` for
+/// the Title role, one for the Body role. Scripture slides have no third text
+/// element — the reference/translation line *is* the slide title
+/// (`scripture.rs` feeds `add_slide` with title = reference, body = verse
+/// text), so the Title style covers it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextStyle {
+    /// Horizontal alignment of this element (default centre).
+    #[serde(default)]
+    pub align: HAlign,
+    /// Line height multiplier (default 1.1 title / 1.4 body, matching the
+    /// long-standing renderer CSS so legacy projects render identically).
+    #[serde(default = "default_line_height")]
+    pub line_height: f32,
+    /// Text-shadow blur radius in px (colour stays the renderer's soft black).
+    #[serde(default = "default_shadow_blur")]
+    pub shadow_blur: f32,
+    /// Text-shadow horizontal offset in px.
+    #[serde(default)]
+    pub shadow_x: f32,
+    /// Text-shadow vertical offset in px.
+    #[serde(default = "default_shadow_y")]
+    pub shadow_y: f32,
+    /// Outline width in px via `-webkit-text-stroke` (0 = off).
+    #[serde(default)]
+    pub outline_width: f32,
+    /// Outline colour (used only when `outline_width` > 0).
+    #[serde(default = "default_outline_color")]
+    pub outline_color: String,
+    /// Optional readability bar behind the text (hex colour). Only painted
+    /// when `bg_opacity` > 0, so the default is effectively "off".
+    #[serde(default = "default_text_bg")]
+    pub bg_color: String,
+    /// Opacity of the readability bar, 0.0 (off) .. 1.0 (opaque).
+    #[serde(default)]
+    pub bg_opacity: f32,
+}
+
+fn default_line_height() -> f32 {
+    1.25
+}
+fn default_shadow_blur() -> f32 {
+    20.0
+}
+fn default_shadow_y() -> f32 {
+    2.0
+}
+fn default_outline_color() -> String {
+    "#000000".to_string()
+}
+fn default_text_bg() -> String {
+    "#000000".to_string()
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        Self {
+            align: HAlign::Center,
+            line_height: default_line_height(),
+            shadow_blur: default_shadow_blur(),
+            shadow_x: 0.0,
+            shadow_y: default_shadow_y(),
+            outline_width: 0.0,
+            outline_color: default_outline_color(),
+            bg_color: default_text_bg(),
+            bg_opacity: 0.0,
+        }
+    }
+}
+
+impl TextStyle {
+    /// Title-role defaults: reproduce the historic title rendering
+    /// (`line-height: 1.1`, `0 2px 24px rgba(0,0,0,.45)`).
+    pub fn title_default() -> Self {
+        Self {
+            line_height: 1.1,
+            shadow_blur: 24.0,
+            ..Self::default()
+        }
+    }
+
+    /// Body-role defaults: reproduce the historic body rendering
+    /// (`line-height: 1.4`, `0 2px 20px rgba(0,0,0,.4)`).
+    pub fn body_default() -> Self {
+        Self {
+            line_height: 1.4,
+            shadow_blur: 20.0,
+            ..Self::default()
+        }
+    }
+}
+
 /// A named style profile ("Look") that tells an output how to present the
 /// *same* underlying slide differently: main audience screen, stage display,
 /// or a future NDI/stream feed.
@@ -228,6 +333,13 @@ pub struct Look {
     pub show_background: bool,
     /// Vertical placement of the text block within the frame (auto mode only).
     pub text_position: TextPosition,
+    /// Per-element text styling for the Title role (also the scripture
+    /// reference line — scripture slides render the reference as the title).
+    #[serde(default = "TextStyle::title_default")]
+    pub title_style: TextStyle,
+    /// Per-element text styling for the Body role (verse/lyric text).
+    #[serde(default = "TextStyle::body_default")]
+    pub body_style: TextStyle,
     /// Whether text uses auto flow or explicit absolute bounding boxes.
     #[serde(default)]
     pub positioning: Positioning,
@@ -263,6 +375,8 @@ impl Look {
             text_color: "#ffffff".to_string(),
             show_background: true,
             text_position: TextPosition::Center,
+            title_style: TextStyle::title_default(),
+            body_style: TextStyle::body_default(),
             positioning: Positioning::Auto,
             title_box: BoxGeometry::default(),
             body_box: BoxGeometry::default(),
@@ -281,6 +395,8 @@ impl Look {
             text_color: "#ffffff".to_string(),
             show_background: false,
             text_position: TextPosition::Center,
+            title_style: TextStyle::title_default(),
+            body_style: TextStyle::body_default(),
             positioning: Positioning::Auto,
             title_box: BoxGeometry::default(),
             body_box: BoxGeometry::default(),

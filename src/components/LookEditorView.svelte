@@ -2,9 +2,11 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { api } from "../lib/sync";
-  import type { Background, BoxGeometry, ClientState, Look, LookPatch, Positioning, TextPosition } from "../lib/types";
+  import type { Background, BoxGeometry, ClientState, Look, LookPatch, Positioning, TextPosition, TextStyle, TextStylePatch } from "../lib/types";
+  import { DEFAULT_BODY_STYLE, DEFAULT_TITLE_STYLE } from "../lib/types";
   import { isMedia } from "../lib/types";
   import SlideRender from "./SlideRender.svelte";
+  import LookStyleFields from "./LookStyleFields.svelte";
   import type { Slide } from "../lib/types";
 
   const PALETTE = ["#1a1a24", "#0f2b4a", "#123a5c", "#1f3a2f", "#3a2b1f", "#3d1f1f", "#2b2b3d", "#000000"];
@@ -44,6 +46,8 @@
       textColor: updated.textColor,
       showBackground: updated.showBackground,
       textPosition: updated.textPosition,
+      titleStyle: updated.titleStyle ?? { ...DEFAULT_TITLE_STYLE },
+      bodyStyle: updated.bodyStyle ?? { ...DEFAULT_BODY_STYLE },
       positioning: updated.positioning,
       titleBox: updated.titleBox,
       bodyBox: updated.bodyBox,
@@ -66,6 +70,16 @@
     scheduleCommit(updated);
   }
 
+  /** Merge one per-element style patch into the optimistic draft (preview
+      re-renders instantly via the same path as every other Look edit). */
+  function setStyle(role: "title" | "body", patch: TextStylePatch): void {
+    if (!draft) return;
+    const key = role === "title" ? "titleStyle" : "bodyStyle";
+    const current: TextStyle =
+      draft[key] ?? (role === "title" ? DEFAULT_TITLE_STYLE : DEFAULT_BODY_STYLE);
+    setDraft(key, { ...current, ...patch });
+  }
+
   function selectLook(id: string): void {
     activeLookId = id;
     if (commitTimer) clearTimeout(commitTimer);
@@ -83,6 +97,8 @@
         textColor: "#ffffff",
         showBackground: true,
         textPosition: "center",
+        titleStyle: { ...DEFAULT_TITLE_STYLE },
+        bodyStyle: { ...DEFAULT_BODY_STYLE },
         positioning: "auto",
         titleBox: { x: 5, y: 10, width: 90, height: 20, zIndex: 1 },
         bodyBox: { x: 5, y: 35, width: 90, height: 45, zIndex: 1 },
@@ -318,6 +334,9 @@
             <option value="bottom">Bottom</option>
           </select>
         </label>
+
+        <LookStyleFields role="title" style={draft.titleStyle} uid="lev" onChange={(p) => setStyle("title", p)} />
+        <LookStyleFields role="body" style={draft.bodyStyle} uid="lev" onChange={(p) => setStyle("body", p)} />
 
         <div class="positioning-row">
           <span class="assign-title">Layout</span>

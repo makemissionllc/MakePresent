@@ -67,6 +67,57 @@ export type TextPosition = "top" | "center" | "bottom";
 
 export type Positioning = "auto" | "absolute";
 
+/** Horizontal alignment of one text element — center is the default. */
+export type HAlign = "left" | "center" | "right";
+
+/**
+ * Per-text-element styling (FreeShow textbox-inspired): shadow (blur + X/Y
+ * offset), outline (width + color), line height, horizontal alignment, and an
+ * optional readability bar behind the text (bgColor painted at bgOpacity;
+ * bgOpacity 0 = off). Scripture slides have no third element — the
+ * reference/translation line is the slide title, so the Title style covers it.
+ */
+export interface TextStyle {
+  align: HAlign;
+  lineHeight: number;
+  shadowBlur: number;
+  shadowX: number;
+  shadowY: number;
+  outlineWidth: number;
+  outlineColor: string;
+  bgColor: string;
+  /** 0..1 — 0 means no readability bar. */
+  bgOpacity: number;
+}
+
+export type TextStylePatch = Partial<TextStyle>;
+
+/** Title-role defaults — reproduce the historic title rendering. */
+export const DEFAULT_TITLE_STYLE: TextStyle = {
+  align: "center",
+  lineHeight: 1.1,
+  shadowBlur: 24,
+  shadowX: 0,
+  shadowY: 2,
+  outlineWidth: 0,
+  outlineColor: "#000000",
+  bgColor: "#000000",
+  bgOpacity: 0,
+};
+
+/** Body-role defaults — reproduce the historic body rendering. */
+export const DEFAULT_BODY_STYLE: TextStyle = {
+  align: "center",
+  lineHeight: 1.4,
+  shadowBlur: 20,
+  shadowX: 0,
+  shadowY: 2,
+  outlineWidth: 0,
+  outlineColor: "#000000",
+  bgColor: "#000000",
+  bgOpacity: 0,
+};
+
 export interface BoxGeometry {
   x: number;
   y: number;
@@ -85,6 +136,10 @@ export interface Look {
   textColor: string;
   showBackground: boolean;
   textPosition: TextPosition;
+  /** Per-element Title styling (also the scripture reference line). */
+  titleStyle: TextStyle;
+  /** Per-element Body styling (verse/lyric text). */
+  bodyStyle: TextStyle;
   positioning: Positioning;
   titleBox: BoxGeometry;
   bodyBox: BoxGeometry;
@@ -117,6 +172,8 @@ export interface LookPatch {
   textColor?: string;
   showBackground?: boolean;
   textPosition?: TextPosition;
+  titleStyle?: TextStylePatch;
+  bodyStyle?: TextStylePatch;
   positioning?: Positioning;
   titleBox?: BoxGeometry;
   bodyBox?: BoxGeometry;

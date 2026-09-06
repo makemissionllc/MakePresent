@@ -1,6 +1,7 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import type { Look, Slide } from "../lib/types";
+  import type { Look, Slide, TextStyle } from "../lib/types";
+  import { DEFAULT_BODY_STYLE, DEFAULT_TITLE_STYLE } from "../lib/types";
   import { fitText } from "../lib/fitText";
   import { hasChords, stripChords, parseChordLine } from "../lib/chords";
   import type { Overlay } from "../lib/types";
@@ -28,6 +29,41 @@
   const effectiveShowText = $derived(showText);
   const shouldShowChords = $derived(isStage && hasChords(slide.body));
 
+  // Per-element styling (Title covers the scripture reference line — scripture
+  // slides render the reference as the title). Fall back to the historic
+  // defaults so a Look predating these fields still renders identically.
+  const titleStyle: TextStyle = $derived(look.titleStyle ?? DEFAULT_TITLE_STYLE);
+  const bodyStyle: TextStyle = $derived(look.bodyStyle ?? DEFAULT_BODY_STYLE);
+
+  /** Opaque fit-token for one TextStyle so fitText re-measures on any change. */
+  function styleSig(s: TextStyle): string {
+    return `${s.align}:${s.lineHeight}:${s.shadowBlur}:${s.shadowX}:${s.shadowY}:${s.outlineWidth}:${s.outlineColor}:${s.bgColor}:${s.bgOpacity}`;
+  }
+
+  /** `text-shadow` for one element, or `none` when the user zeroed it. */
+  function shadowOf(s: TextStyle, alpha: number): string {
+    if (s.shadowBlur <= 0 && s.shadowX === 0 && s.shadowY === 0) return "none";
+    return `${s.shadowX}px ${s.shadowY}px ${s.shadowBlur}px rgba(0, 0, 0, ${alpha})`;
+  }
+
+  function hexToRgba(hex: string, opacity: number): string {
+    let h = hex.trim().replace(/^#/, "");
+    if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+    if (!/^[0-9a-fA-F]{6}$/.test(h)) return `rgba(0, 0, 0, ${opacity})`;
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+  }
+
+  function barBg(s: TextStyle): string | undefined {
+    return s.bgOpacity > 0 ? hexToRgba(s.bgColor, s.bgOpacity) : undefined;
+  }
+
+  function outlineOf(s: TextStyle): string | undefined {
+    return s.outlineWidth > 0 ? `${s.outlineWidth}px ${s.outlineColor}` : undefined;
+  }
+
   function solidColor(s: Slide): string {
     return s.background.type === "solid" ? s.background.color : "#000000";
   }
@@ -42,10 +78,12 @@
   class:pos-bottom={look.textPosition === "bottom"}
   use:fitText={{
     mode: look.positioning === "absolute" ? "absolute" : "auto",
-    deps: `${look.titleSize}:${look.bodySize}:${look.textPosition}:${look.positioning}:${look.titleFont}:${look.bodyFont}:${effectiveShowText}:${effectiveShowBackground}`,
+    deps: `${look.titleSize}:${look.bodySize}:${look.textPosition}:${look.positioning}:${look.titleFont}:${look.bodyFont}:${styleSig(titleStyle)}:${styleSig(bodyStyle)}:${effectiveShowText}:${effectiveShowBackground}`,
   }}
   style:--look-title-size={`${look.titleSize}px`}
   style:--look-body-size={`${look.bodySize}px`}
+  style:--look-title-line-height={`${titleStyle.lineHeight}`}
+  style:--look-body-line-height={`${bodyStyle.lineHeight}`}
   style:background-color={effectiveShowBackground ? solidColor(slide) : "transparent"}
   style:color={look.textColor}
 >
@@ -89,6 +127,15 @@
       class="look-title"
       data-role="title"
       style:font-family={look.titleFont}
+      style:text-align={titleStyle.align}
+      style:text-shadow={shadowOf(titleStyle, 0.45)}
+      style:-webkit-text-stroke={outlineOf(titleStyle)}
+      style:paint-order={titleStyle.outlineWidth > 0 ? "stroke fill" : undefined}
+      style:background-color={barBg(titleStyle)}
+      style:padding={titleStyle.bgOpacity > 0 ? "0.12em 0.45em" : undefined}
+      style:border-radius={titleStyle.bgOpacity > 0 ? "0.25em" : undefined}
+      style:box-decoration-break={titleStyle.bgOpacity > 0 ? "clone" : undefined}
+      style:-webkit-box-decoration-break={titleStyle.bgOpacity > 0 ? "clone" : undefined}
       style:left={look.positioning === "absolute" ? `${look.titleBox.x}%` : undefined}
       style:top={look.positioning === "absolute" ? `${look.titleBox.y}%` : undefined}
       style:width={look.positioning === "absolute" ? `${look.titleBox.width}%` : undefined}
@@ -104,6 +151,15 @@
         class="look-body chord-body"
         data-role="body"
         style:font-family={look.bodyFont}
+        style:text-align={bodyStyle.align}
+        style:text-shadow={shadowOf(bodyStyle, 0.4)}
+        style:-webkit-text-stroke={outlineOf(bodyStyle)}
+        style:paint-order={bodyStyle.outlineWidth > 0 ? "stroke fill" : undefined}
+        style:background-color={barBg(bodyStyle)}
+        style:padding={bodyStyle.bgOpacity > 0 ? "0.12em 0.45em" : undefined}
+        style:border-radius={bodyStyle.bgOpacity > 0 ? "0.25em" : undefined}
+        style:box-decoration-break={bodyStyle.bgOpacity > 0 ? "clone" : undefined}
+        style:-webkit-box-decoration-break={bodyStyle.bgOpacity > 0 ? "clone" : undefined}
         style:left={look.positioning === "absolute" ? `${look.bodyBox.x}%` : undefined}
         style:top={look.positioning === "absolute" ? `${look.bodyBox.y}%` : undefined}
         style:width={look.positioning === "absolute" ? `${look.bodyBox.width}%` : undefined}
@@ -131,6 +187,15 @@
         class="look-body"
         data-role="body"
         style:font-family={look.bodyFont}
+        style:text-align={bodyStyle.align}
+        style:text-shadow={shadowOf(bodyStyle, 0.4)}
+        style:-webkit-text-stroke={outlineOf(bodyStyle)}
+        style:paint-order={bodyStyle.outlineWidth > 0 ? "stroke fill" : undefined}
+        style:background-color={barBg(bodyStyle)}
+        style:padding={bodyStyle.bgOpacity > 0 ? "0.12em 0.45em" : undefined}
+        style:border-radius={bodyStyle.bgOpacity > 0 ? "0.25em" : undefined}
+        style:box-decoration-break={bodyStyle.bgOpacity > 0 ? "clone" : undefined}
+        style:-webkit-box-decoration-break={bodyStyle.bgOpacity > 0 ? "clone" : undefined}
         style:left={look.positioning === "absolute" ? `${look.bodyBox.x}%` : undefined}
         style:top={look.positioning === "absolute" ? `${look.bodyBox.y}%` : undefined}
         style:width={look.positioning === "absolute" ? `${look.bodyBox.width}%` : undefined}
@@ -263,7 +328,10 @@
     font-size: var(--look-title-size, clamp(2.5rem, 8vmin, 9rem));
     font-weight: 400;
     margin: 0;
-    line-height: 1.1;
+    /* Line height arrives as a container var (not an inline style) so
+       fitText's measure pass — which clears inline lineHeight — still
+       measures the real geometry. */
+    line-height: var(--look-title-line-height, 1.1);
     text-shadow: 0 2px 24px rgba(0, 0, 0, 0.45);
   }
 
@@ -273,7 +341,7 @@
     font-weight: 400;
     margin: 0;
     max-width: 80%;
-    line-height: 1.4;
+    line-height: var(--look-body-line-height, 1.4);
     white-space: pre-wrap;
     text-shadow: 0 2px 20px rgba(0, 0, 0, 0.4);
   }

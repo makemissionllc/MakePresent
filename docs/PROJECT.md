@@ -860,3 +860,15 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Fix `commands.rs:455` `make_live`** — only `show_output` if `!windows::output_visible(app)` (`windows.rs:1273` `get_webview_window.is_some()`), otherwise pure `snapshot` + `emit("state")`. Reserve `move_output_to` for first show, `set_output_display` (`commands.rs:1306`), and `toggle_output_fullscreen` (`commands.rs:1332`). No `exit_fullscreen`/`set_size` flash when already fullscreen.
 
 - **Verify:** Fullscreen then 5× go-live → zero flash, clean crossfade, no window-manager calls in `logs/app.log`; `npm run check` 0/0, `cargo check` 4 `dead_code`.
+
+---
+
+## Changed (2026-09-02) — Fix first-ever Show honors selected display (no primary detour)
+
+*First-ever `Show Output` (fresh session, Output not yet shown) was defaulting to primary/current monitor and only moving afterward if explicitly told, requiring fullscreen on primary then switch to second display.*
+
+- **Investigated `windows.rs:1288` `show_output` vs `commands.rs:455` `make_live` first-ever path** — `show_output` correctly reads `settings.output_display_index` (`windows.rs:1330` `Some(idx) => idx, None => default_output_display`) and passes to `move_output_to` (`windows.rs:1066`), but `make_live` previously called `show_output` unconditionally on every live, and `output_visible` (`windows.rs:1273` `is_some()`) was true for the pre-created hidden window, so the new `output_needs_show` guard was needed. Also `set_output_display` before first show previously failed with `not pre-created — deferred build scheduled` (`windows.rs:1026` old fire-and-forget) and didn't persist `output_display_index`, so first `show_output` read `None` and defaulted to primary.
+
+- **Fix `windows.rs:1280` `output_needs_show` (actual `is_visible` check via main-thread dispatch) + `commands.rs:455` `make_live` `if output_needs_show { show_output }` + `windows.rs:1026` `move_output_to` fallback now synchronous `run_on_main` with handler, returning `Ok` + `windows.rs:1066` `move_output_to` early-exit if already correctly placed (visible + on target monitor + correct size/pos + fullscreen matches) — first show now places directly on the already-selected `output_display_index` (`Some(1)` for second display) with zero intermediate flash on primary.
+
+- **Verify:** Fresh session, select second display in dropdown, click `Show Output` as first action → directly on second display, no primary detour; `npm run check` 0/0, `cargo check` 4 `dead_code`.

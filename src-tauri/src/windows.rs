@@ -1183,11 +1183,6 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
                 }
             }
         };
-        let exit_fs = if window.is_fullscreen().unwrap_or(false) {
-            Some(window.set_fullscreen(false))
-        } else {
-            None
-        };
         // Single-monitor / same-monitor mitigation: when the output target is
         // the same screen the editor is on, a full-monitor borderless window
         // would completely cover the editor and make it appear frozen. In that
@@ -1211,6 +1206,42 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
                 target_size.height,
                 tauri::PhysicalPosition::new(target_pos.x, target_pos.y),
             )
+        };
+        // Fix: if already correctly placed and visible, skip window-manager calls to avoid flash.
+        // This is the second half of the decouple fix (first half is make_live not calling show_output at all when already visible).
+        // For first-ever show, window is hidden (is_visible false), so we must proceed to show it.
+        let already_visible = window.is_visible().unwrap_or(false);
+        let already_fullscreen = window.is_fullscreen().unwrap_or(false);
+        let expected_fullscreen = app_main.state::<AppState>().current_settings().output_fullscreen;
+        if already_visible {
+            if let Ok(Some(current_monitor)) = window.current_monitor() {
+                let already_on_target = current_monitor.position().x == target_pos.x
+                    && current_monitor.position().y == target_pos.y
+                    && current_monitor.size().width == target_size.width
+                    && current_monitor.size().height == target_size.height;
+                let already_correct_size_pos = window
+                    .inner_size()
+                    .ok()
+                    .is_some_and(|s| s.width == place_w && s.height == place_h)
+                    && window
+                        .inner_position()
+                        .ok()
+                        .is_some_and(|p| p.x == place_pos.x && p.y == place_pos.y);
+                if already_on_target && already_correct_size_pos && already_fullscreen == expected_fullscreen {
+                    app_main.state::<AppState>().logger.log(
+                        crate::logging::Level::Info,
+                        &format!(
+                            "windows: move_output_to: already correctly placed on monitor #{monitor_index} \"{name}\" (visible, fullscreen={already_fullscreen}), skipping window-manager calls"
+                        ),
+                    );
+                    return Ok(window);
+                }
+            }
+        }
+        let exit_fs = if already_fullscreen {
+            Some(window.set_fullscreen(false))
+        } else {
+            None
         };
         if same_as_editor || single {
             let _ = window.set_decorations(true);
@@ -1272,6 +1303,45 @@ pub fn move_output_to(app: &AppHandle, monitor_index: usize) -> Result<WebviewWi
 /// explicit hide, so existence is a reliable proxy for "should be visible".
 pub fn output_visible(app: &AppHandle) -> bool {
     app.get_webview_window(OUTPUT_WINDOW).is_some()
+}
+
+/// Whether the Output window actually needs to be shown/placed (first-ever show).
+/// Returns true if no window exists, or if a window exists but is still hidden
+/// (pre-created hidden, never shown). This is the correct guard for `make_live`:
+/// a slide content change when already visible on the correct monitor must NOT
+/// re-run `move_output_to` (which does exit_fullscreen → set_size → set_position → show
+/// and flashes when already fullscreen). Only the first show, explicit display
+/// change, or explicit fullscreen toggle should move the window.
+pub fn output_needs_show(app: &AppHandle) -> bool {
+    let Some(window) = app.get_webview_window(OUTPUT_WINDOW) else {
+        return true; // no window → need to create/show
+    };
+    // Window exists (pre-created hidden). Check actual visibility.
+    // If we are already on the main thread, call directly; otherwise dispatch
+    // to main thread and wait (with timeout) to avoid deadlock on worker thread.
+    if is_main_thread() {
+        return !window.is_visible().unwrap_or(false);
+    }
+    // Off-main-thread (Tauri command worker): dispatch to main and wait.
+    // Use a short timeout to avoid freezing the worker if main is degraded;
+    // if we time out, assume we need to show (safe fallback).
+    let app_clone = app.clone();
+    let (tx, rx) = std::sync::mpsc::channel::<bool>();
+    let dispatched = app.run_on_main_thread(move || {
+        let _ = tx.send(
+            app_clone
+                .get_webview_window(OUTPUT_WINDOW)
+                .and_then(|w| w.is_visible().ok())
+                .unwrap_or(false),
+        );
+    });
+    if dispatched.is_err() {
+        return true;
+    }
+    match rx.recv_timeout(Duration::from_millis(200)) {
+        Ok(is_vis) => !is_vis,
+        Err(_) => true, // timeout → assume need show
+    }
 }
 
 /// Show (and create if needed) the output window on the configured or

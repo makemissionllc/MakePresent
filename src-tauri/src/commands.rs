@@ -480,8 +480,12 @@ fn make_live(app: &AppHandle, slide_id: &str) -> Result<ClientState, String> {
     // which causes a visible desktop flash when already fullscreen and destroys
     // the seamless crossfade. Reserve move_output_to for first-ever show,
     // explicit display change (set_output_display), or explicit fullscreen toggle.
-    // Here, only ensure the window exists if it wasn't already visible.
-    if !windows::output_visible(app) {
+    // Here, only ensure the window is shown if it has never been shown before.
+    // Use output_needs_show (checks actual is_visible, not just existence) so
+    // the pre-created hidden window (exists but not yet visible) is correctly
+    // shown on the already-selected target display with zero intermediate flash
+    // on the primary display.
+    if windows::output_needs_show(app) {
         if let Err(e) = windows::show_output(app, &state) {
             log(app, Level::Error, &format!("output: could not show window: {e}"));
         }

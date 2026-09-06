@@ -29,8 +29,9 @@
 use libloading::{Library, Symbol};
 use std::ffi::{c_char, c_void};
 use std::os::raw::c_int;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -320,23 +321,25 @@ impl BroadcastCore {
     ///
     /// `#[allow(dead_code)]`: not yet called — the capture integration that
     /// feeds frames is a separate runtime component (see module doc).
+    /// Returns true if the frame was accepted (validated and queued), false if skipped (invalid/black).
     #[allow(dead_code)]
-    pub fn send_frame(&self, width: u32, height: u32, bgra: Vec<u8>) {
+    pub fn send_frame(&self, width: u32, height: u32, bgra: Vec<u8>) -> bool {
         // Safety check is also done here (defense in depth) before queuing
         if width == 0 || height == 0 || bgra.is_empty() || bgra.len() != (width as usize * height as usize * 4) {
             eprintln!("NDI: no valid Output frame source, skipping (invalid frame {}x{} len {})", width, height, bgra.len());
-            return;
+            return false;
         }
         let is_black = bgra.chunks_exact(4).all(|px| px[0] == 0 && px[1] == 0 && px[2] == 0);
         if is_black {
             eprintln!("NDI: no valid Output frame source, skipping (black frame {}x{} — holding last good frame)", width, height);
-            return;
+            return false;
         }
         let _ = self.tx.try_send(Command::Frame {
             width,
             height,
             bgra,
         });
+        true
     }
 
     /// Stop the send thread and tear down the NDI source + SDK. Caller should
@@ -437,12 +440,18 @@ fn spawn_send_thread(
 /// Thin wrapper stored in [`AppState`] so commands can start/stop/feed NDI.
 pub struct Broadcaster {
     inner: Mutex<Option<BroadcastCore>>,
+    has_real_frames: AtomicBool,
+    last_frame_at: RwLock<Option<String>>,
+    last_frame_instant: Mutex<Option<Instant>>,
 }
 
 impl Default for Broadcaster {
     fn default() -> Self {
         Self {
             inner: Mutex::new(None),
+            has_real_frames: AtomicBool::new(false),
+            last_frame_at: RwLock::new(None),
+            last_frame_instant: Mutex::new(None),
         }
     }
 }
@@ -453,11 +462,50 @@ impl Broadcaster {
         self.inner.lock().ok().is_some_and(|g| g.is_some())
     }
 
+    /// Whether a real frame has ever been accepted (distinct from `is_active`).
+    /// While `current` in `spawn_send_thread` is still `None` (capture not yet
+    /// wired), this stays `false` — the source is discoverable but transmits
+    /// no real video. UI must not claim success until this is true.
+    pub fn has_real_frames(&self) -> bool {
+        self.has_real_frames.load(Ordering::Relaxed)
+    }
+
+    /// ISO timestamp of the last accepted real frame, if any. Used for staleness
+    /// like `RenderAck` (`ACK_STALE_MS` pattern).
+    pub fn last_frame_at(&self) -> Option<String> {
+        self.last_frame_at.read().ok()?.clone()
+    }
+
+    /// Whether the feed is stale: enabled but no valid frame recently. True when
+    /// `has_real_frames` is false or last frame older than ~5s (mirrors
+    /// `ACK_STALE_MS` heartbeat). Until capture is wired, this is always true
+    /// when active. When not active (`is_active` false), not stale — just off.
+    pub fn is_stale(&self) -> bool {
+        if !self.is_active() {
+            return false;
+        }
+        if !self.has_real_frames.load(Ordering::Relaxed) {
+            return true;
+        }
+        let guard = match self.last_frame_instant.lock() {
+            Ok(g) => g,
+            Err(_) => return true,
+        };
+        match *guard {
+            Some(instant) => instant.elapsed() > Duration::from_millis(5000),
+            None => true,
+        }
+    }
+
     /// Start (or restart) the NDI broadcaster with the given source name.
     pub fn start(&self, source_name: &str) -> Result<(), String> {
         self.stop();
         let core = BroadcastCore::start(source_name)?;
         *self.inner.lock().unwrap() = Some(core);
+        // Fresh source — no real frames yet until capture wires and first `send_frame` succeeds.
+        self.has_real_frames.store(false, Ordering::Relaxed);
+        *self.last_frame_at.write().unwrap() = None;
+        *self.last_frame_instant.lock().unwrap() = None;
         Ok(())
     }
 
@@ -466,14 +514,27 @@ impl Broadcaster {
         if let Some(core) = self.inner.lock().unwrap().take() {
             core.shutdown();
         }
+        self.has_real_frames.store(false, Ordering::Relaxed);
+        *self.last_frame_at.write().unwrap() = None;
+        *self.last_frame_instant.lock().unwrap() = None;
     }
 
     /// Push a BGRA+alpha frame to the running broadcaster (no-op when off).
     /// Not yet called (capture-integration seam) — see `BroadcastCore::send_frame`.
+    /// Tracks `has_real_frames`/`last_frame_at` distinctly from `is_active` so
+    /// the UI can be honest about whether real video is actually flowing.
     #[allow(dead_code)]
     pub fn send_frame(&self, width: u32, height: u32, bgra: Vec<u8>) {
-        if let Some(core) = self.inner.lock().unwrap().as_ref() {
-            core.send_frame(width, height, bgra);
+        let accepted = if let Some(core) = self.inner.lock().unwrap().as_ref() {
+            core.send_frame(width, height, bgra)
+        } else {
+            false
+        };
+        if accepted {
+            self.has_real_frames.store(true, Ordering::Relaxed);
+            let now_iso = crate::project::now_iso();
+            *self.last_frame_at.write().unwrap() = Some(now_iso);
+            *self.last_frame_instant.lock().unwrap() = Some(Instant::now());
         }
     }
 

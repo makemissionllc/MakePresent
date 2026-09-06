@@ -481,6 +481,19 @@ pub struct BroadcastView {
     pub enabled: bool,
     /// The NDI source name receivers see on the network.
     pub source_name: String,
+    /// Whether a real frame has ever been accepted by `send_frame`'s validation
+    /// (distinct from `enabled` which only reflects "source created"). While
+    /// `current` in `spawn_send_thread` is still `None` (capture not yet wired),
+    /// this stays `false` — the source is discoverable but transmits no real video.
+    pub has_real_frames: bool,
+    /// ISO timestamp of the last accepted real frame, if any. Used for staleness
+    /// like `RenderAck` (`ACK_STALE_MS` pattern) — if `None` or older than a few
+    /// seconds, the feed is stale/not-live even though `enabled` is true.
+    pub last_frame_at: Option<String>,
+    /// Whether the feed is stale: enabled but no valid frame recently. True when
+    /// `has_real_frames` is false or `last_frame_at` is older than the staleness
+    /// window (currently ~5s, mirroring `ACK_STALE_MS`).
+    pub is_stale: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

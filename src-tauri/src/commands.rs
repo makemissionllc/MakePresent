@@ -57,6 +57,9 @@ fn snapshot(app: &AppHandle) -> ClientState {
         broadcast: BroadcastView {
             enabled: settings.ndi_enabled,
             source_name: crate::broadcast::NDI_SOURCE_NAME.to_string(),
+            has_real_frames: state.broadcaster.has_real_frames(),
+            last_frame_at: state.broadcaster.last_frame_at(),
+            is_stale: state.broadcaster.is_stale(),
         },
         first_run: is_first_run(&state.app_data_dir()),
         default_transition: settings.default_transition,

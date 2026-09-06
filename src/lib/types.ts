@@ -140,6 +140,9 @@ export interface StageView {
 export interface BroadcastView {
   enabled: boolean;
   sourceName: string;
+  hasRealFrames: boolean;
+  lastFrameAt: string | null;
+  isStale: boolean;
 }
 
 /** One NDI source found by the receive confidence monitor's finder. */

@@ -368,7 +368,13 @@
           },
           {
             label: "NDI broadcast",
-            value: appState.broadcast.enabled ? `On (${appState.broadcast.sourceName})` : "Off",
+            value: !appState.broadcast.enabled
+              ? "Off"
+              : !appState.broadcast.hasRealFrames
+                ? `On (${appState.broadcast.sourceName}) — no real video (discoverable, black)`
+                : appState.broadcast.isStale
+                  ? `On (${appState.broadcast.sourceName}) — stale`
+                  : `On (${appState.broadcast.sourceName})`,
           },
         ]
       : [],
@@ -819,6 +825,15 @@
                 />
                 Enabled
               </label>
+              {#if appState?.broadcast.enabled}
+                {#if !appState.broadcast.hasRealFrames}
+                  <span class="badge" style="background: var(--semantic-idle, #64748b); color: white; font-size: 10px; padding: 3px 7px; border-radius: 4px;">No real video — black</span>
+                {:else if appState.broadcast.isStale}
+                  <span class="badge" style="background: var(--semantic-warning, #f7b538); color: var(--semantic-warning-text, #3a2e10); font-size: 10px; padding: 3px 7px; border-radius: 4px;">Stale</span>
+                {:else}
+                  <span class="badge" style="background: var(--semantic-live, #1f9d6a); color: white; font-size: 10px; padding: 3px 7px; border-radius: 4px;">Live</span>
+                {/if}
+              {/if}
             </div>
             <p class="hint">
               Publishes the live slide as an NDI source
@@ -832,7 +847,16 @@
               keeps working normally if it is absent. Assign a Look to the NDI
               feed under <em>Looks</em>.
             </p>
-            <p class="hint" style="font-size: 11px; opacity: 0.8;">NDI® is a registered trademark of Vizrt NDI AB. Bundled NDI 6 Runtime 6.0.1 (Apr 16 2026) — see <code>src-tauri/resources/NDI_VERSION.txt</code> for currency.</p>
+            {#if appState?.broadcast.enabled && !appState.broadcast.hasRealFrames}
+              <p class="status" style="background: var(--semantic-warning-bg, rgba(247,181,56,0.14)); border: 1px solid var(--semantic-warning-border, rgba(247,181,56,0.32)); color: var(--semantic-warning, #f7b538); padding: 8px 10px; border-radius: 6px; font-size: 12px;">
+                Frame capture not yet implemented — the NDI source is discoverable on the network but will show black video until window capture is wired (tracked in docs/PROJECT.md).
+              </p>
+            {:else if appState?.broadcast.enabled && appState.broadcast.isStale}
+              <p class="status" style="background: var(--semantic-warning-bg, rgba(247,181,56,0.14)); border: 1px solid var(--semantic-warning-border, rgba(247,181,56,0.32)); color: var(--semantic-warning, #f7b538); padding: 8px 10px; border-radius: 6px; font-size: 12px;">
+                NDI feed is stale — no valid frame recently. Last frame: {appState.broadcast.lastFrameAt ?? "never"}.
+              </p>
+            {/if}
+            <p class="hint" style="font-size: 11px; opacity: 0.8;">NDI® is a registered trademark of Vizrt NDI AB. Bundled NDI 6 Runtime 6.0.1 (Apr 16 2026) — see <code>src-tauri/resources/NDI_VERSION.txt</code> for currency. Source being discoverable (OBS finds it) does not mean real video is flowing — check <code>hasRealFrames</code> above.</p>
           </div>
 
           <div class="bcast-block">

@@ -474,8 +474,17 @@ fn make_live(app: &AppHandle, slide_id: &str) -> Result<ClientState, String> {
 
     // The output window appears on demand: the first slide going live is
     // what creates and shows it (never at startup).
-    if let Err(e) = windows::show_output(app, &state) {
-        log(app, Level::Error, &format!("output: could not show window: {e}"));
+    // Fix: decouple "content changed" from "window placement changed" —
+    // a slide content change (same window already open on the same display)
+    // must NEVER call move_output_to/exit_fullscreen/set_size/set_position/show,
+    // which causes a visible desktop flash when already fullscreen and destroys
+    // the seamless crossfade. Reserve move_output_to for first-ever show,
+    // explicit display change (set_output_display), or explicit fullscreen toggle.
+    // Here, only ensure the window exists if it wasn't already visible.
+    if !windows::output_visible(app) {
+        if let Err(e) = windows::show_output(app, &state) {
+            log(app, Level::Error, &format!("output: could not show window: {e}"));
+        }
     }
 
     let snap = snapshot(app);

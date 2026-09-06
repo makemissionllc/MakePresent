@@ -848,3 +848,15 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Safety check `broadcast.rs:324` `BroadcastCore::send_frame` + `broadcast.rs:347` `spawn_send_thread` + `broadcast.rs:492` `send_frame_checked`** Validate `w/h` non-zero, `len==w*h*4`, not all-black (`chunks_exact(4).all px[0]==0&&px[1]==0&&px[2]==0`); if invalid/black, `eprintln!("NDI: no valid Output frame source, skipping … holding last good frame")` and do not `try_send`. In send thread, if `current` is `None` or `is_black`, log once and hold, not send black. `send_frame_checked(&app)` also checks `get_webview_window(OUTPUT_WINDOW).is_some()` and `inner_size().is_ok()`. After Output rebuild, next valid `send_frame` updates `current` and sender automatically resumes.
 
 - **Verify:** Reproduce: broadcast enabled → go live → close Editor → `logs/app.log` shows `self-healing complete` if rebuild needed (not `FAILED`), `window count` still 3 at `delayed @2.5s`, and OBS shows live slide (not black) throughout; `npm run check` 0/0, `cargo check` 4 `dead_code`.
+
+---
+
+## Changed (2026-09-02) — Fix fullscreen slide-change flash (decouple content from window placement)
+
+*Regression against dumb-renderer architecture: every `output: live slide` re-ran window placement and flashed the desktop when already fullscreen.*
+
+- **Call path `commands.rs:455` `make_live` → `commands.rs:477` `windows::show_output` → `windows.rs:1288` `show_output` → `windows.rs:1066` `move_output_to` → `windows.rs:1186` `exit_fullscreen` → `windows.rs:1228` `set_size`/`set_position`/`show` — fired on every content change, not just placement.
+
+- **Fix `commands.rs:455` `make_live`** — only `show_output` if `!windows::output_visible(app)` (`windows.rs:1273` `get_webview_window.is_some()`), otherwise pure `snapshot` + `emit("state")`. Reserve `move_output_to` for first show, `set_output_display` (`commands.rs:1306`), and `toggle_output_fullscreen` (`commands.rs:1332`). No `exit_fullscreen`/`set_size` flash when already fullscreen.
+
+- **Verify:** Fullscreen then 5× go-live → zero flash, clean crossfade, no window-manager calls in `logs/app.log`; `npm run check` 0/0, `cargo check` 4 `dead_code`.

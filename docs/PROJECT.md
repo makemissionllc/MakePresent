@@ -939,3 +939,14 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Render `SlideRender.svelte:35`** (shared by Output/Stage/preview): per-element align/shadow (`none` when zeroed)/`-webkit-text-stroke` outline/`rgba()` bar with `box-decoration-break: clone`; line height via container vars (`SlideRender.svelte:85/334/344`) so `fitText` measurement stays accurate; styles in the `fitText` `deps` token (`SlideRender.svelte:81`).
 - **UI `LookStyleFields.svelte:1`** (shared Title/Body sections) mounted in `LookEditorView.svelte:338` (`uid="lev"`) and `SettingsPanel.svelte:1068` (`uid="sp"`), via `setStyle` merges (`LookEditorView.svelte:75`, `SettingsPanel.svelte:107`) into the existing debounced commits.
 - **Verify:** `npm run check` 0/0; `cargo check` OK (3 pre-existing `dead_code`: `audio.rs:390`, `media.rs:16`, `project.rs:117`); `npm run build` clean. `cargo test` fails to compile pre-existing on HEAD (`commands.rs:3113` `Settings { default_looks }` literal, unrelated). Phone stage page (`network.rs:499`) is a separate renderer and ignores the new fields — noted follow-up, not this change.
+
+---
+
+## Changed (2026-09-06) — Library sidebar readability (swatches, collapse toggle, active-section growth)
+
+*Layout/visual only — search and drag-and-drop logic untouched. Song list was cramped text-only rows with every song's verses + arrangement always expanded inline.*
+
+- **Swatch `Editor.svelte:2132`** — same `.swatch` pattern as playlist entries (`Editor.svelte:1913`): solid → colour, media → thumb `background-image`, live-camera → 🎥; sizing `Editor.svelte:3827`.
+- **Collapse toggle `Editor.svelte:60/65/2117/2159`** — `expandedSongs: Set<string>` + chevron (`.song-expand` `Editor.svelte:3806`, `aria-expanded`, verse-count tooltip) guarding verses + Order chips; search auto-expands matches, clearing restores manual state. Click/drag handlers unchanged, only wrapped in `{#if}`.
+- **Growth `Editor.svelte:71/2093/3205`** — `libraryActive` (searching or expanded song) → `library-active` → `flex: 2 1 0` vs sibling sections' `1 1 0`.
+- **Verify:** `npm run check` 0/0; `npm run build` clean.

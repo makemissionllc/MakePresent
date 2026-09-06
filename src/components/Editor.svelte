@@ -54,6 +54,23 @@
   let noticeDismissed = $state(false);
   let library = $state<Library | null>(null);
   let librarySearch = $state("");
+  // Per-song verse expansion — verses collapse to a chevron toggle so a big
+  // library reads as compact song rows. Searching auto-expands every match
+  // (discovery), clearing the search restores the manual toggle state.
+  let expandedSongs = $state<Set<string>>(new Set());
+  function toggleSongExpanded(id: string): void {
+    if (expandedSongs.has(id)) expandedSongs.delete(id);
+    else expandedSongs.add(id);
+  }
+  function isSongExpanded(song: LibrarySong): boolean {
+    return expandedSongs.has(song.id) || librarySearch.trim().length > 0;
+  }
+  // The Library is the "active" sidebar section while the operator searches it
+  // or browses an expanded song — same `.active` convention as the scripture
+  // section, so it earns the larger flex share (see `library-active` CSS).
+  const libraryActive = $derived(
+    librarySearch.trim().length > 0 || expandedSongs.size > 0,
+  );
   let settingsOpen = $state(false);
   let welcomeDismissed = $state(false);
   let importingMedia = $state(false);
@@ -2073,6 +2090,7 @@
         role="region"
         aria-label="Library — drop .pro/.cho/.usr files"
         class:has-content={librarySongs.length > 0 || librarySearch.trim().length > 0}
+        class:library-active={libraryActive && (librarySongs.length > 0 || librarySearch.trim().length > 0)}
         class:library-drag-active={libraryDragActive}
         class:tour-highlight={showTour && tourStep === 2}
         ondragover={(e) => handleLibraryDragOver(e)}
@@ -2093,7 +2111,17 @@
         />
         <ul class="song-list">
           {#each librarySongs as song (song.id)}
+            {@const songExpanded = isSongExpanded(song)}
             <li>
+              <button
+                class="song-expand"
+                aria-expanded={songExpanded}
+                aria-label={songExpanded ? `Collapse ${song.title || "Untitled"}` : `Expand ${song.title || "Untitled"}`}
+                title={songExpanded ? "Collapse verses" : `Expand — ${getBlocksArray(song).length} ${getBlocksArray(song).length === 1 ? "verse" : "verses"}`}
+                onclick={() => toggleSongExpanded(song.id)}
+              >
+                {songExpanded ? "▾" : "▸"}
+              </button>
               <button
                 class="song-entry"
                 draggable="true"
@@ -2101,6 +2129,19 @@
                 onclick={() => addToPlaylist(song)}
                 title="Drag to playlist to add • Click to add (uses arrangement)"
               >
+                <span
+                  class="swatch song-swatch"
+                  class:camera={isLiveCamera(song.defaultBackground)}
+                  style:background-color={song.defaultBackground.type === "solid"
+                    ? song.defaultBackground.color
+                    : "#000"}
+                  style:background-image={isMedia(song.defaultBackground)
+                    ? `url('${fileUrl(song.defaultBackground.thumb)}')`
+                    : "none"}
+                  style:background-size="cover"
+                  style:background-position="center"
+                  title={isLiveCamera(song.defaultBackground) ? `Live camera: ${song.defaultBackground.label || "camera"}` : undefined}
+                >{#if isLiveCamera(song.defaultBackground)}<span aria-hidden="true">🎥</span>{/if}</span>
                 <span class="song-label">{song.title || "Untitled"}</span>
                 <span class="song-count">{getSongArrangementCount(song)} {getSongArrangementCount(song) === 1 ? "slide" : "slides"} • {getSongBlockCount(song)} blocks</span>
               </button>
@@ -2115,6 +2156,7 @@
                 &times;
               </button>
             </li>
+            {#if songExpanded}
             {#each getBlocksArray(song) as verse (verse.id)}
               <li class="library-verse-row">
                 <button
@@ -2162,6 +2204,7 @@
                   </select>
                 </div>
               </li>
+            {/if}
             {/if}
           {:else}
             <li class="empty">No songs yet. Add one below.</li>
@@ -3155,6 +3198,14 @@
     min-height: 120px;
   }
 
+  /* Library earns the larger flex share while the operator is actively using
+     it (searching, or browsing an expanded song) — same `.active`-style
+     convention as the scripture section, so it grows instead of staying
+     squeezed when it is the most-used section. */
+  .sidebar-section.library-section.has-content.library-active {
+    flex: 2 1 0;
+  }
+
   /* Phase 1 — Output panel is the representative screen for the warm/bold
      design system. Only this panel is rethemed; the rest of the app keeps
      existing tokens. Chrome stays on Inter/system stack; Output slide text
@@ -3749,6 +3800,38 @@
     font-size: 11px;
     color: var(--text-dim);
     flex: none;
+  }
+
+  /* Per-song verse toggle: a narrow chevron so rows stay compact. */
+  .song-expand {
+    flex: none;
+    align-self: center;
+    width: 22px;
+    padding: 4px 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-dim);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .song-expand:hover {
+    background: var(--panel);
+    border-color: var(--border);
+    color: var(--text);
+  }
+
+  /* Song swatch: same `.swatch` base as the playlist slide entries, keyed off
+     the song's own defaultBackground (solid colour, media thumbnail, camera). */
+  .song-swatch {
+    background-size: cover;
+    background-position: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1;
   }
 
   .song-list .empty {

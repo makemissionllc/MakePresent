@@ -140,7 +140,7 @@
     inserting = `media-${asset.hash}`;
     try {
       const base = asset.fileName.replace(/\.[^/.]+$/, "") || "Media";
-      const created = await api.addSlide(base, "");
+      const created = await api.addSlide("", "", base);
       const newId = created.project.slides.at(-1)?.id;
       if (!newId) throw new Error("failed to create media slide");
       await api.updateSlide(newId, { background: asset.background });

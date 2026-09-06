@@ -861,8 +861,8 @@
         try {
           const asset = await api.importMedia(p);
           const base = p.split(/[\/\\]/).pop()?.replace(/\.[^/.]+$/, "") ?? "Media";
-          const createdState = await api.addSlide(base, "");
-          // last slide is the newly created one
+          const createdState = await api.addSlide("", "", base);
+          // last slide is the newly created one — Title/Body stay empty (no on-screen text) for full-bleed Image/Video/LiveCamera
           const newId = createdState.project.slides.at(-1)?.id;
           if (!newId) throw new Error("failed to create slide for media");
           const updated = await api.updateSlide(newId, {

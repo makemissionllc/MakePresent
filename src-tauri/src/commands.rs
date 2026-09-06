@@ -62,6 +62,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
             is_stale: state.broadcaster.is_stale(),
         },
         default_looks: settings.default_looks.clone(),
+        exit_animation: settings.exit_animation.clone(),
         first_run: is_first_run(&state.app_data_dir()),
         default_transition: settings.default_transition,
         current,
@@ -975,6 +976,34 @@ pub fn set_default_look(app: AppHandle, kind: String, look_id: Option<String>) -
         ),
     );
     Ok(snapshot(&app))
+}
+
+/// Set (or clear, with `None`) the optional exit/outro animation video played
+/// full-bleed on the Output/Stage windows on real Quit. The path is stored
+/// verbatim — a missing/unreadable file at quit time fails silent (instant
+/// quit), so this never errors on a stale path.
+#[tauri::command]
+pub fn set_exit_animation(app: AppHandle, path: Option<String>) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    let mut settings = state.current_settings();
+    settings.exit_animation = path
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty());
+    state.apply_settings(settings);
+    let _ = crate::project::write_settings(&state.app_data_dir(), &state.current_settings());
+    log(
+        &app,
+        Level::Info,
+        &format!(
+            "exit animation: {}",
+            state
+                .current_settings()
+                .exit_animation
+                .as_deref()
+                .unwrap_or("off")
+        ),
+    );
+    Ok(snapshot_and_emit(&app))
 }
 
 fn set_look_mapping(
@@ -2083,6 +2112,7 @@ enum SettingsField {
     StageNetworkPin,
     AudioDevice,
     AudioVolume,
+    ExitAnimation,
 }
 
 impl SettingsField {
@@ -2107,11 +2137,12 @@ impl SettingsField {
             SettingsField::StageNetworkPin => "Stage display PIN",
             SettingsField::AudioDevice => "Audio output device",
             SettingsField::AudioVolume => "Audio volume",
+            SettingsField::ExitAnimation => "Exit animation",
         }
     }
 }
 
-fn settings_fields() -> [SettingsField; 19] {
+fn settings_fields() -> [SettingsField; 20] {
     [
         SettingsField::OutputDisplay,
         SettingsField::OutputFullscreen,
@@ -2132,6 +2163,7 @@ fn settings_fields() -> [SettingsField; 19] {
         SettingsField::StageNetworkPin,
         SettingsField::AudioDevice,
         SettingsField::AudioVolume,
+        SettingsField::ExitAnimation,
     ]
 }
 
@@ -2180,6 +2212,9 @@ fn changed_settings(old: &Settings, new: &Settings) -> Vec<String> {
             }
             SettingsField::AudioVolume => {
                 (new.audio_volume - old.audio_volume).abs() > f32::EPSILON
+            }
+            SettingsField::ExitAnimation => {
+                new.exit_animation != old.exit_animation
             }
         };
         if differs {
@@ -3132,6 +3167,8 @@ mod tests {
             stage_network_pin: String::new(),
             audio_output_device_id: None,
             audio_volume: 1.0,
+            default_looks: Default::default(),
+            exit_animation: None,
         }
     }
 
@@ -3173,5 +3210,22 @@ mod tests {
     #[test]
     fn no_changes_reports_empty() {
         assert!(changed_settings(&settings(), &settings()).is_empty());
+    }
+
+    #[test]
+    fn changed_settings_reports_exit_animation() {
+        let old = settings();
+        let mut new = settings();
+        new.exit_animation = Some("/tmp/outro.mp4".to_string());
+        assert_eq!(
+            changed_settings(&old, &new),
+            vec!["Exit animation".to_string()]
+        );
+    }
+
+    #[test]
+    fn legacy_settings_without_exit_animation_default_to_none() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.exit_animation, None);
     }
 }

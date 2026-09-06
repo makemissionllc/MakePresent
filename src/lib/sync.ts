@@ -92,6 +92,27 @@ export function subscribeNdiMonitorStatus(
   return listen<NdiMonitorStatus>("ndi-monitor-status", (event) => cb(event.payload));
 }
 
+/**
+ * Exit/outro animation (real Quit only, never close-to-tray). The backend
+ * emits `exit-outro` with the configured video path; each visible renderer
+ * (Output/Stage independently) plays it full-bleed, then fires `outro-done`
+ * on video `ended`/`error` so the backend can exit early. A backend-side
+ * hard cap guarantees shutdown regardless — renderers never block quitting.
+ */
+export function subscribeExitOutro(
+  cb: (path: string) => void,
+): Promise<UnlistenFn> {
+  return listen<{ path: string }>("exit-outro", (event) =>
+    cb(event.payload.path),
+  );
+}
+
+export function emitOutroDone(): void {
+  void emit("outro-done").catch(() => {
+    // Backend already gone (e.g. browser preview) — best-effort.
+  });
+}
+
 export const api = {
   getState: () => invoke<ClientState>("get_state"),
 
@@ -177,6 +198,9 @@ export const api = {
 
   setDefaultLook: (kind: string, lookId: string | null) =>
     invoke<ClientState>("set_default_look", { kind, lookId }),
+
+  setExitAnimation: (path: string | null) =>
+    invoke<ClientState>("set_exit_animation", { path }),
 
   setNdiEnabled: (enabled: boolean) =>
     invoke<ClientState>("set_ndi_enabled", { enabled }),

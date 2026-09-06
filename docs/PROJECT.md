@@ -292,7 +292,8 @@ Startup creates **only the Editor window**.
 
 ```
 src-tauri/src/
-  lib.rs        App lifecycle: setup (recovery, logger, autosave worker, tray/standby), finalize, commands
+   lib.rs        App lifecycle: setup (recovery, logger, autosave worker, tray/standby), finalize, quit/outro entry, commands
+   outro.rs      Real-Quit sequence: persist-first, exit-outro event to renderers, 6s hard-capped exit
   state.rs      AppState — the single source of truth
   project.rs    Domain model (Project/Slide/Settings/Library/Template/Look+geometry+text-style), persistence, autosave worker (templates.json atomic)
   windows.rs    Window lifecycle: Output + Stage + Editor respawn, display picking
@@ -950,3 +951,14 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Collapse toggle `Editor.svelte:60/65/2117/2159`** — `expandedSongs: Set<string>` + chevron (`.song-expand` `Editor.svelte:3806`, `aria-expanded`, verse-count tooltip) guarding verses + Order chips; search auto-expands matches, clearing restores manual state. Click/drag handlers unchanged, only wrapped in `{#if}`.
 - **Growth `Editor.svelte:71/2093/3205`** — `libraryActive` (searching or expanded song) → `library-active` → `flex: 2 1 0` vs sibling sections' `1 1 0`.
 - **Verify:** `npm run check` 0/0; `npm run build` clean.
+
+---
+
+## Changed (2026-09-06) — Optional exit/outro animation on real Quit
+
+*Settings → General → Exit animation (optional video) plays full-bleed on Output + Stage on tray Quit, so the service never ends on a cut to desktop. Close-to-tray unchanged; Quit-only.*
+
+- **Setting `project.rs:1086` `Settings.exit_animation: Option<String>`** (None = instant quit) + `ClientState` `project.rs:667` + `commands.rs:986` `set_exit_animation` + `SettingsField::ExitAnimation` (export/import round-trip). UI `SettingsPanel.svelte:275/440/1005`, contract `types.ts:262` / `sync.ts:202`.
+- **Flow `outro.rs:97`**: persist-first, Editor closes at once (`lib.rs:207` quit exception to the hide interceptor), `exit-outro` event, **6s hard cap** (`outro.rs:32`) with `outro-done` early exit (`outro.rs:75` once-guard). Missing file / no visible windows → instant exit. No skip interaction — cap only.
+- **Renderers `Output.svelte:30` / `Stage.svelte:14`**: independent full-bleed muted `<video>` (`sync.ts:102/110`); ack heartbeat keeps firing (5s < 12s stale `Editor.svelte:222`), never misread as frozen. NDI skipped (no wired capture — follow-up once the pipeline exists).
+- **Verify:** `npm run check` 0/0; `cargo check` OK (3 pre-existing `dead_code`); `cargo test` 64 passed (fixed pre-existing suite compile failure `commands.rs:3171` + 2 new tests). Runtime: **theoretical** — headless env, no display/NDI hardware; verified by inspection + checks only.

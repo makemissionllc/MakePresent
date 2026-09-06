@@ -663,6 +663,8 @@ pub struct ClientState {
     /// Look id assigned to the NDI feed (None -> first look).
     pub ndi_look_id: Option<String>,
     pub default_looks: DefaultLooks,
+    /// Absolute path of the optional exit/outro animation video (None = instant quit).
+    pub exit_animation: Option<String>,
     /// Whether the native MIDI input listener is enabled.
     pub midi_enabled: bool,
     /// Stable id of the selected MIDI input device (None when unset).
@@ -1077,6 +1079,11 @@ pub struct Settings {
     /// `None` means follow the global Main Look. Stored as metadata, one-time copy at creation.
     #[serde(default)]
     pub default_looks: DefaultLooks,
+    /// Optional exit/outro animation: absolute path to a user-provided video
+    /// file played full-bleed on the Output/Stage windows on real Quit.
+    /// `None` (default) = instant-close behavior, unchanged.
+    #[serde(default)]
+    pub exit_animation: Option<String>,
 }
 
 /// Default Look mapping per slide kind — Scripture/Song/Generic.
@@ -1126,6 +1133,7 @@ impl Default for Settings {
             audio_output_device_id: None,
             audio_volume: default_audio_volume(),
             default_looks: Default::default(),
+            exit_animation: None,
         }
     }
 }

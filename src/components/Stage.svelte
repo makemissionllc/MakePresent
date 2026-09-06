@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, emitRenderAck, subscribeState } from "../lib/sync";
+  import { convertFileSrc } from "@tauri-apps/api/core";
+  import { api, emitOutroDone, emitRenderAck, subscribeExitOutro, subscribeState } from "../lib/sync";
   import type { ClientState, Look } from "../lib/types";
   import { fitText } from "../lib/fitText";
   import SlideRender from "./SlideRender.svelte";
@@ -8,6 +9,18 @@
 
   let appState = $state<ClientState | null>(null);
   let currentTime = $state("--:--:--");
+  // Exit/outro animation (real Quit only): same contract as Output — full
+  // bleed here covers the current/next/clock layout for the stage team.
+  let outroUrl = $state<string | null>(null);
+
+  function playOutro(path: string): void {
+    try {
+      outroUrl = convertFileSrc(path);
+    } catch {
+      outroUrl = null;
+      emitOutroDone();
+    }
+  }
 
   /** Same render-ack heartbeat as Output (see Output.svelte) — confirms the
       Stage renderer is alive and applied state, so the Editor can warn on a
@@ -33,6 +46,7 @@
 
   onMount(() => {
     let un: () => void = () => {};
+    let unOutro: () => void = () => {};
     let clock: number | undefined;
     let ackTimer: number | undefined;
 
@@ -46,6 +60,7 @@
         appState = s;
         ack();
       });
+      unOutro = await subscribeExitOutro((path) => playOutro(path));
       try {
         appState = await api.getState();
         ack();
@@ -59,6 +74,7 @@
 
     return () => {
       un();
+      unOutro();
       if (clock !== undefined) window.clearInterval(clock);
       if (ackTimer !== undefined) window.clearInterval(ackTimer);
     };
@@ -94,6 +110,21 @@
     </div>
     <div class="clock">{currentTime}</div>
   </aside>
+
+  {#if outroUrl}
+    <!-- Exit/outro: full-bleed over the whole Stage window (current + next +
+         clock) so the stage team sees the video, not a cut to desktop. -->
+    <video
+      class="outro"
+      src={outroUrl}
+      autoplay
+      muted
+      playsinline
+      preload="auto"
+      onended={() => emitOutroDone()}
+      onerror={() => emitOutroDone()}
+    ></video>
+  {/if}
 </div>
 
 <style>
@@ -213,5 +244,16 @@
     color: #555a68;
     font-size: clamp(1rem, 2vmin, 1.8rem);
     margin: 0;
+  }
+
+  .outro {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #000;
+    z-index: 50;
+    pointer-events: none;
   }
 </style>

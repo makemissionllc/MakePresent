@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { api, emitRenderAck, subscribeState } from "../lib/sync";
+  import { api, emitOutroDone, emitRenderAck, subscribeExitOutro, subscribeState } from "../lib/sync";
   import type { ClientState, Look, Slide } from "../lib/types";
   import SlideRender from "./SlideRender.svelte";
 
@@ -22,6 +22,22 @@
   let crossfading = $state(false);
   let appState = $state<ClientState | null>(null);
   let timer: number | undefined;
+  // Exit/outro animation (real Quit only): full-bleed video URL once the
+  // backend emits `exit-outro`. Null = normal rendering. The backend's hard
+  // cap guarantees shutdown, so this overlay can never stall the exit — and
+  // the ack heartbeat below keeps firing while it plays, so the outro is
+  // never misread as a frozen Output.
+  let outroUrl = $state<string | null>(null);
+
+  function playOutro(path: string): void {
+    try {
+      outroUrl = convertFileSrc(path);
+    } catch {
+      // Unresolvable path: fail silent — tell the backend we're done.
+      outroUrl = null;
+      emitOutroDone();
+    }
+  }
 
   const project = $derived(appState?.project ?? null);
   const live = $derived(
@@ -102,6 +118,7 @@
 
   onMount(() => {
     let un: () => void = () => {};
+    let unOutro: () => void = () => {};
     let ackTimer: number | undefined;
     // One-way ack: confirm each applied state + a slow heartbeat so a
     // frozen-but-not-updating window is still detectable. Fire-and-forget —
@@ -112,6 +129,7 @@
         appState = s;
         ack();
       });
+      unOutro = await subscribeExitOutro((path) => playOutro(path));
       try {
         appState = await api.getState();
         ack();
@@ -122,6 +140,7 @@
     ackTimer = window.setInterval(ack, ACK_MS);
     return () => {
       un();
+      unOutro();
       window.clearTimeout(timer);
       if (ackTimer !== undefined) window.clearInterval(ackTimer);
       leaving = null;
@@ -206,6 +225,22 @@
       aria-hidden="true"
     />
   {/if}
+
+  {#if outroUrl}
+    <!-- Exit/outro: covers the whole Output (above slide + overlay layers) so
+         the congregation sees the video, not a cut to desktop. Muted for
+         reliable autoplay; `ended`/`error` both release the backend to exit. -->
+    <video
+      class="outro"
+      src={outroUrl}
+      autoplay
+      muted
+      playsinline
+      preload="auto"
+      onended={() => emitOutroDone()}
+      onerror={() => emitOutroDone()}
+    ></video>
+  {/if}
 </main>
 
 <style>
@@ -278,6 +313,17 @@
     opacity: 0.01;
     pointer-events: none;
     /* keep it reachable by the layout engine so WebKit actually fetches it */
+  }
+
+  .outro {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #000;
+    z-index: 50;
+    pointer-events: none;
   }
 
   .overlay-layer {

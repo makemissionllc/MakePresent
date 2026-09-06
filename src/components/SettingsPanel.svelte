@@ -266,6 +266,44 @@
       .catch((e: unknown) => (lookErr = String(e)));
   }
 
+  const exitAnimationName = $derived(
+    appState?.exitAnimation
+      ? (appState.exitAnimation.split(/[\\/]/).pop() ?? appState.exitAnimation)
+      : null,
+  );
+
+  function pickExitAnimation(): void {
+    lookErr = null;
+    void (async () => {
+      try {
+        const picked = await openDialog({
+          multiple: false,
+          directory: false,
+          filters: [
+            {
+              name: "Video",
+              extensions: ["mp4", "m4v", "mov", "webm", "mkv", "avi", "ogv"],
+            },
+          ],
+        });
+        if (!picked) return;
+        const path = Array.isArray(picked) ? picked[0] : picked;
+        if (!path) return;
+        appState = await api.setExitAnimation(path);
+      } catch (e) {
+        lookErr = String(e);
+      }
+    })();
+  }
+
+  function clearExitAnimation(): void {
+    lookErr = null;
+    void api
+      .setExitAnimation(null)
+      .then((s) => (appState = s))
+      .catch((e: unknown) => (lookErr = String(e)));
+  }
+
   // NDI receive confidence monitor — low-rate (~2 fps) preview of a network
   // camera, fully independent from the NDI broadcast toggle above. Frames
   // arrive over a dedicated event (never the state broadcast); the badge
@@ -396,6 +434,10 @@
                 : appState.broadcast.isStale
                   ? `On (${appState.broadcast.sourceName}) — stale`
                   : `On (${appState.broadcast.sourceName})`,
+          },
+          {
+            label: "Exit animation",
+            value: exitAnimationName ?? "Off",
           },
         ]
       : [],
@@ -946,6 +988,31 @@
                 </div>
               {/if}
             {/if}
+          </div>
+
+          <div class="bcast-block">
+            <div class="bcast-title">
+              <span class="assign-title">Exit animation</span>
+            </div>
+            <p class="hint">
+              Optional video played full-bleed on the Output and Stage windows
+              when you <strong>Quit</strong> MakrStudio from the tray — so the
+              service ends on video, not an abrupt cut to desktop. The Editor
+              still closes immediately, and with no video set quitting is
+              instant, as today. Playback is capped at a few seconds and a
+              missing file quits silently, so shutdown can never stall.
+            </p>
+            {#if exitAnimationName}
+              <p class="hint" style="margin: 0;">
+                Current: <code>{exitAnimationName}</code>
+              </p>
+            {/if}
+            <div class="actions" style="margin-top: 8px;">
+              <button onclick={() => pickExitAnimation()}>Choose video…</button>
+              {#if exitAnimationName}
+                <button onclick={() => clearExitAnimation()}>Clear</button>
+              {/if}
+            </div>
           </div>
 
           <div class="actions">

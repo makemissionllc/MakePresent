@@ -7,6 +7,7 @@ mod midi;
 mod ndi_receive;
 mod network;
 mod osc;
+mod outro;
 mod project;
 mod scripture;
 mod song_import;
@@ -115,11 +116,11 @@ fn show_editor(app: &tauri::AppHandle) {
 }
 
 /// Set by the tray "Quit" action so the real exit path proceeds; harmless
-/// otherwise.
+/// otherwise. The actual quit sequence (optional outro, then exit) lives in
+/// `outro::begin_quit` — close-to-tray never touches it.
 fn quit_app(app: &tauri::AppHandle) {
-    crate::windows::set_shutting_down();
     QUIT_REQUESTED.store(true, Ordering::SeqCst);
-    app.exit(0);
+    crate::outro::begin_quit(app);
 }
 
 /// Menu id shared between the tray menu item and the left-click handler.
@@ -201,6 +202,11 @@ pub fn run() {
             // alive, and the user brings the editor back from the tray.
             if window.label() == crate::windows::EDITOR_WINDOW {
                 if let WindowEvent::CloseRequested { api, .. } = event {
+                    // Real quit in progress: let the Editor close for good.
+                    // Any other close still hides to tray (process keeps running).
+                    if QUIT_REQUESTED.load(Ordering::SeqCst) {
+                        return;
+                    }
                     let app_handle = window.app_handle();
                     let st = app_handle.state::<AppState>();
                     st.logger.log(
@@ -625,6 +631,17 @@ pub fn run() {
             // and Editor reachable, simpler than hiding and requiring re-show.
             crate::windows::spawn_display_watcher(app.handle().clone());
 
+            // Exit/outro shortcut: a renderer whose outro video ends (or fails
+            // to load) emits this; the first one shortens the capped wait in
+            // `outro::begin_quit` and exits now. Registered once here so the
+            // listener exists before any quit can emit the outro.
+            {
+                let handle = app.handle().clone();
+                app.listen(crate::outro::OUTRO_DONE_EVENT, move |_event| {
+                    crate::outro::note_outro_done(&handle);
+                });
+            }
+
             // Diagnostic re-check a couple of seconds in: by then the stage
             // restore (if any) has settled, so this shows the same window
             // set/focus state a user sees while the editor appears frozen.
@@ -658,6 +675,7 @@ pub fn run() {
             commands::set_ndi_look,
             commands::get_default_looks,
             commands::set_default_look,
+            commands::set_exit_animation,
             commands::set_ndi_enabled,
             commands::start_ndi_scan,
             commands::list_ndi_sources,

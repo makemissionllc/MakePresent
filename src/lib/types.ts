@@ -258,6 +258,8 @@ export interface ClientState {
   stageLookId: string | null;
   ndiLookId: string | null;
   defaultLooks: DefaultLooks;
+  /** Absolute path of the optional exit/outro video (null = instant quit). */
+  exitAnimation: string | null;
   midiEnabled: boolean;
   midiDeviceId: string | null;
   oscEnabled: boolean;

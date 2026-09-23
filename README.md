@@ -235,11 +235,18 @@ and shows a recovery notice when the prior exit was unclean.
 - Runs on its **own thread** — never blocks the Output render loop — with a
   bounded, non-blocking frame channel and live-source keep-alive.
 - The **NDI SDK is loaded at runtime** (`libloading`), not linked, so the app
-  builds, tests, and CI-runs without it. On **Windows**, the **NDI 6 Runtime redistributable** is **bundled into the installer** (`src-tauri/resources/NDI_Runtime_V6.exe` + `src-tauri/windows/hooks.nsi` `/verysilent`, `src-tauri/resources/NDI_VERSION.txt:3` 6.0.1 Apr 16 2026, detected via `NDI_RUNTIME_DIR_V5` → fallback next to .exe `broadcast.rs:144`), so a fresh install on a clean VM works immediately — no manual DLL step, OBS (obs-ndi) discovers it automatically. On **Linux/macOS**, still requires manual `libndi.so.5`/`libndi.dylib` install.
-- Assign a **NDI Look** independently of the on-screen Output; enable/disable
-  the feed and pick the Look from **Settings**.
-- *Scope note:* the sender side is implemented; the webview→pixel **capture**
-  that feeds it is a runtime follow-up (not exercisable headless/CI).
+  builds, tests, and CI-runs without it. On **Windows**, the **NDI 6 Runtime redistributable** is **bundled into the installer** (`src-tauri/resources/NDI_Runtime_V6.exe` + `src-tauri/windows/hooks.nsi` `/verysilent`, `src-tauri/resources/NDI_VERSION.txt:3` 6.0.1 Apr 16 2026, detected via `NDI_RUNTIME_DIR_V6` → `V5` → app directory), so a fresh install needs no manual DLL step. On **Linux**, install the NDI SDK (`libndi.so.6` preferred, `.so.5` fallback); on **macOS**, install `libndi.dylib`.
+- Enable/disable the feed and check capture freshness in **Settings**. NDI is a
+  pixel-identical mirror of the native Output, so it uses the Output Look.
+- Captures the native **MakrStudio - Output** window at up to 1080p and 10 fps,
+  converts it to NDI BGRA, then the dedicated NDI sender repeats the latest
+  frame at 30 fps. That keeps video backgrounds, camera feeds, Looks, and
+  overlays identical to the projected Output. Linux window capture requires
+  X11; failures are surfaced as “Waiting for Output”/stale, not reported live.
+- **OBS:** install the NDI-enabled **DistroAV** plugin and a compatible NDI
+  Runtime, enable NDI Broadcast in MakrStudio, show Output with a live slide,
+  then add an *NDI Source* in OBS and select the source containing
+  `MakrStudio - Sunday Output` (NDI may prefix the computer name).
 
 ### MIDI & OSC slide triggering
 - Drive the service from hardware: map a MIDI **Note / CC / Program Change**
@@ -256,8 +263,14 @@ and shows a recovery notice when the prior exit was unclean.
 - *Scope note:* triggers drive slide *actions*; they don't navigate the whole
   UI (e.g. no playlist navigation via hardware yet).
 
+### Getting started — MakrStudio by MakeMission
+- A new install opens a three-step introduction: Welcome, Your workspace, and Ready to present. Skip at any time; revisit it from **Help → Getting started**.
+- The introduction explains Views, playlists, Looks, audience displays, and OBS/NDI prerequisites. It shows the detected display count and links to **Create a View**, the workspace tour, and Settings. Opening onboarding never enables Output or NDI.
+- Completed or skipped onboarding is remembered locally. Returning users resume their View directly. The optional guided tour remains available from Help.
+- Startup, editor chrome, Help, and the View Hub carry the shared **MakrStudio by MakeMission** identity.
+
 ### View Hub & Playlists
-- **One unified start flow:** opening the app (or the **New view** topbar button) shows the **View Hub** — the single entry point. Pick a **starting Playlist**: the built-in service Playlists (Sunday Morning Service, Midweek, Youth Event, Blank/Custom) **plus** any Playlists you previously saved, all in one list (`src/lib/components/ProjectHub.svelte:46`). Configure View-level settings (title/date, target resolution, theme, default transition) and **Create View**.
+- Open the **View Hub** using **New view** or **Create a View** at the end of onboarding. Pick a **starting Playlist** from backend-defined service presets plus saved Playlists, then configure the title, slide aspect ratio, Look, and cut/fade transition.
 - **A View** is the working document for a specific service — it owns a title/date, its live playlist, and its output settings (persisted in `project.json`).
 - **A Playlist** is a saved, reusable slide sequence — not tied to a date, just content + order. Playlists store **slide references** — `title` / `body` / `background` (media hashed paths, not duplicated bytes) + `libraryId`/`librarySlideId` links — so they're lightweight structures, not copies of media or library content. Persisted in `templates.json` with the **same atomic-write** pattern as `project.json`/`library.json` (temp file + `sync_all` + rename).
 - **During a View**, the playlist panel offers **Save as Playlist** (Modal prompts a name, upserts by name) — the "save it for next service" loop: run the View, then save its sequence back as a reusable Playlist for next time. Creating a View from a saved Playlist reuses the existing backend (`new_project_from_preset` + `load_template`), so library links and backgrounds are preserved and slides get fresh ids.
@@ -511,8 +524,10 @@ dependencies for your platform. For Linux: `libwebkit2gtk-4.1-dev`,
 `build-essential`, `libssl-dev`, `libxdo-dev`, `libayatana-appindicator3-dev`,
 `librsvg2-dev`, etc. MIDI input also requires the **ALSA development**
 headers on Linux (`libasound2-dev`; Windows/macOS use their built-in MIDI
-APIs and need no extra steps). `ffmpeg`/`ffprobe` on `PATH` for media
-thumbnails.
+APIs and need no extra steps). `ffmpeg`/`ffprobe` for media thumbnails — resolved deterministically at runtime
+(`src-tauri/src/media.rs:107` `ffmpeg_path`: `MAKRSTUDIO_FFMPEG` override >
+exe-adjacent sidecar > well-known dirs > `PATH` search), so terminal and
+dock/.desktop launches agree. The startup log names the winning binary.
 
 **NDI (optional):** broadcasting NDI does **not** affect building or testing —
 the NDI SDK is loaded at runtime, only when the feed is enabled. On **Windows**, the official **NDI 6 Runtime redistributable** (DLL-only, ~9 MB) is **bundled inside the MakrStudio installer** and installs silently (`/verysilent`) as part of MakrStudio's own install (mirroring WebView2 via `embedBootstrapper` in `tauri.conf.json:74` `webviewInstallMode`), so **no manual download is needed** — the app finds the DLL via the `NDI_RUNTIME_DIR_V5` env var set by the redistributable (fallback: DLL next to the .exe, see `src-tauri/src/broadcast.rs:144` detection order `NDI_RUNTIME_DIR_V6` → `V5` → bare filename). On **Linux/macOS**, still install manually: put `libndi.so.5` / `libndi.dylib` on the loader path (e.g. `https://downloads.ndi.tv/SDK/NDI_SDK_Linux/Install_NDI_SDK_v6_Linux.tar.gz` or `https://ndi.link/NDIRedistV6Apple`). Bundled version is documented in `src-tauri/resources/NDI_VERSION.txt` (currently **NDI 6 Runtime 6.0.1, Apr 16 2026** from `https://downloads.ndi.tv/SDK/NDI_SDK/NDI%206%20Runtime.exe` via `https://ndi.link/NDIRedistV6`) — check quarterly and before each release per NDI terms ("make all reasonable efforts to keep the versions you distribute up to date"). This does **not** vendor the full NDI SDK (~300 MB), only the small redistributable runtime. NDI® is a registered trademark of Vizrt NDI AB.
@@ -561,7 +576,24 @@ npm run build
 2. `npm ci`
 3. `npm run build` (frontend)
 4. `npm run check` (svelte-check)
-5. `npm run tauri build` — `windows` job does full NSIS/MSI bundle (`webviewInstallMode.embedBootstrapper`), `ubuntu` does `--no-bundle` binary; `windows` uploads `bundle/nsis/*.exe` + `bundle/msi/*.msi`
+5. `npm run tauri build` — `windows` job bundles NSIS/MSI (`webviewInstallMode.embedBootstrapper`) and uploads `bundle/nsis/*.exe` + `bundle/msi/*.msi`; `ubuntu` job bundles `deb` + `AppImage` (`npm run tauri:build:linux`) and uploads `bundle/deb/*.deb` + `bundle/appimage/*.AppImage`
+
+### Linux notes (Zorin OS / Ubuntu LTS, X11)
+
+- **Single-instance** uses a session-bus D-Bus name (`<identifier>.SingleInstance`,
+  `src-tauri/src/lib.rs:187`) rather than the Windows named pipe; the duplicate-launch
+  callback only shows/focuses the Editor (`lib.rs:101`), so it is GTK-safe.
+- **Tray icon** is Tauri's `tray-icon` crate → transitive `libappindicator 0.9.0` →
+  system Ayatana AppIndicator3. Any `libayatana-appindicator` deprecation warning at
+  launch is **benign and upstream** (not our code — no direct dependency in
+  `src-tauri/Cargo.toml`); there is no `libayatana-appindicator-glib` system package
+  to migrate to on Ubuntu Noble. It resolves only via a future Tauri `tray-icon` upgrade.
+- **Audio** enumerates via cpal's ALSA backend (`src-tauri/src/audio.rs:24`), which on
+  PipeWire systems routes through PipeWire with real device names — no placeholder list.
+- The generated `.desktop` entry carries `Name=MakrStudio` with icon and categories from
+  `src-tauri/tauri.conf.json` (`productName`, `category`, `bundle.icon`), so the app
+  integrates into the Zorin menu/dock on install. `identifier` intentionally stays
+  `com.makesoftware.makepresent` (rename would break upgrades and the D-Bus single-instance name).
 
 ---
 

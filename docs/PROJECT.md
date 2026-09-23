@@ -139,24 +139,27 @@ Phase 5 — NDI broadcast output (sending side)
   a bounded, non-blocking channel (no render-loop stalls, no unbounded memory).
 - **Runtime-loaded SDK**: the NDI SDK (Vizrt) is **not** vendored and **not**
   required to build. `broadcast.rs` hand-binds the C ABI with `libloading` and
-  loads `Processing.NDI.Lib.x64.dll` / `libndi.so.5` / `libndi.dylib` at
+  loads `Processing.NDI.Lib.x64.dll` / `libndi.so.6` (falling back to `.so.5`) / `libndi.dylib` at
   runtime. If the SDK is missing, enabling NDI logs a clear error and
   everything else keeps working — the crate builds and `cargo check` passes in
   CI without the SDK. (The other crates.io binding crates were rejected: they
   need the SDK headers + libclang at build time, or are GPL-3.0.)
-- **NDI Look**: a per-machine `ndiLookId`, settable from Settings → Looks →
-  "NDI Feed", styles the broadcast feed independently of the on-screen Output
-  (see `set_ndi_look`). Settings export/import round-trip `ndi_enabled` +
-  `ndiLookId`, and NDI is started/stopped on import to match.
-- **Settings + IPC**: `set_ndi_enabled` / `set_ndi_look` commands; a
-  broadcast enable toggle (with source-name + ndi.video link) and Look
-  assignment in the settings UI; runtime `BroadcastView` in `ClientState`.
-- **Honest scope**: the webview → pixel **capture** (an offscreen render target
-  mirrored from Output) is a runtime concern that this phase does **not**
-  wire. `BroadcastCore::send_frame` is the clean seam a later capture step
-  feeds. So NDI *streaming* requires: install the NDI SDK, then hook the
-   render capture into `send_frame` and drive it in a live app — neither of
-   which can be exercised headless/CI.
+- **Output parity**: NDI captures the native Output window, so the broadcast
+  automatically matches its assigned Look, active slide, backgrounds, video,
+  camera, and overlays. A separate NDI Look is not offered because it would
+  misrepresent this pixel-identical capture path.
+- **Settings + IPC**: `set_ndi_enabled` toggles the sender/capture worker;
+  runtime `BroadcastView` reports actual frame freshness so the UI only shows
+  Live after valid Output pixels reach the NDI sender.
+- **Native Output capture**: `xcap` captures the actual `MakrStudio - Output`
+  window on a worker thread (Windows/macOS/Linux X11), downsizes to at most
+  1920×1080, converts RGBA to BGRA, and pushes into the bounded NDI send queue
+  at up to 10 fps. The sender repeats the newest frame at 30 fps. Linux
+  Wayland/compositors that deny window capture stay visibly waiting/stale.
+- **OBS compatibility**: with the NDI Runtime installed and the DistroAV
+  plugin enabled in OBS, add an NDI Source containing `MakrStudio - Sunday
+  Output` (NDI may prefix the host name). Settings report real frames only
+  after captured Output pixels reach the sender.
 
 Phase 6 — Native MIDI + OSC slide triggering
 - **Hardware cueing** so an operator can drive the service from a dedicated
@@ -962,3 +965,18 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Flow `outro.rs:97`**: persist-first, Editor closes at once (`lib.rs:207` quit exception to the hide interceptor), `exit-outro` event, **6s hard cap** (`outro.rs:32`) with `outro-done` early exit (`outro.rs:75` once-guard). Missing file / no visible windows → instant exit. No skip interaction — cap only.
 - **Renderers `Output.svelte:30` / `Stage.svelte:14`**: independent full-bleed muted `<video>` (`sync.ts:102/110`); ack heartbeat keeps firing (5s < 12s stale `Editor.svelte:222`), never misread as frozen. NDI skipped (no wired capture — follow-up once the pipeline exists).
 - **Verify:** `npm run check` 0/0; `cargo check` OK (3 pre-existing `dead_code`); `cargo test` 64 passed (fixed pre-existing suite compile failure `commands.rs:3171` + 2 new tests). Runtime: **theoretical** — headless env, no display/NDI hardware; verified by inspection + checks only.
+
+---
+
+## Changed (2026-09-19) — Linux optimization pass (Zorin OS audit + ffmpeg determinism + deb/AppImage packaging)
+
+*Audit-first pass targeting Zorin OS 18.1 (Ubuntu Noble-based). Same discipline as the Windows blocking-call audit: understand before fixing. Environment on the dev box: X11 session (`XDG_SESSION_TYPE=x11`, GNOME/Zorin), WebKitGTK 2.52.6, PipeWire 1.0.5 with ALSA routing, no ffmpeg on PATH, only Ayatana AppIndicator3 installed.*
+
+- **Audit: single-instance `lib.rs:187` (`tauri-plugin-single-instance 2.4.4`)** — Linux uses a session-bus D-Bus name (`<identifier>.SingleInstance`, verified in vendored plugin source `platform_impl/linux.rs`), not the Windows named pipe. Our duplicate-launch callback only calls `show_editor` (`lib.rs:101` → `ensure_editor` + show/unminimize/focus, `lib.rs:102-115`) — GTK-safe, no builder calls. Verdict: correct on Linux, no change.
+- **Audit: window pre-create `windows.rs:600` (wired `lib.rs:607-614`)** — deferred off setup, Output+Stage built `visible(false)`. Harmless on GTK (no WebView2 pump to protect); cost is two hidden WebKitGTK webviews held for instant `show()`. No Linux overhead bug; X11 maps hidden→shown cleanly (Wayland first-map delay N/A here). No change.
+- **Audit: heartbeat / NDI honesty / camera / audio** — render-ack (`Output.svelte:123-140`, `Stage.svelte:25`, Editor staleness `Editor.svelte:217-235`) and NDI honesty (`broadcast.rs:443-534` `has_real_frames`/`is_stale`, surfaced `commands.rs:60-62`, UI `SettingsPanel.svelte:432-434,892-917`) are pure Rust+Svelte, no OS calls — hold on Linux. Camera (`CameraFeed.svelte:36-58`, `Editor.svelte:1219-1247`) via WebKitGTK `getUserMedia`; X11 avoids the portal gate. Audio (`audio.rs:24-55`) enumerates via `cpal 0.15.3` → ALSA backend (`alsa 0.9.1` in `Cargo.lock`), which on this box routes into PipeWire with real devices (`aplay -L` shows PipeWire default + HDA NVidia HDMI); empty stays empty unless a real default exists — no placeholder list. No change.
+- **Audit: responsive/DPI** — viewport-relative throughout (`clamp`/`vmin`/`vw`, `@media`, `minmax(0,1fr)` grids, `Editor.svelte:2969-3110`, `app.css:183`, `fitText.ts:59` `devicePixelRatio`); no Win32 DPI APIs. GTK fractional scaling only changes CSS pixels. Holds. No change.
+- **Fix 1 — ffmpeg flicker `media.rs:107-231`:** root cause was bare `Command::new("ffmpeg")` inheriting the spawner's PATH — terminal launches (rich PATH) vs dock/.desktop launches (minimal PATH) alternated. New `ffmpeg_path()` resolves once per process to an absolute path (override `MAKRSTUDIO_FFMPEG` > exe-adjacent sidecar > well-known dirs incl. `/usr/bin`, `/usr/local/bin`, `/snap/bin`, `~/.local/bin` > manual `PATH` search); `ffmpeg_available()` confirms via absolute-path `ffmpeg -version` with exists-and-executable fallback so a transient spawn failure can't flip present→absent. `make_thumbnail` (`media.rs:264`), test helpers (`media.rs:748/762`), and duration probe (new `ffprobe_path()`, same-dir-first) all use the resolved path. Startup log now names the winning binary (`lib.rs:258-281`).
+- **Fix 2 — appindicator warning: documented, not migrated.** Tray is Tauri's `tray-icon 0.24.2` → transitive `libappindicator 0.9.0` → system Ayatana AppIndicator3; no direct dependency in `Cargo.toml`, and no `libayatana-appindicator-glib` package exists on Noble. Benign upstream warning; only a future Tauri `tray-icon` upgrade can remove it. Noted in README Linux notes.
+- **Packaging `tauri.conf.json:41`:** `targets` was `["nsis","msi"]` only with no `bundle.linux` section and CI built Linux `--no-bundle` — no Linux installer existed. Now `["nsis","msi","deb","appimage"]` + `bundle.linux` (`deb.depends`: `libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1`, `librsvg2-2`; `appimage.bundleMediaFramework: false`), icons extended with `64x64.png` + 512px `icon.png` for the Linux icon theme, `longDescription` de-Windowed. `package.json` gains `tauri:build:linux`; CI `ubuntu` job now bundles deb+AppImage and uploads artifacts. `productName: MakrStudio` confirmed; `identifier` deliberately stays `com.makesoftware.makepresent` (rename breaks upgrades + D-Bus name); generated `.desktop` carries `Name=MakrStudio`. Windows-only `NDI_Runtime_V6.exe` (~9.6 MB) still ships inside all bundles (Tauri has no per-platform resources) — accepted, noted.
+- **Verify:** `npm run check` 0/0; `cargo check` OK (3 pre-existing `dead_code`: `media.rs:16` `COPY_SUFFIX`, `project.rs:117`, `audio.rs:390`); `cargo test media::` 6 passed (skip-path — ffmpeg not installed on this box, no sudo; positive-path verification needs ffmpeg present); `tauri.conf.json` parses, targets/icons/linux keys confirmed. Runtime on Linux GUI (tray under Zorin AppIndicator extension, dual-launch D-Bus path, real camera/mic) still needs a packaged-build smoke test — noted follow-up, not this change.

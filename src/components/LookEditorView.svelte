@@ -123,9 +123,9 @@
       .catch((e: unknown) => (lookErr = String(e)));
   }
 
-  function assignTo(target: "output" | "stage" | "ndi", id: string | null): void {
+  function assignTo(target: "output" | "stage", id: string | null): void {
     lookErr = null;
-    const fn = target === "output" ? api.setOutputLook : target === "stage" ? api.setStageLook : api.setNdiLook;
+    const fn = target === "output" ? api.setOutputLook : api.setStageLook;
     void fn(id).then(onUpdate).catch((e: unknown) => (lookErr = String(e)));
   }
 
@@ -237,7 +237,6 @@
           <span class="look-pill-name">{lk.name}</span>
           {#if appState?.outputLookId === lk.id}<span class="badge">Output</span>{/if}
           {#if appState?.stageLookId === lk.id}<span class="badge stage">Stage</span>{/if}
-          {#if appState?.ndiLookId === lk.id}<span class="badge ndi">NDI</span>{/if}
         </button>
       {/each}
     </div>
@@ -385,13 +384,7 @@
               {#each looks as lk (lk.id)}<option value={lk.id}>{lk.name}</option>{/each}
             </select>
           </label>
-          <label>
-            NDI Feed
-            <select value={appState?.ndiLookId ?? ""} onchange={(e) => assignTo("ndi", (e.target as HTMLSelectElement).value || null)}>
-              <option value="">Auto (first Look)</option>
-              {#each looks as lk (lk.id)}<option value={lk.id}>{lk.name}</option>{/each}
-            </select>
-          </label>
+          <p class="field-hint ndi-look-note">NDI mirrors the native Output window, including its assigned Look.</p>
         </div>
 
         <button class="danger" onclick={deleteLook}>Delete this look</button>
@@ -467,7 +460,6 @@
     color: white;
   }
   .badge.stage { background: #64748b; }
-  .badge.ndi { background: #7c3aed; }
   .look-main {
     flex: 1;
     min-width: 0;

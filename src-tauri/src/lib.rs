@@ -257,14 +257,20 @@ pub fn run() {
 
             // Offload ffmpeg probe (spawns ffmpeg -version) off the main thread so the
             // WebView2 message pump stays responsive at startup on Windows 11.
+            // Detection resolves to an absolute path (override > sidecar >
+            // well-known dirs > PATH) so terminal and dock/.desktop launches
+            // agree; the log names the winning binary.
             {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     if media::ffmpeg_available() {
-                        handle
-                            .state::<AppState>()
-                            .logger
-                            .log(Level::Info, "media: ffmpeg available for thumbnails");
+                        let where_ = media::ffmpeg_path()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "?".to_string());
+                        handle.state::<AppState>().logger.log(
+                            Level::Info,
+                            &format!("media: ffmpeg available for thumbnails ({where_})"),
+                        );
                     } else {
                         handle.state::<AppState>().logger.log(
                             Level::Error,
@@ -333,7 +339,10 @@ pub fn run() {
                     let st = handle.state::<AppState>();
                     let ndi_on = st.current_settings().ndi_enabled;
                     if ndi_on {
-                        match st.broadcaster.start(crate::broadcast::NDI_SOURCE_NAME) {
+                        match st
+                            .broadcaster
+                            .start(crate::broadcast::NDI_SOURCE_NAME, handle.clone())
+                        {
                             Ok(()) => st.logger.log(
                                 Level::Info,
                                 &format!(
@@ -353,6 +362,10 @@ pub fn run() {
                             &format!("ndi: broadcast off (looks for {})", crate::broadcast::lib_filename()),
                         );
                     }
+                    // The Editor may have taken its initial snapshot while
+                    // runtime loading was still in flight. Publish the actual
+                    // connection state when this startup attempt settles.
+                    let _ = crate::commands::snapshot_and_emit(&handle);
                 });
             }
 
@@ -739,6 +752,7 @@ pub fn run() {
             commands::set_overlay_visible,
             commands::clear_overlay,
             commands::list_audio_devices,
+            commands::get_audio_state,
             commands::load_audio,
             commands::play_audio,
             commands::pause_audio,

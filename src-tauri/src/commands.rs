@@ -55,7 +55,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
             monitor_name: settings.stage_display_name,
         },
         broadcast: BroadcastView {
-            enabled: settings.ndi_enabled,
+            enabled: state.broadcaster.is_active(),
             source_name: crate::broadcast::NDI_SOURCE_NAME.to_string(),
             has_real_frames: state.broadcaster.has_real_frames(),
             last_frame_at: state.broadcaster.last_frame_at(),
@@ -72,12 +72,12 @@ fn snapshot(app: &AppHandle) -> ClientState {
         output_look_id: settings.output_look_id,
         stage_look_id: settings.stage_look_id,
         ndi_look_id: settings.ndi_look_id,
-        midi_enabled: settings.midi_enabled,
+        midi_enabled: state.midi.is_active(),
         midi_device_id: settings.midi_device_id,
-        osc_enabled: settings.osc_enabled,
+        osc_enabled: state.osc.is_active(),
         osc_port: settings.osc_port,
         triggers: settings.triggers,
-        stage_network_enabled: settings.stage_network_enabled,
+        stage_network_enabled: state.network.is_active(),
         stage_network_port: settings.stage_network_port,
         stage_message: state.stage_message.read().unwrap().clone(),
         overlay: state.overlay.read().unwrap().clone(),
@@ -1049,20 +1049,18 @@ fn set_look_mapping(
 #[tauri::command]
 pub fn set_ndi_enabled(app: AppHandle, enabled: bool) -> Result<ClientState, String> {
     let state = app.state::<AppState>();
-    {
-        let mut settings = state.current_settings();
-        settings.ndi_enabled = enabled;
-        state.apply_settings(settings);
-        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
-    }
-
     if enabled {
-        match state.broadcaster.start(crate::broadcast::NDI_SOURCE_NAME) {
-            Ok(()) => log(
-                &app,
-                Level::Info,
-                &format!("ndi: broadcast enabled — source \"{}\"", crate::broadcast::NDI_SOURCE_NAME),
-            ),
+        match state
+            .broadcaster
+            .start(crate::broadcast::NDI_SOURCE_NAME, app.clone())
+        {
+            Ok(()) => {
+                log(
+                    &app,
+                    Level::Info,
+                    &format!("ndi: broadcast enabled — source \"{}\"", crate::broadcast::NDI_SOURCE_NAME),
+                );
+            }
             Err(e) => {
                 log(&app, Level::Error, &format!("ndi: could not enable broadcast: {e}"));
                 return Err(format!("could not enable NDI broadcast: {e}"));
@@ -1071,6 +1069,15 @@ pub fn set_ndi_enabled(app: AppHandle, enabled: bool) -> Result<ClientState, Str
     } else {
         state.broadcaster.stop();
         log(&app, Level::Info, "ndi: broadcast disabled");
+    }
+
+    // Persist the requested state only after the runtime connection succeeds.
+    // A missing SDK must not leave the UI/settings claiming broadcast is live.
+    {
+        let mut settings = state.current_settings();
+        settings.ndi_enabled = enabled;
+        state.apply_settings(settings);
+        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
     }
 
     let snap = snapshot(&app);
@@ -1876,6 +1883,11 @@ pub fn list_audio_devices() -> Vec<crate::audio::AudioDeviceInfo> {
     crate::audio::list_output_devices()
 }
 
+#[tauri::command]
+pub fn get_audio_state(app: AppHandle) -> crate::project::AudioStateView {
+    app.state::<AppState>().audio.get_status()
+}
+
 /// Load a local audio file (MP3/WAV/FLAC via rodio) into the single backing track.
 /// Does not auto-play; call `play_audio` to start. Replaces any previously loaded track.
 #[tauri::command]
@@ -2317,7 +2329,10 @@ pub async fn import_settings(app: AppHandle, path: String) -> Result<ImportRepor
     let latest = state.current_settings();
     if latest.ndi_enabled != state.broadcaster.is_active() {
         if latest.ndi_enabled {
-            match state.broadcaster.start(crate::broadcast::NDI_SOURCE_NAME) {
+            match state
+                .broadcaster
+                .start(crate::broadcast::NDI_SOURCE_NAME, app.clone())
+            {
                 Ok(()) => log(&app, Level::Info, "settings: NDI broadcast started on import"),
                 Err(e) => log(&app, Level::Warn, &format!("settings: NDI start on import failed: {e}")),
             }
@@ -2820,19 +2835,14 @@ pub fn set_midi_enabled(app: AppHandle, enabled: bool) -> Result<ClientState, St
             .midi_device_id
             .clone()
             .ok_or_else(|| "select a MIDI device first".to_string())?;
+        state.midi.start(app.clone(), &device_id)?;
         {
             let mut settings = state.current_settings();
             settings.midi_enabled = true;
             state.apply_settings(settings);
             let _ = write_settings(&state.app_data_dir(), &state.current_settings());
         }
-        match state.midi.start(app.clone(), &device_id) {
-            Ok(()) => log(&app, Level::Info, "midi: input enabled"),
-            Err(e) => {
-                log(&app, Level::Error, &format!("midi: could not enable input: {e}"));
-                return Err(e);
-            }
-        }
+        log(&app, Level::Info, "midi: input enabled");
     } else {
         state.midi.stop();
         {
@@ -2850,6 +2860,9 @@ pub fn set_midi_enabled(app: AppHandle, enabled: bool) -> Result<ClientState, St
 #[tauri::command]
 pub fn set_midi_device(app: AppHandle, device_id: String) -> Result<ClientState, String> {
     let state = app.state::<AppState>();
+    // Keep the prior listener and settings if the requested device cannot be
+    // opened. MidiListener::start replaces the connection only on success.
+    state.midi.start(app.clone(), &device_id)?;
     {
         let mut settings = state.current_settings();
         settings.midi_device_id = Some(device_id.clone());
@@ -2857,10 +2870,7 @@ pub fn set_midi_device(app: AppHandle, device_id: String) -> Result<ClientState,
         state.apply_settings(settings);
         let _ = write_settings(&state.app_data_dir(), &state.current_settings());
     }
-    match state.midi.start(app.clone(), &device_id) {
-        Ok(()) => log(&app, Level::Info, &format!("midi: device set + listening ({device_id})")),
-        Err(e) => log(&app, Level::Error, &format!("midi: device set but could not open: {e}")),
-    }
+    log(&app, Level::Info, &format!("midi: device set + listening ({device_id})"));
     Ok(snapshot_and_emit(&app))
 }
 
@@ -2870,19 +2880,14 @@ pub fn set_osc_enabled(app: AppHandle, enabled: bool) -> Result<ClientState, Str
     let state = app.state::<AppState>();
     if enabled {
         let port = state.current_settings().osc_port;
+        state.osc.start(app.clone(), port)?;
         {
             let mut settings = state.current_settings();
             settings.osc_enabled = true;
             state.apply_settings(settings);
             let _ = write_settings(&state.app_data_dir(), &state.current_settings());
         }
-        match state.osc.start(app.clone(), port) {
-            Ok(()) => log(&app, Level::Info, &format!("osc: listener enabled on UDP :{port}")),
-            Err(e) => {
-                log(&app, Level::Error, &format!("osc: could not enable listener: {e}"));
-                return Err(e);
-            }
-        }
+        log(&app, Level::Info, &format!("osc: listener enabled on UDP :{port}"));
     } else {
         state.osc.stop();
         {
@@ -2903,23 +2908,34 @@ pub fn set_osc_port(app: AppHandle, port: u16) -> Result<ClientState, String> {
         return Err("OSC port must be between 1 and 65535".to_string());
     }
     let state = app.state::<AppState>();
-    let was_enabled = state.current_settings().osc_enabled;
-    {
-        let mut settings = state.current_settings();
-        settings.osc_port = port;
-        if !was_enabled {
-            settings.osc_enabled = false;
-        }
-        state.apply_settings(settings);
-        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
-    }
+    let original = state.current_settings();
+    let was_enabled = original.osc_enabled;
     if was_enabled {
-        state.osc.stop();
         match state.osc.start(app.clone(), port) {
-            Ok(()) => log(&app, Level::Info, &format!("osc: restarted on UDP :{port}")),
-            Err(e) => log(&app, Level::Error, &format!("osc: restart failed: {e}")),
+            Ok(()) => {
+                log(&app, Level::Info, &format!("osc: restarted on UDP :{port}"));
+            }
+            Err(e) => {
+                let restored = state.osc.start(app.clone(), original.osc_port).is_ok();
+                let mut settings = original;
+                settings.osc_enabled = restored;
+                state.apply_settings(settings.clone());
+                let _ = write_settings(&state.app_data_dir(), &settings);
+                let message = if restored {
+                    format!("could not switch OSC to port {port}; restored the previous port: {e}")
+                } else {
+                    format!("could not switch OSC to port {port}, and the previous listener could not be restored: {e}")
+                };
+                log(&app, Level::Error, &message);
+                let _ = snapshot_and_emit(&app);
+                return Err(message);
+            }
         }
     }
+    let mut settings = state.current_settings();
+    settings.osc_port = port;
+    state.apply_settings(settings.clone());
+    let _ = write_settings(&state.app_data_dir(), &settings);
     log(&app, Level::Info, &format!("osc: port set to {port}"));
     Ok(snapshot_and_emit(&app))
 }
@@ -3044,7 +3060,7 @@ pub fn get_stage_network_info(app: AppHandle) -> Result<StageNetworkInfo, String
         bind_host: format!("0.0.0.0:{port}"),
         urls,
         port,
-        enabled: settings.stage_network_enabled,
+        enabled: state.network.is_active(),
         pin: settings.stage_network_pin.clone(),
     })
 }
@@ -3058,18 +3074,18 @@ pub fn set_stage_network_enabled(app: AppHandle, enabled: bool) -> Result<Client
         let addr: SocketAddr = format!("0.0.0.0:{}", settings.stage_network_port)
             .parse()
             .map_err(|e| format!("invalid stage network address: {e}"))?;
-        {
-            let mut s = state.current_settings();
-            s.stage_network_enabled = true;
-            state.apply_settings(s);
-            let _ = write_settings(&state.app_data_dir(), &state.current_settings());
-        }
         match state.network.start(app.clone(), addr, settings.stage_network_pin.clone()) {
-            Ok(()) => log(
-                &app,
-                Level::Info,
-                &format!("stage-network: enabled on :{}", settings.stage_network_port),
-            ),
+            Ok(()) => {
+                let mut s = state.current_settings();
+                s.stage_network_enabled = true;
+                state.apply_settings(s);
+                let _ = write_settings(&state.app_data_dir(), &state.current_settings());
+                log(
+                    &app,
+                    Level::Info,
+                    &format!("stage-network: enabled on :{}", settings.stage_network_port),
+                );
+            }
             Err(e) => {
                 log(&app, Level::Error, &format!("stage-network: could not enable: {e}"));
                 return Err(e);
@@ -3095,27 +3111,43 @@ pub fn set_stage_network_port(app: AppHandle, port: u16) -> Result<ClientState, 
         return Err("Stage Network port must be between 1 and 65535".to_string());
     }
     let state = app.state::<AppState>();
-    let was_enabled = state.current_settings().stage_network_enabled;
-    {
-        let mut s = state.current_settings();
-        s.stage_network_port = port;
-        if !was_enabled {
-            s.stage_network_enabled = false;
-        }
-        state.apply_settings(s);
-        let _ = write_settings(&state.app_data_dir(), &state.current_settings());
-    }
+    let original = state.current_settings();
+    let was_enabled = original.stage_network_enabled;
     if was_enabled {
-        state.network.stop();
-        let pin = state.current_settings().stage_network_pin.clone();
         let addr: SocketAddr = format!("0.0.0.0:{port}")
             .parse()
             .map_err(|e| format!("invalid address: {e}"))?;
-        match state.network.start(app.clone(), addr, pin) {
-            Ok(()) => log(&app, Level::Info, &format!("stage-network: restarted on :{port}")),
-            Err(e) => log(&app, Level::Error, &format!("stage-network: restart failed: {e}")),
+        match state.network.start(app.clone(), addr, original.stage_network_pin.clone()) {
+            Ok(()) => {
+                log(&app, Level::Info, &format!("stage-network: restarted on :{port}"));
+            }
+            Err(e) => {
+                let old_addr: SocketAddr = format!("0.0.0.0:{}", original.stage_network_port)
+                    .parse()
+                    .map_err(|parse_error| format!("invalid previous address: {parse_error}"))?;
+                let restored = state
+                    .network
+                    .start(app.clone(), old_addr, original.stage_network_pin.clone())
+                    .is_ok();
+                let mut settings = original;
+                settings.stage_network_enabled = restored;
+                state.apply_settings(settings.clone());
+                let _ = write_settings(&state.app_data_dir(), &settings);
+                let message = if restored {
+                    format!("could not switch Stage Network to port {port}; restored the previous port: {e}")
+                } else {
+                    format!("could not switch Stage Network to port {port}, and the previous listener could not be restored: {e}")
+                };
+                log(&app, Level::Error, &message);
+                let _ = snapshot_and_emit(&app);
+                return Err(message);
+            }
         }
     }
+    let mut settings = state.current_settings();
+    settings.stage_network_port = port;
+    state.apply_settings(settings.clone());
+    let _ = write_settings(&state.app_data_dir(), &settings);
     log(&app, Level::Info, &format!("stage-network: port set to {port}"));
     Ok(snapshot_and_emit(&app))
 }

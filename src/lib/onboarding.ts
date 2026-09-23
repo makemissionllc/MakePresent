@@ -7,6 +7,8 @@
 // or blocked storage never breaks the app.
 
 export interface OnboardingState {
+  /** First-run welcome finished or skipped; Help can always reopen it. */
+  welcomeDismissed: boolean;
   /** Guided tour permanently dismissed (finished, skipped, or X). */
   tourDismissed: boolean;
   /** Per-feature "has actually used it" flags — auto-hide the matching hint. */
@@ -17,7 +19,7 @@ export interface OnboardingState {
 
 const KEY = "makrstudio.onboarding.v1";
 
-const EMPTY: OnboardingState = { tourDismissed: false, used: {}, dismissed: {} };
+const EMPTY: OnboardingState = { welcomeDismissed: false, tourDismissed: false, used: {}, dismissed: {} };
 
 export function loadOnboarding(): OnboardingState {
   try {
@@ -25,6 +27,7 @@ export function loadOnboarding(): OnboardingState {
     if (!raw) return { ...EMPTY, used: {}, dismissed: {} };
     const parsed = JSON.parse(raw) as Partial<OnboardingState>;
     return {
+      welcomeDismissed: parsed.welcomeDismissed === true,
       tourDismissed: parsed.tourDismissed === true,
       used: { ...(parsed.used ?? {}) },
       dismissed: { ...(parsed.dismissed ?? {}) },
@@ -40,6 +43,13 @@ function save(state: OnboardingState): void {
   } catch {
     // Storage unavailable — hints simply show again next launch. Never throw.
   }
+}
+
+/** Welcome finished / skipped. Does not reset hints or tour progress. */
+export function dismissWelcome(state: OnboardingState): OnboardingState {
+  const next = { ...state, welcomeDismissed: true };
+  save(next);
+  return next;
 }
 
 /** Record that the user has used a feature; its hint never shows again. */

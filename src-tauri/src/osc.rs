@@ -18,7 +18,7 @@ use rosc::decoder::decode_udp;
 use rosc::{OscPacket, OscType};
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use tauri::{AppHandle, Manager};
 
@@ -58,22 +58,30 @@ impl OscListener {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
         let addr = format!("0.0.0.0:{port}");
+        // A listener is only "enabled" once the socket is bound. Report
+        // startup errors synchronously so callers do not persist a dead port.
+        let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
         let thread = thread::Builder::new()
             .name("osc-listener".to_string())
             .spawn(move || {
                 let socket = match UdpSocket::bind(&addr) {
                     Ok(s) => s,
                     Err(e) => {
-                        app.state::<AppState>().logger.log(
-                            Level::Error,
-                            &format!("osc: could not bind UDP {addr}: {e}"),
-                        );
+                        let message = format!("osc: could not bind UDP {addr}: {e}");
+                        app.state::<AppState>().logger.log(Level::Error, &message);
+                        let _ = ready_tx.send(Err(message));
                         return;
                     }
                 };
                 // 1 second read timeout so the loop can check the stop flag
                 // and exit promptly on shutdown.
-                let _ = socket.set_read_timeout(Some(std::time::Duration::from_millis(1000)));
+                if let Err(e) = socket.set_read_timeout(Some(std::time::Duration::from_millis(1000))) {
+                    let message = format!("osc: could not configure UDP {addr}: {e}");
+                    app.state::<AppState>().logger.log(Level::Error, &message);
+                    let _ = ready_tx.send(Err(message));
+                    return;
+                }
+                let _ = ready_tx.send(Ok(()));
                 app.state::<AppState>().logger.log(
                     Level::Info,
                     &format!("osc: listening on UDP {addr}"),
@@ -123,6 +131,18 @@ impl OscListener {
                 );
             })
             .map_err(|e| format!("could not spawn OSC listener: {e}"))?;
+
+        match ready_rx.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                let _ = thread.join();
+                return Err(e);
+            }
+            Err(_) => {
+                let _ = thread.join();
+                return Err("OSC listener exited before it was ready".to_string());
+            }
+        }
 
         *self.inner.lock().unwrap() = Some(OscInner {
             stop,

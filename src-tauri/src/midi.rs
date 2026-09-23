@@ -58,7 +58,12 @@ pub struct MidiMessageView {
 /// Owns the active MIDI input connection. Held in [`AppState`]; at most one
 /// device is listened to at a time.
 pub struct MidiListener {
-    inner: Mutex<Option<MidiInputConnection<AppHandle>>>,
+    inner: Mutex<Option<MidiConnection>>,
+}
+
+struct MidiConnection {
+    device_id: String,
+    _connection: MidiInputConnection<AppHandle>,
 }
 
 impl Default for MidiListener {
@@ -77,6 +82,21 @@ impl MidiListener {
     /// Connect to the device matching `device_id`. Replaces any current
     /// connection. Returns an error (logged by the caller) without crashing.
     pub fn start(&self, app: AppHandle, device_id: &str) -> Result<(), String> {
+        // Avoid reopening the same exclusive MIDI port when the settings panel
+        // re-applies its current selection.
+        if self
+            .inner
+            .lock()
+            .map(|connection| {
+                connection
+                    .as_ref()
+                    .is_some_and(|active| active.device_id == device_id)
+            })
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
         let state = app.state::<AppState>();
         // Create the MidiInput on the connecting thread. On Linux this needs
         // the ALSA client setup, on Windows the WinMM device init.
@@ -99,9 +119,9 @@ impl MidiListener {
             .port_name(&port)
             .unwrap_or_else(|_| "unknown device".to_string());
 
-        // Drop any previous connection first so midir can release the port.
-        self.stop();
-
+        // Establish the new connection before replacing the current one. A
+        // bad device id or a busy/unavailable port must not tear down a
+        // working controller connection.
         let connection = midi_in
             .connect(
                 &port,
@@ -111,7 +131,11 @@ impl MidiListener {
             )
             .map_err(|e| format!("could not open MIDI device \"{port_name}\": {e}"))?;
 
-        *self.inner.lock().unwrap() = Some(connection);
+        let previous = self.inner.lock().unwrap().replace(MidiConnection {
+            device_id: device_id.to_string(),
+            _connection: connection,
+        });
+        drop(previous);
         state.logger.log(
             Level::Info,
             &format!("midi: listening on \"{port_name}\""),
@@ -121,8 +145,8 @@ impl MidiListener {
 
     /// Close the current connection, if any.
     pub fn stop(&self) {
-        if let Some(conn) = self.inner.lock().unwrap().take() {
-            drop(conn); // Dropping the connection releases the MIDI port.
+        if let Some(connection) = self.inner.lock().unwrap().take() {
+            drop(connection); // Dropping the connection releases the MIDI port.
         }
     }
 }

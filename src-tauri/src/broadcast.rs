@@ -31,9 +31,10 @@ use std::ffi::{c_char, c_void};
 use std::os::raw::c_int;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use tauri::{AppHandle, Manager};
 
 /// Behavioural constant — the NDI *source name* receivers see on the network.
 /// Source names may be anything; the "NDI" mark itself is only restricted in
@@ -48,6 +49,11 @@ const FRAME_RATE_D: i32 = 1_001;
 /// How often a stale frame is re-sent to keep the NDI source discoverable
 /// (real NDI senders do the same); ~a frame period at the nominal rate.
 const RESEND_PERIOD: Duration = Duration::from_millis(33);
+/// Window capture is deliberately moderate-rate; the NDI sender repeats the
+/// latest frame at 30 fps, while this worker updates motion/background video.
+const CAPTURE_PERIOD: Duration = Duration::from_millis(100);
+const MAX_CAPTURE_WIDTH: u32 = 1920;
+const MAX_CAPTURE_HEIGHT: u32 = 1080;
 
 // ---------------------------------------------------------------------------
 // NDI C ABI — a hand-written, minimal `#[repr(C)]` mirror of the relevant part
@@ -115,28 +121,33 @@ const C_FALSE: u8 = 0;
 /// to the dedicated send thread without violating `Send`.
 struct NdiLib {
     _lib: Library,
-    initialize: unsafe extern "C" fn() -> c_int,
+    initialize: unsafe extern "C" fn() -> bool,
     destroy: unsafe extern "C" fn(),
-    send_create: unsafe extern "C" fn(*const SendCreate, *const c_char) -> SendInstance,
+    send_create: unsafe extern "C" fn(*const SendCreate) -> SendInstance,
     send_destroy: unsafe extern "C" fn(SendInstance),
-    send_video: unsafe extern "C" fn(SendInstance, *const VideoFrameV2) -> c_int,
+    send_video: unsafe extern "C" fn(SendInstance, *const VideoFrameV2),
 }
 
-/// Filename of the NDI SDK shared library per platform. On Windows the DLL must
-/// sit alongside the app; on Linux/macOS the SDK's install path must be on the
-/// loader path (NDI ships `libndi.so.5` and `libndi.dylib`).
+/// Primary NDI SDK library filename per platform. Linux tries NDI 6's SONAME
+/// first and retains the NDI 5 SONAME as a compatibility fallback.
 pub fn lib_filename() -> &'static str {
+    lib_filenames()[0]
+}
+
+/// Runtime SONAMEs by platform, newest first. NDI 6 renamed the Linux library
+/// from `libndi.so.5` to `libndi.so.6`; retain `.5` for older installations.
+pub fn lib_filenames() -> &'static [&'static str] {
     #[cfg(target_os = "windows")]
     {
-        "Processing.NDI.Lib.x64.dll"
+        &["Processing.NDI.Lib.x64.dll"]
     }
     #[cfg(target_os = "macos")]
     {
-        "libndi.dylib"
+        &["libndi.dylib"]
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        "libndi.so.5"
+        &["libndi.so.6", "libndi.so.5"]
     }
 }
 
@@ -156,8 +167,6 @@ pub fn lib_filename() -> &'static str {
 /// All resolved symbols are required, stable entry points of the SDK; the
 /// returned `NdiLib` keeps the library loaded for as long as it is held.
 unsafe fn load_ndi() -> Result<NdiLib, String> {
-    let file = lib_filename();
-
     // Build ordered list of candidate paths to try
     let mut candidates: Vec<std::path::PathBuf> = Vec::new();
     // 1) NDI_RUNTIME_DIR_V6 (future) then V5 (current redistributable uses V5 for compat)
@@ -165,13 +174,14 @@ unsafe fn load_ndi() -> Result<NdiLib, String> {
         if let Ok(dir) = std::env::var(env_key) {
             let trimmed = dir.trim().trim_matches('"');
             if !trimmed.is_empty() {
-                let p = std::path::Path::new(trimmed).join(file);
-                candidates.push(p);
+                for file in lib_filenames() {
+                    candidates.push(std::path::Path::new(trimmed).join(file));
+                }
             }
         }
     }
-    // 2) Fallback: bare filename (next to .exe / system search path)
-    candidates.push(std::path::PathBuf::from(file));
+    // 2) Fallback: bare filenames (next to .exe / system search path)
+    candidates.extend(lib_filenames().iter().map(std::path::PathBuf::from));
 
     let mut last_err: Option<String> = None;
     for candidate in &candidates {
@@ -187,18 +197,16 @@ unsafe fn load_ndi() -> Result<NdiLib, String> {
 
         let err_of = |n: &str, e: libloading::Error| format!("failed to resolve NDI symbol \"{n}\": {e}");
         let resolved = (|| {
-            let initialize: Symbol<unsafe extern "C" fn() -> c_int> =
+            let initialize: Symbol<unsafe extern "C" fn() -> bool> =
                 lib.get(b"NDIlib_initialize").map_err(|e| err_of("NDIlib_initialize", e))?;
             let destroy: Symbol<unsafe extern "C" fn()> =
                 lib.get(b"NDIlib_destroy").map_err(|e| err_of("NDIlib_destroy", e))?;
-            let send_create: Symbol<
-                unsafe extern "C" fn(*const SendCreate, *const c_char) -> SendInstance,
-            > = lib.get(b"NDIlib_send_create").map_err(|e| err_of("NDIlib_send_create", e))?;
+            let send_create: Symbol<unsafe extern "C" fn(*const SendCreate) -> SendInstance> =
+                lib.get(b"NDIlib_send_create").map_err(|e| err_of("NDIlib_send_create", e))?;
             let send_destroy: Symbol<unsafe extern "C" fn(SendInstance)> =
                 lib.get(b"NDIlib_send_destroy").map_err(|e| err_of("NDIlib_send_destroy", e))?;
-            let send_video: Symbol<
-                unsafe extern "C" fn(SendInstance, *const VideoFrameV2) -> c_int,
-            > = lib.get(b"NDIlib_send_send_video_v2").map_err(|e| err_of("NDIlib_send_send_video_v2", e))?;
+            let send_video: Symbol<unsafe extern "C" fn(SendInstance, *const VideoFrameV2)> =
+                lib.get(b"NDIlib_send_send_video_v2").map_err(|e| err_of("NDIlib_send_send_video_v2", e))?;
             Ok::<_, String>((
                 *initialize,
                 *destroy,
@@ -237,12 +245,8 @@ unsafe fn load_ndi() -> Result<NdiLib, String> {
     ))
 }
 
-/// Messages pushed by any render thread to the dedicated send thread.
-///
-/// The `Frame` variant is the seam the (runtime-only) offscreen render capture
-/// feeds; until that capture is wired it is intentionally unused and the
-/// compiler is told so.
-#[allow(dead_code)]
+/// Messages pushed by the native window-capture worker to the dedicated send
+/// thread.
 enum Command {
     /// A freshly captured BGRA+alpha frame. The channel is bounded; if full
     /// the newest frame is dropped — real-time video, never overlapping stale.
@@ -276,7 +280,7 @@ impl BroadcastCore {
         let ndi = unsafe { load_ndi()? };
 
         unsafe {
-            if (ndi.initialize)() == 0 {
+            if !(ndi.initialize)() {
                 return Err("NDIlib_initialize returned false".to_string());
             }
         }
@@ -287,7 +291,7 @@ impl BroadcastCore {
             clock_video: C_TRUE,
             clock_audio: C_FALSE,
         };
-        let send_instance = unsafe { (ndi.send_create)(&create, std::ptr::null()) };
+        let send_instance = unsafe { (ndi.send_create)(&create) };
         if is_null(send_instance) {
             unsafe { (ndi.destroy)() };
             return Err("NDIlib_send_create returned a null instance".to_string());
@@ -315,31 +319,25 @@ impl BroadcastCore {
     /// render target / `window.capture` and call this). Non-blocking and
     /// bounded (capacity-3 `try_send`), so it never blocks the render loop.
     ///
-    /// Safety: validates dimensions and that the frame is not all-black (which
-    /// indicates a failed capture or destroyed window) before queuing; holds
-    /// last-good-frame and logs instead of pushing black (see `spawn_send_thread`).
+    /// Safety: validates dimensions before queuing; the capture worker only
+    /// submits a frame after the Output window capture succeeds. Black is a
+    /// valid intentional frame when the operator clears the Output.
     ///
-    /// `#[allow(dead_code)]`: not yet called — the capture integration that
-    /// feeds frames is a separate runtime component (see module doc).
     /// Returns true if the frame was accepted (validated and queued), false if skipped (invalid/black).
-    #[allow(dead_code)]
     pub fn send_frame(&self, width: u32, height: u32, bgra: Vec<u8>) -> bool {
         // Safety check is also done here (defense in depth) before queuing
-        if width == 0 || height == 0 || bgra.is_empty() || bgra.len() != (width as usize * height as usize * 4) {
+        let expected_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4));
+        if width == 0 || height == 0 || expected_len != Some(bgra.len()) {
             eprintln!("NDI: no valid Output frame source, skipping (invalid frame {}x{} len {})", width, height, bgra.len());
             return false;
         }
-        let is_black = bgra.chunks_exact(4).all(|px| px[0] == 0 && px[1] == 0 && px[2] == 0);
-        if is_black {
-            eprintln!("NDI: no valid Output frame source, skipping (black frame {}x{} — holding last good frame)", width, height);
-            return false;
-        }
-        let _ = self.tx.try_send(Command::Frame {
+        self.tx.try_send(Command::Frame {
             width,
             height,
             bgra,
-        });
-        true
+        }).is_ok()
     }
 
     /// Stop the send thread and tear down the NDI source + SDK. Caller should
@@ -363,13 +361,12 @@ impl BroadcastCore {
 /// instance handle and the SDK's send-video fn-pointer. It drains any new
 /// frame, then (re)sends the latest frame on a cadence so the source stays
 /// discoverable even between captures. Buffer is packed BGRA (stride = w*4).
-/// If no valid frame has ever been received (e.g. Output window destroyed
-/// and not yet healed, or capture not yet wired), it holds last-good-frame
-/// and re-sends it; if no good frame exists it logs and skips (no black).
+/// If no frame has been received yet (e.g. Output has not been shown), it logs
+/// and skips until the native capture worker can read the renderer.
 fn spawn_send_thread(
     rx: mpsc::Receiver<Command>,
     instance_addr: usize,
-    send_video: unsafe extern "C" fn(SendInstance, *const VideoFrameV2) -> c_int,
+    send_video: unsafe extern "C" fn(SendInstance, *const VideoFrameV2),
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("ndi-send".to_string())
@@ -383,7 +380,10 @@ fn spawn_send_thread(
                 match rx.recv_timeout(RESEND_PERIOD) {
                     Ok(Command::Frame { width, height, bgra }) => {
                         // Safety: validate frame before accepting as current (defense in depth)
-                        if width == 0 || height == 0 || bgra.is_empty() {
+                        let expected_len = (width as usize)
+                            .checked_mul(height as usize)
+                            .and_then(|pixels| pixels.checked_mul(4));
+                        if width == 0 || height == 0 || expected_len != Some(bgra.len()) {
                             eprintln!("NDI: no valid Output frame source, skipping (invalid frame {}x{} len {})", width, height, bgra.len());
                             continue;
                         }
@@ -396,18 +396,6 @@ fn spawn_send_thread(
 
                 if last_sent.is_none_or(|t| t.elapsed() >= RESEND_PERIOD) {
                     if let Some((width, height, data)) = &current {
-                        // Double-check current is still valid (not black) before sending
-                        let is_black = data.chunks_exact(4).all(|px| px[0] == 0 && px[1] == 0 && px[2] == 0);
-                        if is_black {
-                            if !warned_no_frame {
-                                eprintln!("NDI: no valid Output frame source, skipping (black frame {}x{} — holding last good frame)", width, height);
-                                warned_no_frame = true;
-                            }
-                            // Hold last-good-frame: do not send black, just wait for a valid frame.
-                            // If this is the first frame and it's black, we still skip and keep current as is
-                            // (will be replaced when a valid frame arrives after Output rebuild).
-                            continue;
-                        }
                         let frame = VideoFrameV2 {
                             xres: *width as c_int,
                             yres: *height as c_int,
@@ -428,7 +416,7 @@ fn spawn_send_thread(
                         last_sent = Some(Instant::now());
                         warned_no_frame = false;
                     } else if !warned_no_frame {
-                        eprintln!("NDI: no valid Output frame source, skipping (no frame yet — Output window may be destroyed/unhealed or capture not wired; will recover automatically once Output is rebuilt)");
+                        eprintln!("NDI: waiting for the MakrStudio Output window to become capturable");
                         warned_no_frame = true;
                     }
                 }
@@ -440,15 +428,22 @@ fn spawn_send_thread(
 /// Thin wrapper stored in [`AppState`] so commands can start/stop/feed NDI.
 pub struct Broadcaster {
     inner: Mutex<Option<BroadcastCore>>,
+    capture: Mutex<Option<CaptureWorker>>,
     has_real_frames: AtomicBool,
     last_frame_at: RwLock<Option<String>>,
     last_frame_instant: Mutex<Option<Instant>>,
+}
+
+struct CaptureWorker {
+    stop: Arc<AtomicBool>,
+    thread: JoinHandle<()>,
 }
 
 impl Default for Broadcaster {
     fn default() -> Self {
         Self {
             inner: Mutex::new(None),
+            capture: Mutex::new(None),
             has_real_frames: AtomicBool::new(false),
             last_frame_at: RwLock::new(None),
             last_frame_instant: Mutex::new(None),
@@ -498,19 +493,32 @@ impl Broadcaster {
     }
 
     /// Start (or restart) the NDI broadcaster with the given source name.
-    pub fn start(&self, source_name: &str) -> Result<(), String> {
+    pub fn start(&self, source_name: &str, app: AppHandle) -> Result<(), String> {
         self.stop();
         let core = BroadcastCore::start(source_name)?;
-        *self.inner.lock().unwrap() = Some(core);
-        // Fresh source — no real frames yet until capture wires and first `send_frame` succeeds.
+        let capture = match spawn_capture_worker(app) {
+            Ok(capture) => capture,
+            Err(e) => {
+                core.shutdown();
+                return Err(e);
+            }
+        };
+        // Reset before publishing the core: capture may submit immediately
+        // once is_active becomes true.
         self.has_real_frames.store(false, Ordering::Relaxed);
         *self.last_frame_at.write().unwrap() = None;
         *self.last_frame_instant.lock().unwrap() = None;
+        *self.inner.lock().unwrap() = Some(core);
+        *self.capture.lock().unwrap() = Some(capture);
         Ok(())
     }
 
     /// Stop and tear down any running broadcaster. No-op when inactive.
     pub fn stop(&self) {
+        if let Some(worker) = self.capture.lock().unwrap().take() {
+            worker.stop.store(true, Ordering::SeqCst);
+            let _ = worker.thread.join();
+        }
         if let Some(core) = self.inner.lock().unwrap().take() {
             core.shutdown();
         }
@@ -520,10 +528,8 @@ impl Broadcaster {
     }
 
     /// Push a BGRA+alpha frame to the running broadcaster (no-op when off).
-    /// Not yet called (capture-integration seam) — see `BroadcastCore::send_frame`.
     /// Tracks `has_real_frames`/`last_frame_at` distinctly from `is_active` so
     /// the UI can be honest about whether real video is actually flowing.
-    #[allow(dead_code)]
     pub fn send_frame(&self, width: u32, height: u32, bgra: Vec<u8>) {
         let accepted = if let Some(core) = self.inner.lock().unwrap().as_ref() {
             core.send_frame(width, height, bgra)
@@ -557,6 +563,130 @@ impl Broadcaster {
         }
         self.send_frame(width, height, bgra);
     }
+}
+
+/// Capture the actual native Output window, so NDI receives the same pixels
+/// shown to the congregation rather than a separately approximated renderer.
+/// XCap supports native window capture on Windows, macOS, and Linux/X11. On
+/// unsupported desktop sessions (notably some Wayland compositors), it reports
+/// a throttled error and retries instead of crashing or sending fake frames.
+fn spawn_capture_worker(app: AppHandle) -> Result<CaptureWorker, String> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = stop.clone();
+    let thread = std::thread::Builder::new()
+        .name("ndi-window-capture".to_string())
+        .spawn(move || {
+            let mut output: Option<xcap::Window> = None;
+            let mut last_scan = Instant::now() - Duration::from_secs(2);
+            let mut last_notice: Option<Instant> = None;
+            let mut last_found = false;
+            let mut last_broadcast_status: Option<(bool, bool)> = None;
+
+            while !thread_stop.load(Ordering::Relaxed) {
+                if !app.state::<crate::state::AppState>().broadcaster.is_active() {
+                    std::thread::sleep(Duration::from_millis(150));
+                    continue;
+                }
+
+                if last_scan.elapsed() >= Duration::from_secs(1) {
+                    last_scan = Instant::now();
+                    match xcap::Window::all() {
+                        Ok(windows) => {
+                            output = windows.into_iter().find(|window| {
+                                window.pid().ok() == Some(std::process::id())
+                                && !window.is_minimized().unwrap_or(true)
+                                && window.title().ok().is_some_and(|title| {
+                                    title.trim().eq_ignore_ascii_case("MakrStudio - Output")
+                                })
+                            });
+                            if output.is_some() && !last_found {
+                                app.state::<crate::state::AppState>().logger.log(
+                                    crate::logging::Level::Info,
+                                    "ndi-capture: connected to the MakrStudio Output window",
+                                );
+                            }
+                            last_found = output.is_some();
+                        }
+                        Err(e) => {
+                            output = None;
+                            last_found = false;
+                            if last_notice.is_none_or(|at| at.elapsed() >= Duration::from_secs(5)) {
+                                app.state::<crate::state::AppState>().logger.log(
+                                    crate::logging::Level::Warn,
+                                    &format!("ndi-capture: cannot enumerate desktop windows: {e}"),
+                                );
+                                last_notice = Some(Instant::now());
+                            }
+                        }
+                    }
+                }
+
+                if let Some(window) = output.as_ref() {
+                    match window.capture_image() {
+                        Ok(image) if image.width() > 0 && image.height() > 0 => {
+                            let (width, height, bgra) = downscale_rgba_to_bgra(image);
+                            app.state::<crate::state::AppState>()
+                                .broadcaster
+                                .send_frame(width, height, bgra);
+                        }
+                        Ok(_) => {
+                            output = None;
+                            last_found = false;
+                        }
+                        Err(e) => {
+                            output = None;
+                            last_found = false;
+                            if last_notice.is_none_or(|at| at.elapsed() >= Duration::from_secs(5)) {
+                                app.state::<crate::state::AppState>().logger.log(
+                                    crate::logging::Level::Warn,
+                                    &format!("ndi-capture: Output window is not capturable yet: {e}"),
+                                );
+                                last_notice = Some(Instant::now());
+                            }
+                        }
+                    }
+                }
+
+                let state = app.state::<crate::state::AppState>();
+                let status = (
+                    state.broadcaster.has_real_frames(),
+                    state.broadcaster.is_stale(),
+                );
+                if last_broadcast_status != Some(status) {
+                    last_broadcast_status = Some(status);
+                    let _ = crate::commands::snapshot_and_emit(&app);
+                }
+
+                std::thread::sleep(CAPTURE_PERIOD);
+            }
+        })
+        .map_err(|e| format!("could not start NDI window capture: {e}"))?;
+
+    Ok(CaptureWorker { stop, thread })
+}
+
+fn downscale_rgba_to_bgra(image: image::RgbaImage) -> (u32, u32, Vec<u8>) {
+    let (width, height) = image.dimensions();
+    let scale = (MAX_CAPTURE_WIDTH as f64 / width as f64)
+        .min(MAX_CAPTURE_HEIGHT as f64 / height as f64)
+        .min(1.0);
+    let target_width = ((width as f64 * scale).round() as u32).max(1);
+    let target_height = ((height as f64 * scale).round() as u32).max(1);
+    let image = if target_width != width || target_height != height {
+        image::imageops::resize(
+            &image,
+            target_width,
+            target_height,
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        image
+    };
+    let mut bgra = image.into_raw();
+    for pixel in bgra.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+    (target_width, target_height, bgra)
 }
 
 // Compile-time sanity checks that the wrapper is shareable across the threads
@@ -596,5 +726,58 @@ mod tests {
     #[test]
     fn lib_filename_is_nonempty() {
         assert!(!lib_filename().is_empty());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn linux_runtime_prefers_ndi_6_and_falls_back_to_ndi_5() {
+        assert_eq!(lib_filenames(), &["libndi.so.6", "libndi.so.5"]);
+    }
+
+    #[test]
+    fn captured_rgba_is_converted_to_ndi_bgra() {
+        let image = image::RgbaImage::from_raw(1, 1, vec![10, 20, 30, 255]).unwrap();
+        let (width, height, frame) = downscale_rgba_to_bgra(image);
+        assert_eq!((width, height), (1, 1));
+        assert_eq!(frame, vec![30, 20, 10, 255]);
+    }
+
+    #[test]
+    fn captured_window_frames_are_capped_to_full_hd() {
+        let image = image::RgbaImage::from_pixel(2000, 1200, image::Rgba([1, 2, 3, 255]));
+        let (width, height, frame) = downscale_rgba_to_bgra(image);
+        assert_eq!((width, height), (1800, 1080));
+        assert_eq!(frame.len(), width as usize * height as usize * 4);
+    }
+
+    #[test]
+    #[ignore = "requires an installed NDI Runtime and local mDNS discovery"]
+    fn ndi_source_is_discoverable_after_sending_real_frames() {
+        let name = "MakrStudio - OBS Integration Test";
+        let core = BroadcastCore::start(name).expect("load NDI Runtime and create source");
+        let frame = vec![0x66; 320 * 180 * 4];
+        assert!(core.send_frame(320, 180, frame));
+        let found = crate::ndi_receive::wait_for_local_source_for_test(
+            name,
+            Duration::from_secs(8),
+        );
+        core.shutdown();
+        assert!(found.expect("initialize NDI finder"), "NDI source not discovered locally");
+    }
+
+    #[test]
+    #[ignore = "requires a desktop session with native window capture permissions"]
+    fn xcap_captures_a_visible_native_window() {
+        let windows = xcap::Window::all().expect("enumerate native desktop windows");
+        let window = windows
+            .into_iter()
+            .find(|window| {
+                !window.is_minimized().unwrap_or(true)
+                    && window.width().unwrap_or(0) >= 100
+                    && window.height().unwrap_or(0) >= 100
+            })
+            .expect("at least one visible window");
+        let image = window.capture_image().expect("capture visible window pixels");
+        assert!(image.width() >= 100 && image.height() >= 100);
     }
 }

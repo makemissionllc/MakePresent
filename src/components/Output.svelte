@@ -60,6 +60,7 @@
 
   const showText = $derived(project?.showText ?? true);
   const showBackground = $derived(project?.showBackground ?? true);
+  const aspectRatio = $derived(project?.aspectRatio ?? "16:9");
   const overlay = $derived(appState?.overlay ?? null);
 
   // The on-deck slide comes straight from state (the backend decides who is
@@ -85,7 +86,12 @@
   $effect(() => {
     const next = live;
     const prev = shown;
-    if (next?.id === prev?.id && (next === null) === (prev === null)) return;
+    if (next?.id === prev?.id && (next === null) === (prev === null)) {
+      // Edits to the live slide must reach Output (and its NDI mirror) without
+      // replaying the transition or remounting its media.
+      if (next !== prev) shown = next;
+      return;
+    }
 
     if (transition === "fade") {
       leaving = prev;
@@ -159,7 +165,7 @@
         class:gpu={crossfading}
         style:opacity={inOpacity}
       >
-        <SlideRender slide={shown} {look} {showText} {showBackground} enableCamera={true} />
+        <SlideRender slide={shown} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} />
       </div>
     {/if}
   {:else if !leaving}
@@ -173,7 +179,7 @@
         class:gpu={crossfading}
         style:opacity={outOpacity}
       >
-        <SlideRender slide={leaving} {look} {showText} {showBackground} enableCamera={true} />
+        <SlideRender slide={leaving} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} />
       </div>
     {/if}
   {/if}
@@ -292,6 +298,7 @@
     transform: translateZ(0);
     backface-visibility: hidden;
     isolation: isolate;
+    container-type: size;
   }
 
   /* GPU compositing hints: applied only during a crossfade so idle frames

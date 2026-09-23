@@ -1,7 +1,7 @@
 {
   "name": "makepresent",
   "version": "0.1.0",
-  "description": "MakrStudio - live presentation software for churches",
+  "description": "MakrStudio by MakeMission - live presentation software for churches",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "tauri": "tauri",
     "tauri:build:windows": "tauri build --bundles nsis,msi",
+    "tauri:build:linux": "tauri build --bundles deb,appimage",
     "tauri:dev:windows": "tauri dev"
   },
   "dependencies": {
@@ -23,6 +24,6 @@
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "~5.6.2",
-    "vite": "^6.0.3"
+    "vite": "^6.4.3"
   }
 }

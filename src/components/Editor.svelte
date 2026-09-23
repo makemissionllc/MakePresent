@@ -4,7 +4,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
   import { api, subscribeAck, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, PlaylistTemplate, ScriptureMatch, Slide } from "../lib/types";
+  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide } from "../lib/types";
   import { isMedia, isLiveCamera } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
@@ -15,9 +15,12 @@
   import LookEditorView from "./LookEditorView.svelte";
   import GuidedTour from "./GuidedTour.svelte";
   import HelpModal from "./HelpModal.svelte";
+  import BrandLockup from "./BrandLockup.svelte";
+  import Onboarding from "./Onboarding.svelte";
   import {
     dismissHint,
     dismissTour,
+    dismissWelcome,
     loadOnboarding,
     markUsed,
     resetTourDismissal,
@@ -139,6 +142,7 @@
 
   // Saved playlists (reusable slide sequences) — surfaced in the View Hub + Save-as-Playlist
   let templates = $state<PlaylistTemplate[]>([]);
+  let servicePresets = $state<ServicePreset[]>([]);
   let showSavePlaylistModal = $state(false);
 
   // Global search (Ctrl/Cmd+K) — library + all Bibles + media cache
@@ -150,7 +154,7 @@
   let onboarding = $state(loadOnboarding());
   let tourActive = $state(false);
   let tourStep = $state(0);
-  let tourAutoStarted = $state(false);
+  let onboardingOpen = $state(false);
   let helpOpen = $state(false);
 
   const TOUR_STEPS = [
@@ -176,24 +180,15 @@
     },
   ];
 
-  /** Brand-new install only (no project/settings on disk), after the View Hub
-      closes so the targets are visible. Never re-shows once dismissed. */
-  $effect(() => {
-    if (
-      !tourAutoStarted &&
-      !tourActive &&
-      !showHub &&
-      appState !== null &&
-      appState.firstRun === true &&
-      !onboarding.tourDismissed
-    ) {
-      tourAutoStarted = true;
-      tourStep = 0;
-      tourActive = true;
-    }
-  });
+  const showTour = $derived(tourActive && !showHub && !onboardingOpen && !helpOpen && !settingsOpen && !globalSearchOpen && appState !== null);
 
-  const showTour = $derived(tourActive && !showHub && appState !== null);
+  function finishOnboarding(action: "view" | "tour" | "settings" | "skip"): void {
+    onboarding = dismissWelcome(onboarding);
+    onboardingOpen = false;
+    if (action === "view") void newProject();
+    else if (action === "tour") replayTour();
+    else if (action === "settings") settingsOpen = true;
+  }
 
   function use(feature: string): void {
     onboarding = markUsed(onboarding, feature);
@@ -1534,6 +1529,15 @@
     }
   }
 
+  async function deleteSavedPlaylist(playlistId: string): Promise<void> {
+    try {
+      errorMsg = null;
+      templates = await api.deleteTemplate(playlistId);
+    } catch (e) {
+      errorMsg = String(e);
+    }
+  }
+
   function isTextInputFocused(): boolean {
     const el = document.activeElement as HTMLElement | null;
     if (!el) return false;
@@ -1544,6 +1548,8 @@
   }
 
   function handleGlobalKeydown(e: KeyboardEvent): void {
+    if (e.defaultPrevented || e.isComposing) return;
+    if (onboardingOpen) return;
     const isK = e.key.toLowerCase() === "k";
     const mod = e.ctrlKey || e.metaKey;
     if (mod && isK) {
@@ -1562,6 +1568,20 @@
       endTour();
       return;
     }
+    // Do not change the live slide underneath a dialog or another blocking
+    // workspace. These overlays often focus buttons rather than text inputs,
+    // so checking only the active element lets the global arrows leak through.
+    if (
+      settingsOpen ||
+      showAddSongTitleModal ||
+      showAddSongBodyModal ||
+      showSongEditor ||
+      showHub ||
+      showSavePlaylistModal ||
+      globalSearchOpen ||
+      tourActive ||
+      helpOpen
+    ) return;
     if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && !isTextInputFocused()) {
       // Reuse existing next/previous logic — same path as triggers/UI clicks
       if (e.key === "ArrowRight") {
@@ -1772,8 +1792,13 @@
         if (!cancelled) {
           appState = s;
           selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
-          // Boot hub — Affinity-style launcher
-          showHub = true;
+          void api.listPresets().then((items) => {
+            if (!cancelled) servicePresets = items;
+          }).catch((e: unknown) => {
+            if (!cancelled) errorMsg = `Could not load starting playlists: ${String(e)}`;
+          });
+          // One welcome surface at a time; returning users resume their View.
+          onboardingOpen = s.firstRun && !onboarding.welcomeDismissed;
           void refreshPlaylists();
         }
       } catch (e) {
@@ -1813,16 +1838,19 @@
 
 {#if appState === null}
   <div class="loading-shell">
-    <div class="spinner" aria-hidden="true"></div>
-    <p>Starting MakrStudio…</p>
+    <BrandLockup large />
     {#if errorMsg}
-      <p class="loading-error">{errorMsg}</p>
+      <p class="loading-error" role="alert">Could not open your workspace: {errorMsg}</p>
+      <button class="ghost" onclick={() => window.location.reload()}>Try again</button>
+    {:else}
+      <div class="spinner" aria-hidden="true"></div>
+      <p role="status">Opening your workspace…</p>
     {/if}
   </div>
 {:else}
 <div class="shell">
   <header class="topbar">
-    <h1>MakrStudio</h1>
+    <h1><BrandLockup /></h1>
     <span class="project-name">{project?.name ?? "No view"}</span>
     <span class="live-indicator" class:live={!!project?.live}>
       {#if project?.live}LIVE{:else}OFFLINE{/if}
@@ -1838,7 +1866,6 @@
     </button>
     <span class="saved-label">{savedLabel}</span>
     <button class="ghost" onclick={() => newProject()}>New view</button>
-    <button class="ghost" onclick={() => clearOutput()}>Clear output</button>
     <button class="ghost help-trigger" title="Help — guided tour and keyboard shortcuts" onclick={() => (helpOpen = true)}>
       ? Help
     </button>
@@ -2576,6 +2603,7 @@
                 showText={project?.showText ?? true}
                 showBackground={project?.showBackground ?? true}
                 overlay={appState?.overlay ?? null}
+                aspectRatio={project?.aspectRatio ?? "16:9"}
                 enableCamera={true}
               />
             {:else}
@@ -2664,6 +2692,7 @@
               look={stagePreviewLook}
               showText={project?.showText ?? true}
               showBackground={project?.showBackground ?? true}
+              aspectRatio={project?.aspectRatio ?? "16:9"}
               isStage={true}
             />
           {:else}
@@ -2906,9 +2935,11 @@
   open={showHub}
   recentName={project?.name ?? ""}
   playlists={templates}
+  presets={servicePresets}
   onClose={() => (showHub = false)}
   onCreate={handleHubCreate}
   onCreateFromPlaylist={handleHubCreateFromPlaylist}
+  onDeletePlaylist={(playlistId) => void deleteSavedPlaylist(playlistId)}
 />
 
 <Modal
@@ -2936,7 +2967,11 @@
   />
 {/if}
 
-<HelpModal open={helpOpen} onClose={() => (helpOpen = false)} onReplayTour={() => replayTour()} />
+<HelpModal open={helpOpen} onClose={() => (helpOpen = false)} onReplayTour={() => replayTour()} onGettingStarted={() => { endTour(); onboardingOpen = true; }} />
+
+{#if onboardingOpen && appState}
+  <Onboarding displayCount={displays?.length ?? null} onFinish={finishOnboarding} />
+{/if}
 
 <style>
   .shell {
@@ -2952,7 +2987,8 @@
     flex-wrap: wrap;
     row-gap: 8px;
     gap: 12px;
-    padding: 8px 14px;
+    min-height: 52px;
+    padding: 8px 18px;
     background: var(--panel);
     border-bottom: 1px solid var(--border);
     /* Guard: don't make the whole header a drag zone — only the empty spacer is draggable
@@ -2965,20 +3001,26 @@
   }
 
   .topbar h1 {
-    font-family: var(--font-display);
-    font-size: clamp(13px, 1.1vw, 16px);
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
     margin: 0;
   }
 
+
   .project-name {
-    color: var(--text-dim);
+    color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+    max-width: min(28vw, 340px);
+    padding-left: 12px;
+    border-left: 1px solid var(--border);
   }
 
   .spacer {
@@ -3010,6 +3052,7 @@
     font-size: 12px;
     padding: 6px 10px;
     border-color: var(--border);
+    background: var(--panel-2);
   }
   .search-trigger .kbd {
     font-size: 10px;
@@ -3033,21 +3076,45 @@
     background: transparent;
   }
 
+  .topbar button.ghost {
+    border-color: transparent;
+    border-radius: 7px;
+    color: var(--text-dim);
+  }
+  .topbar button.ghost:hover {
+    color: var(--text);
+    background: var(--panel-2);
+    border-color: var(--border);
+  }
+
   .live-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    padding: 2px 8px;
-    border-radius: 10px;
+    padding: 4px 8px;
+    border-radius: 999px;
     background: transparent;
     color: var(--text-dim);
+  }
+  .live-indicator::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-dim);
   }
 
   /* When live, the indicator lights up in the locked-in live green. */
   .live-indicator.live {
-    background: var(--live-bg);
-    color: #eafff5;
+    background: var(--semantic-live-bg);
+    color: #a8dfc5;
+  }
+  .live-indicator.live::before {
+    background: var(--semantic-live);
   }
 
   .notice,
@@ -3057,7 +3124,7 @@
   }
 
   .notice {
-    background: var(--warn-bg);
+    background: rgba(196, 154, 103, 0.1);
     border-bottom: 1px solid var(--border);
     display: flex;
     gap: 8px;
@@ -3129,7 +3196,7 @@
   .sidebar {
     background: var(--panel);
     border-right: 1px solid var(--border);
-    padding: 12px;
+    padding: 14px;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -3139,10 +3206,10 @@
 
   .workspace-switch {
     display: flex;
-    gap: 6px;
-    padding: 4px;
-    background: var(--panel-2);
-    border: 1px solid var(--border);
+    gap: 3px;
+    padding: 3px;
+    background: rgba(0, 0, 0, 0.14);
+    border: 1px solid transparent;
     border-radius: 8px;
   }
   .ws-btn {
@@ -3156,10 +3223,10 @@
     color: var(--text-dim);
   }
   .ws-btn.active {
-    background: var(--panel);
-    border-color: var(--accent);
+    background: var(--panel-2);
+    border-color: var(--border);
     color: var(--text);
-    box-shadow: 0 0 0 3px rgba(79,140,255,0.12);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
   }
 
   .sidebar-section {
@@ -3217,17 +3284,13 @@
     flex-direction: column;
     gap: var(--space-3);
     padding: var(--space-4);
-    background: linear-gradient(
-      180deg,
-      var(--panel) 0%,
-      var(--brand-green-900) 100%
-    );
+    background: var(--panel);
     overflow-y: auto;
   }
   .output-sticky-top {
     position: sticky;
     top: -16px;
-    background: linear-gradient(180deg, var(--panel) 0%, var(--brand-green-900) 100%);
+    background: var(--panel);
     z-index: 3;
     margin: -16px -16px 0;
     padding: 12px 16px 12px;
@@ -3282,14 +3345,18 @@
     border-radius: 8px;
     overflow: hidden;
     position: relative;
+    container-type: size;
     box-shadow: var(--shadow-soft);
   }
-  .preview-box :global(.slide-render) {
+  .preview-box :global(.slide-render:not(.ratio-limited)) {
     /* Scale down the 72px Look sizes to fit the ~280px preview; SlideRender is absolute inset:0 */
     transform: scale(0.42);
     transform-origin: top left;
     width: 238%;
     height: 238%;
+  }
+  .preview-box :global(.slide-render.ratio-limited) {
+    transform: translate(-50%, -50%);
   }
   .preview-empty {
     display: grid;
@@ -3376,8 +3443,7 @@
   }
   .output-panel button.ghost:hover {
     background: var(--panel-2);
-    border-color: var(--brand-slate-400);
-    transform: translateY(-1px);
+    border-color: var(--border);
   }
   .output-panel button.ghost:active {
     transform: translateY(0);
@@ -3393,12 +3459,12 @@
   }
 
   .section-title {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
     color: var(--text-dim);
-    margin-bottom: 8px;
+    margin-bottom: 6px;
   }
 
   .stage-title {
@@ -3433,11 +3499,21 @@
     align-items: center;
     gap: 10px;
     text-align: left;
+    background: transparent;
+    border-color: transparent;
+    border-radius: 7px;
+    padding: 7px 8px;
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+
+  .slide-entry:hover {
     background: var(--panel-2);
   }
 
   .slide-entry.active {
-    border-color: var(--live);
+    background: rgba(129, 170, 149, 0.12);
+    border-color: transparent;
+    box-shadow: inset 2px 0 var(--semantic-live);
   }
 
   .slide-label {
@@ -3625,8 +3701,7 @@
     border-radius: 50%;
     background: var(--semantic-live);
     flex: none;
-    animation: live-pulse 1800ms var(--ease-out) infinite alternate;
-    box-shadow: var(--semantic-live-glow);
+    box-shadow: 0 0 0 3px rgba(31, 157, 106, 0.12);
   }
 
   @keyframes live-pulse {
@@ -3646,13 +3721,23 @@
   }
 
   .delete:hover {
-    color: var(--danger);
+    color: var(--danger-text);
+    background: var(--danger-bg);
+    border-color: transparent;
   }
 
   .add {
     width: 100%;
     margin-top: 10px;
     background: transparent;
+    border-color: transparent;
+    color: #a8cbb7;
+    text-align: left;
+  }
+  .add:hover {
+    background: rgba(129, 170, 149, 0.1);
+    border-color: rgba(129, 170, 149, 0.18);
+    color: #d2e5da;
   }
 
   .library-title {
@@ -3913,21 +3998,21 @@
     gap: 6px;
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 8px;
     padding: 8px;
-    transition: border-color var(--motion-fast, 150ms) var(--ease-standard, ease), transform var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
+    transition: border-color 120ms ease, background-color 120ms ease;
   }
   .grid-cell.selected {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(79,140,255,0.15);
+    border-color: rgba(129, 170, 149, 0.7);
+    box-shadow: 0 0 0 2px rgba(129, 170, 149, 0.12);
   }
   .grid-cell.live {
     border-color: var(--live);
-    box-shadow: 0 0 0 3px rgba(31,157,106,0.2);
+    box-shadow: 0 0 0 2px rgba(31, 157, 106, 0.12);
   }
   .grid-cell:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-soft, 0 4px 16px rgba(0,0,0,0.22));
+    background: #202627;
+    border-color: #46514e;
   }
   .grid-thumb {
     position: relative;

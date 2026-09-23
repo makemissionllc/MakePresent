@@ -176,14 +176,9 @@
     void api.setDefaultLook(kind, id).then((s) => (appState = s)).catch((e: unknown) => (lookErr = String(e)));
   }
 
-  function assignTo(target: "output" | "stage" | "ndi", id: string | null): void {
+  function assignTo(target: "output" | "stage", id: string | null): void {
     lookErr = null;
-    const fn =
-      target === "output"
-        ? api.setOutputLook
-        : target === "stage"
-          ? api.setStageLook
-          : api.setNdiLook;
+    const fn = target === "output" ? api.setOutputLook : api.setStageLook;
     void fn(id).then((s) => (appState = s)).catch((e: unknown) => (lookErr = String(e)));
   }
 
@@ -430,7 +425,7 @@
             value: !appState.broadcast.enabled
               ? "Off"
               : !appState.broadcast.hasRealFrames
-                ? `On (${appState.broadcast.sourceName}) — no real video (discoverable, black)`
+                ? `On (${appState.broadcast.sourceName}) — waiting for Output capture`
                 : appState.broadcast.isStale
                   ? `On (${appState.broadcast.sourceName}) — stale`
                   : `On (${appState.broadcast.sourceName})`,
@@ -688,8 +683,41 @@
   let audioDevices = $state<AudioDeviceInfo[]>([]);
   let audioDevicesMsg = $state<string | null>(null);
   let audioVolumeDraft = $state<number>(1.0);
+  let audioView = $state<AudioStateView>({
+    status: "stopped",
+    currentPath: null,
+    volume: 1,
+    deviceId: null,
+    durationSecs: null,
+    positionSecs: null,
+  });
+  let audioSeekDraft = $state(0);
+  let audioSeeking = $state(false);
   let audioMsg = $state<string | null>(null);
   let audioErr = $state<string | null>(null);
+
+  $effect(() => {
+    const audio = appState?.audio;
+    if (audio) audioView = audio;
+  });
+
+  $effect(() => {
+    if (tab !== "audio" || audioView.status !== "playing") return;
+    let cancelled = false;
+    const poll = window.setInterval(() => {
+      void api.getAudioState().then((state) => {
+        if (!cancelled) audioView = state;
+      }).catch(() => {});
+    }, 500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  });
+
+  $effect(() => {
+    if (!audioSeeking) audioSeekDraft = audioView.positionSecs ?? 0;
+  });
 
   $effect(() => {
     if (tab !== "network") return;
@@ -821,12 +849,26 @@
       .catch((e: unknown) => (audioErr = String(e)));
   }
 
-  $effect(() => {
-    if (tab !== "audio") return;
-    void refreshAudioDevices();
-    // Sync draft volume with current state
-    audioVolumeDraft = appState?.audio?.volume ?? 1.0;
-  });
+  function seekAudio(e: Event): void {
+    audioErr = null;
+    const secs = Math.max(0, Math.round(Number((e.target as HTMLInputElement).value) || 0));
+    void api.seekAudio(secs)
+      .then((s) => {
+        appState = s;
+        audioView = s.audio;
+        audioSeeking = false;
+      })
+      .catch((e: unknown) => {
+        audioErr = String(e);
+        audioSeeking = false;
+      });
+  }
+
+  function formatAudioTime(value: number | null | undefined): string {
+    if (value == null || !Number.isFinite(value)) return "–:–";
+    const secs = Math.max(0, Math.floor(value));
+    return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+  }
 
 </script>
 
@@ -851,7 +893,7 @@
       <button class="tab" class:active={tab === "network"} onclick={() => (tab = "network")}>
         Network
       </button>
-      <button class="tab" class:active={tab === "audio"} onclick={() => (tab = "audio")}>
+      <button class="tab" class:active={tab === "audio"} onclick={() => { tab = "audio"; audioVolumeDraft = audioView.volume; void refreshAudioDevices(); }}>
         Audio
       </button>
       <button class="tab" class:active={tab === "logs"} onclick={() => (tab = "logs")}>
@@ -890,7 +932,7 @@
               </label>
               {#if appState?.broadcast.enabled}
                 {#if !appState.broadcast.hasRealFrames}
-                  <span class="badge" style="background: var(--semantic-idle, #64748b); color: white; font-size: 10px; padding: 3px 7px; border-radius: 4px;">No real video — black</span>
+                  <span class="badge" style="background: var(--semantic-idle, #64748b); color: white; font-size: 10px; padding: 3px 7px; border-radius: 4px;">Waiting for Output</span>
                 {:else if appState.broadcast.isStale}
                   <span class="badge" style="background: var(--semantic-warning, #f7b538); color: var(--semantic-warning-text, #3a2e10); font-size: 10px; padding: 3px 7px; border-radius: 4px;">Stale</span>
                 {:else}
@@ -899,27 +941,29 @@
               {/if}
             </div>
             <p class="hint">
-              Publishes the live slide as an NDI source
+              Publishes the actual MakrStudio Output window as an NDI source
               (<code>{appState?.broadcast.sourceName}</code>) on your local
-              network so a video switcher can cut to it. On <strong>Windows</strong>, the NDI 6 Runtime is <strong>bundled with MakrStudio's installer</strong> and installs silently
+              network, including its Looks, backgrounds, video, and overlays.
+              On <strong>Windows</strong>, the NDI 6 Runtime is <strong>bundled with MakrStudio's installer</strong> and installs silently
               (<code>/verysilent</code>, <code>src-tauri/resources/NDI_Runtime_V6.exe</code> via <code>NDI_RUNTIME_DIR_V5</code>) — no manual download needed; a fresh install on a clean VM works immediately and OBS discovers it. On <strong>Linux/macOS</strong>, still install the free
               <a href="https://ndi.video" target="_blank" rel="noopener noreferrer">
                 NDI® SDK
               </a>
               manually (see README.md). The SDK is loaded at runtime and the app
-              keeps working normally if it is absent. Assign a Look to the NDI
-              feed under <em>Looks</em>.
+              keeps working normally if it is absent. OBS needs the
+              <a href="https://github.com/DistroAV/DistroAV" target="_blank" rel="noopener noreferrer">DistroAV NDI plugin</a>
+              enabled to list the source.
             </p>
             {#if appState?.broadcast.enabled && !appState.broadcast.hasRealFrames}
               <p class="status" style="background: var(--semantic-warning-bg, rgba(247,181,56,0.14)); border: 1px solid var(--semantic-warning-border, rgba(247,181,56,0.32)); color: var(--semantic-warning, #f7b538); padding: 8px 10px; border-radius: 6px; font-size: 12px;">
-                Frame capture not yet implemented — the NDI source is discoverable on the network but will show black video until window capture is wired (tracked in docs/PROJECT.md).
+                Waiting for a capturable Output window. Choose <strong>Show Output</strong> and put a slide live; MakrStudio captures that window and sends it to OBS. On Linux, native window capture requires an X11 session; Wayland compositors may deny capture.
               </p>
             {:else if appState?.broadcast.enabled && appState.broadcast.isStale}
               <p class="status" style="background: var(--semantic-warning-bg, rgba(247,181,56,0.14)); border: 1px solid var(--semantic-warning-border, rgba(247,181,56,0.32)); color: var(--semantic-warning, #f7b538); padding: 8px 10px; border-radius: 6px; font-size: 12px;">
                 NDI feed is stale — no valid frame recently. Last frame: {appState.broadcast.lastFrameAt ?? "never"}.
               </p>
             {/if}
-            <p class="hint" style="font-size: 11px; opacity: 0.8;">NDI® is a registered trademark of Vizrt NDI AB. Bundled NDI 6 Runtime 6.0.1 (Apr 16 2026) — see <code>src-tauri/resources/NDI_VERSION.txt</code> for currency. Source being discoverable (OBS finds it) does not mean real video is flowing — check <code>hasRealFrames</code> above.</p>
+            <p class="hint" style="font-size: 11px; opacity: 0.8;">NDI® is a registered trademark of Vizrt NDI AB. Bundled NDI 6 Runtime 6.0.1 (Apr 16 2026) — see <code>src-tauri/resources/NDI_VERSION.txt</code> for currency. In OBS, add a DistroAV NDI Source and select <code>{appState?.broadcast.sourceName}</code>; the status above confirms when real frames are flowing.</p>
           </div>
 
           <div class="bcast-block">
@@ -1055,9 +1099,6 @@
                     {/if}
                     {#if appState?.stageLookId === lk.id}
                       <span class="badge stage">Stage</span>
-                    {/if}
-                    {#if appState?.ndiLookId === lk.id}
-                      <span class="badge ndi">NDI</span>
                     {/if}
                   </button>
                 {/each}
@@ -1272,19 +1313,7 @@
                         {/each}
                       </select>
                     </label>
-                    <label>
-                      NDI Feed
-                      <select
-                        value={appState?.ndiLookId ?? ""}
-                        onchange={(e) =>
-                          assignTo("ndi", (e.target as HTMLSelectElement).value || null)}
-                      >
-                        <option value="">Auto (first Look)</option>
-                        {#each looks as lk (lk.id)}
-                          <option value={lk.id}>{lk.name}</option>
-                        {/each}
-                      </select>
-                    </label>
+                    <p class="hint" style="margin:0">NDI mirrors the native Output window and uses its Output Look.</p>
                   </div>
 
                   <div class="assign-block">
@@ -1647,7 +1676,7 @@
             <h3>Output device</h3>
             <p class="hint">Choose which speaker/headphones the track plays through, independent of system default. Stored in Settings.</p>
             <div class="row">
-              <select value={appState?.audio?.deviceId ?? ""} onchange={setAudioDevice}>
+              <select value={audioView.deviceId ?? ""} onchange={setAudioDevice}>
                 <option value="">System default</option>
                 {#each audioDevices as dev (dev.id)}
                   <option value={dev.id}>{dev.name} {dev.isDefault ? "(default)" : ""}</option>
@@ -1667,13 +1696,34 @@
             <h3>Track</h3>
             <div class="row">
               <button onclick={loadAudioFile}>Load track…</button>
-              <span class="audio-path">{appState?.audio?.currentPath?.split(/[\/\\]/).pop() ?? "No track loaded"}</span>
-              <span class="audio-status">{appState?.audio?.status ?? "stopped"}</span>
+              <span class="audio-path">{audioView.currentPath?.split(/[\/\\]/).pop() ?? "No track loaded"}</span>
+              <span class="audio-status">{audioView.status}</span>
             </div>
             <div class="row">
-              <button onclick={playAudio} disabled={appState?.audio?.status === "playing"}>Play</button>
-              <button onclick={pauseAudio} disabled={appState?.audio?.status !== "playing"}>Pause</button>
-              <button onclick={stopAudio} disabled={appState?.audio?.status === "stopped" || !appState?.audio?.currentPath}>Stop</button>
+              <button onclick={playAudio} disabled={audioView.status === "playing"}>Play</button>
+              <button onclick={pauseAudio} disabled={audioView.status !== "playing"}>Pause</button>
+              <button onclick={stopAudio} disabled={audioView.status === "stopped" || !audioView.currentPath}>Stop</button>
+            </div>
+          </section>
+
+          <section class="audio-section">
+            <h3>Position</h3>
+            <div class="row seek-row">
+              <input
+                type="range"
+                min="0"
+                max={Math.max(1, audioView.durationSecs ?? 0)}
+                step="1"
+                value={audioSeekDraft}
+                aria-label="Track position"
+                disabled={!audioView.currentPath || audioView.durationSecs == null}
+                oninput={(e) => {
+                  audioSeeking = true;
+                  audioSeekDraft = Number((e.target as HTMLInputElement).value);
+                }}
+                onchange={seekAudio}
+              />
+              <span class="audio-time">{formatAudioTime(audioSeekDraft)} / {formatAudioTime(audioView.durationSecs)}</span>
             </div>
           </section>
 
@@ -1826,6 +1876,8 @@
   .sum-value {
     color: var(--text);
     text-align: right;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .actions,
@@ -1851,9 +1903,12 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    flex-wrap: wrap;
   }
 
   .bcast-title .assign-title {
+    flex: 1 1 180px;
+    min-width: 0;
     margin: 0;
   }
 
@@ -1870,6 +1925,7 @@
 
   .bcast-block code {
     color: var(--text);
+    overflow-wrap: anywhere;
   }
 
   .bcast-block a {
@@ -1888,6 +1944,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
   }
 
   .ndimon-badge {
@@ -1922,9 +1979,12 @@
   }
 
   .ndimon-msg {
+    flex: 1 1 180px;
+    min-width: 0;
     font-size: 12px;
     color: var(--text);
     opacity: 0.85;
+    overflow-wrap: anywhere;
   }
 
   .ndimon-sources {
@@ -2086,9 +2146,6 @@
     color: var(--accent);
   }
 
-  .badge.ndi {
-    color: var(--warn);
-  }
 
   .add-look {
     background: transparent;
@@ -2577,5 +2634,53 @@
     font-size: 12px;
     color: var(--text-dim);
     margin: 0;
+  }
+
+  .panel-audio {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .audio-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  .audio-section h3 {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+  }
+  .panel-audio .row input[type="range"] {
+    flex: 1;
+    min-width: 100px;
+  }
+  .audio-path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .audio-status {
+    color: var(--text-dim);
+    font-size: 11px;
+    text-transform: capitalize;
+  }
+  .seek-row {
+    flex-wrap: nowrap;
+  }
+  .audio-time {
+    min-width: 78px;
+    text-align: right;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
   }
 </style>

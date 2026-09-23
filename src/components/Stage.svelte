@@ -42,6 +42,7 @@
 
   const showText = $derived(appState?.project?.showText ?? true);
   const showBackground = $derived(appState?.project?.showBackground ?? true);
+  const aspectRatio = $derived(appState?.project?.aspectRatio ?? "16:9");
   const stageMessage = $derived(appState?.stageMessage ?? null);
 
   onMount(() => {
@@ -89,7 +90,7 @@
   {/if}
   <section class="current">
     {#if current && look}
-      <SlideRender {look} slide={current} {showText} {showBackground} isStage={true} />
+      <SlideRender {look} slide={current} {showText} {showBackground} {aspectRatio} isStage={true} />
     {:else if current}
       <p class="placeholder">{current.body || current.title}</p>
     {:else}
@@ -186,6 +187,7 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+    container-type: size;
   }
 
   .side {

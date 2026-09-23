@@ -485,7 +485,11 @@ impl Project {
                     library_id: None,
                     library_slide_id: None,
                     name: Some(it.title.clone()),
-                    kind: SlideKind::Generic,
+                    kind: match it.item_type.as_str() {
+                        "song" => SlideKind::Song,
+                        "scripture" => SlideKind::Scripture,
+                        _ => SlideKind::Generic,
+                    },
                     title: it.title.clone(),
                     body: it.content.clone().unwrap_or_default(),
                     background: Background::default(),
@@ -1315,6 +1319,21 @@ fn seed_library() -> Library {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preset_creation_preserves_slide_kinds_and_layout_choices() {
+        let preset = default_presets()
+            .into_iter()
+            .find(|preset| preset.id == "sunday-morning")
+            .unwrap();
+        let project = Project::from_preset("Sunday", "4:3", Transition::Fade, &preset);
+
+        assert_eq!(project.aspect_ratio, "4:3");
+        assert_eq!(project.transition, Transition::Fade);
+        assert_eq!(project.slides[0].kind, SlideKind::Generic);
+        assert_eq!(project.slides[1].kind, SlideKind::Song);
+        assert_eq!(project.slides[3].kind, SlideKind::Scripture);
+    }
 
     #[test]
     fn library_migration_preserves_amazing_grace() {

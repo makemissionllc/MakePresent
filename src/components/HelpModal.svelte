@@ -1,11 +1,25 @@
 <script lang="ts">
+  import BrandLockup from "./BrandLockup.svelte";
   interface Props {
     open: boolean;
     onClose: () => void;
     onReplayTour: () => void;
+    onGettingStarted: () => void;
   }
 
-  let { open, onClose, onReplayTour }: Props = $props();
+  let { open, onClose, onReplayTour, onGettingStarted }: Props = $props();
+  let dialog = $state<HTMLDialogElement>();
+
+  $effect(() => {
+    if (!open || !dialog) return;
+    const previous = document.activeElement;
+    const element = dialog;
+    element.showModal();
+    return () => {
+      element.close();
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  });
 
   function onKeydown(e: KeyboardEvent): void {
     if (e.key === "Escape") {
@@ -16,25 +30,20 @@
 </script>
 
 {#if open}
-  <div
-    class="backdrop"
-    role="presentation"
-    onclick={onClose}
-    onkeydown={(e) => e.stopPropagation()}
-  >
-    <div
+    <dialog
+      bind:this={dialog}
       class="dialog"
-      role="dialog"
-      aria-modal="true"
       aria-label="Help and keyboard shortcuts"
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={onKeydown}
+      oncancel={(e) => { e.preventDefault(); onClose(); }}
+      onkeydown={(e) => { e.stopPropagation(); onKeydown(e); }}
     >
       <div class="help-head">
         <strong>Help</strong>
         <button class="x" title="Close" aria-label="Close help" onclick={onClose}>×</button>
       </div>
+      <BrandLockup />
+      <p class="muted">A little preparation. A confident first service.</p>
+      <button class="replay" onclick={() => { onClose(); onGettingStarted(); }}>Getting started</button>
       <p class="muted">
         New here? Take the 4-step tour — playlist, Output, songs &amp; Scripture.
       </p>
@@ -59,24 +68,19 @@
         Prefer dragging? Songs, verses, and images can all be dragged straight
         onto the playlist — clicking works too.
       </p>
-    </div>
-  </div>
+    </dialog>
 {/if}
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
+  .dialog::backdrop {
     background: rgba(0, 0, 0, 0.55);
-    display: grid;
-    place-items: center;
-    z-index: 70;
   }
   .dialog {
     width: min(420px, 92vw);
     max-height: 84vh;
     overflow-y: auto;
     background: var(--panel);
+    color: var(--text);
     border: 1px solid var(--border);
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);

@@ -8,7 +8,7 @@
 //!
 //! The NDI SDK is closed-source, not vendored, and absent from CI machines.
 //! Like `broadcast.rs`, this module hand-binds the C ABI with `libloading`
-//! and loads `Processing.NDI.Lib.x64.dll` / `libndi.so.5` at runtime. If the
+//! and loads `Processing.NDI.Lib.x64.dll` / `libndi.so.6` (with `.so.5` fallback) at runtime. If the
 //! SDK is missing, starting the monitor returns a clear error and everything
 //! else keeps working. Fully independent from the sender: separate toggle,
 //! separate thread, separate SDK handles. (Both sides call
@@ -166,7 +166,7 @@ fn is_null(p: *mut c_void) -> bool {
 /// for the monitor thread's lifetime; fn-pointers are `Copy` for handoff.
 struct NdiRecvLib {
     _lib: Library,
-    initialize: unsafe extern "C" fn() -> c_int,
+    initialize: unsafe extern "C" fn() -> bool,
     destroy: unsafe extern "C" fn(),
     find_create: unsafe extern "C" fn(*const FindCreate) -> FindInstance,
     find_destroy: unsafe extern "C" fn(FindInstance),
@@ -182,20 +182,25 @@ struct NdiRecvLib {
 /// Load the NDI SDK and resolve the receive-side entry points. Same DLL
 /// filename as the sender (`broadcast::lib_filename`); missing SDK is a
 /// graceful `Err`, never a crash. Detection order mirrors `broadcast::load_ndi`:
-/// `NDI_RUNTIME_DIR_V6` → `V5` → bare filename next to .exe.
+/// `NDI_RUNTIME_DIR_V6` → `V5` → platform SONAMEs (`.so.6` then `.so.5` on Linux).
 unsafe fn load_recv_lib() -> Result<NdiRecvLib, String> {
-    let file = crate::broadcast::lib_filename();
     let lib = {
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
         for env_key in ["NDI_RUNTIME_DIR_V6", "NDI_RUNTIME_DIR_V5"] {
             if let Ok(dir) = std::env::var(env_key) {
                 let trimmed = dir.trim().trim_matches('"');
                 if !trimmed.is_empty() {
-                    candidates.push(std::path::Path::new(trimmed).join(file));
+                    for file in crate::broadcast::lib_filenames() {
+                        candidates.push(std::path::Path::new(trimmed).join(file));
+                    }
                 }
             }
         }
-        candidates.push(std::path::PathBuf::from(file));
+        candidates.extend(
+            crate::broadcast::lib_filenames()
+                .iter()
+                .map(std::path::PathBuf::from),
+        );
         let mut last_err: Option<String> = None;
         let mut found: Option<Library> = None;
         for cand in &candidates {
@@ -216,7 +221,7 @@ unsafe fn load_recv_lib() -> Result<NdiRecvLib, String> {
 
     let err_of = |n: &str, e: libloading::Error| format!("failed to resolve NDI symbol \"{n}\": {e}");
     let (initialize, destroy, find_create, find_destroy, find_wait_for_sources, find_get_sources, recv_create, recv_destroy, recv_connect, recv_capture, recv_free_video) = {
-        let initialize: Symbol<unsafe extern "C" fn() -> c_int> =
+        let initialize: Symbol<unsafe extern "C" fn() -> bool> =
             lib.get(b"NDIlib_initialize").map_err(|e| err_of("NDIlib_initialize", e))?;
         let destroy: Symbol<unsafe extern "C" fn()> =
             lib.get(b"NDIlib_destroy").map_err(|e| err_of("NDIlib_destroy", e))?;
@@ -489,7 +494,7 @@ impl NdiReceiveMonitor {
         }
         let lib = unsafe { load_recv_lib()? };
         unsafe {
-            if (lib.initialize)() == 0 {
+            if !(lib.initialize)() {
                 return Err("NDIlib_initialize returned false".to_string());
             }
         }
@@ -601,6 +606,46 @@ unsafe fn read_sources(lib: &NdiRecvLib, find: FindInstance) -> Vec<NdiSourceInf
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+/// Runtime smoke-test seam used only by the ignored NDI integration test. It
+/// exercises the same SDK loader, local finder, and source list as the Settings
+/// confidence monitor without requiring a Tauri AppHandle.
+#[cfg(test)]
+pub(crate) fn wait_for_local_source_for_test(
+    name_fragment: &str,
+    timeout: Duration,
+) -> Result<bool, String> {
+    let lib = unsafe { load_recv_lib()? };
+    if !unsafe { (lib.initialize)() } {
+        return Err("NDIlib_initialize returned false in smoke test".to_string());
+    }
+    let create = FindCreate {
+        show_local_sources: 1,
+        p_groups: std::ptr::null(),
+        p_extra_ips: std::ptr::null(),
+    };
+    let find = unsafe { (lib.find_create)(&create) };
+    if is_null(find) {
+        unsafe { (lib.destroy)() };
+        return Err("NDI finder could not start in smoke test".to_string());
+    }
+
+    let started = Instant::now();
+    let mut found = false;
+    while started.elapsed() < timeout {
+        let sources = unsafe { read_sources(&lib, find) };
+        if sources.iter().any(|source| source.name.contains(name_fragment)) {
+            found = true;
+            break;
+        }
+        unsafe { (lib.find_wait_for_sources)(find, 250) };
+    }
+    unsafe {
+        (lib.find_destroy)(find);
+        (lib.destroy)();
+    }
+    Ok(found)
 }
 
 fn monitor_thread(

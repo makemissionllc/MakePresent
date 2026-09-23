@@ -341,6 +341,8 @@ export const api = {
 
   listAudioDevices: () => invoke<AudioDeviceInfo[]>("list_audio_devices"),
 
+  getAudioState: () => invoke<AudioStateView>("get_audio_state"),
+
   loadAudio: (path: string) => invoke<ClientState>("load_audio", { path }),
 
   playAudio: () => invoke<ClientState>("play_audio"),

@@ -104,19 +104,146 @@ pub fn thumbnail_path_for(data_dir: &Path, hash: &str) -> PathBuf {
     thumbnails_dir(data_dir).join(format!("{hash}.{THUMB_EXT}"))
 }
 
-/// Whether ffmpeg (which every thumbnail depends on) is available on PATH.
-/// Checked once per process, then cached.
+/// Resolve the ffmpeg binary to an absolute path, deterministically.
+///
+/// Root cause of the old "available / NOT available" flicker across launches:
+/// the check spawned bare `Command::new("ffmpeg")`, which inherits the
+/// *spawner's* PATH. A terminal `tauri dev` launch has a rich PATH
+/// (nvm shims, /usr/local/bin, snap), while a dock/.desktop launch on
+/// GNOME gets a minimal one — so the same machine alternated results with
+/// no environment change. Resolving once to an absolute path (explicit
+/// override > exe-adjacent sidecar > well-known dirs > manual PATH search)
+/// and reusing that path for every spawn makes detection and use agree.
+///
+/// Checked once per process, then cached. The startup log line in
+/// `lib.rs` reports which path won so future "NOT available" reports are
+/// actionable instead of mysterious.
+pub fn ffmpeg_path() -> Option<PathBuf> {
+    static RESOLVED: OnceLock<Option<PathBuf>> = OnceLock::new();
+    RESOLVED.get_or_init(resolve_ffmpeg).clone()
+}
+
+/// Whether ffmpeg (which every thumbnail depends on) is available.
+/// Prefers the resolved absolute binary and confirms it executes
+/// (`ffmpeg -version`); falls back to "binary exists and is executable" so
+/// a transient spawn failure can't flip a present binary to unavailable.
 pub fn ffmpeg_available() -> bool {
     static OK: OnceLock<bool> = OnceLock::new();
     *OK.get_or_init(|| {
-        Command::new("ffmpeg")
+        let path = match ffmpeg_path() {
+            Some(p) => p,
+            None => return false,
+        };
+        // Absolute-path spawn: no PATH involved, so the result is stable
+        // across terminal vs dock launches.
+        match Command::new(&path)
             .arg("-version")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        {
+            Ok(s) if s.success() => true,
+            _ => is_executable_file(&path),
+        }
     })
+}
+
+fn exe_name(base: &str) -> String {
+    if cfg!(windows) {
+        format!("{base}.exe")
+    } else {
+        base.to_string()
+    }
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.is_file()
+        && path
+            .metadata()
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
+/// Manual PATH search (no extra dependency): split PATH, join the file
+/// name, take the first executable hit.
+fn search_path(base: &str) -> Option<PathBuf> {
+    let name = exe_name(base);
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join(&name))
+            .find(|p| is_executable_file(p))
+    })
+}
+
+fn resolve_ffmpeg() -> Option<PathBuf> {
+    // 1. Explicit override for packagers / debugging (absolute or PATH name).
+    if let Ok(o) = std::env::var("MAKRSTUDIO_FFMPEG") {
+        let p = PathBuf::from(&o);
+        if p.is_absolute() && is_executable_file(&p) {
+            return Some(p);
+        }
+        if let Some(hit) = search_path(&o) {
+            return Some(hit);
+        }
+    }
+    // 2. Sidecar next to the app binary (bundled static build, all platforms).
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for name in [exe_name("ffmpeg"), "ffmpeg".to_string()] {
+                let p = dir.join(&name);
+                if is_executable_file(&p) {
+                    return Some(p);
+                }
+            }
+            // Windows NSIS layout sometimes nests resources one level down.
+            let nested = dir.join("resources").join(exe_name("ffmpeg"));
+            if is_executable_file(&nested) {
+                return Some(nested);
+            }
+        }
+    }
+    // 3. Well-known install locations, independent of the spawner's PATH.
+    //    (Flatpak/snap sandboxes expose their own paths; the override above
+    //    covers exotic layouts.)
+    #[cfg(unix)]
+    {
+        let mut candidates: Vec<PathBuf> = vec![
+            "/usr/bin/ffmpeg".into(),
+            "/usr/local/bin/ffmpeg".into(),
+            "/opt/local/bin/ffmpeg".into(),
+            "/snap/bin/ffmpeg".into(),
+        ];
+        if let Ok(home) = std::env::var("HOME") {
+            candidates.push(PathBuf::from(home).join(".local/bin/ffmpeg"));
+        }
+        if let Some(hit) = candidates.into_iter().find(|p| is_executable_file(p)) {
+            return Some(hit);
+        }
+    }
+    // 4. Whatever PATH the spawner gave us (terminal launches land here).
+    search_path("ffmpeg")
+}
+
+/// Resolve ffprobe the same deterministic way: prefer the directory the
+/// resolved ffmpeg lives in (matching pairs), then PATH search. Best
+/// effort — callers treat None as "duration unknown", never fatal.
+fn ffprobe_path() -> Option<PathBuf> {
+    if let Some(ffmpeg) = ffmpeg_path() {
+        if let Some(dir) = ffmpeg.parent() {
+            let p = dir.join(exe_name("ffprobe"));
+            if is_executable_file(&p) {
+                return Some(p);
+            }
+        }
+    }
+    search_path("ffprobe")
 }
 
 pub fn hash_file(path: &Path) -> Result<String, String> {
@@ -161,7 +288,10 @@ fn make_thumbnail(
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let mut command = Command::new("ffmpeg");
+    // Absolute resolved path (see ffmpeg_path): never bare-"ffmpeg", so the
+    // thumbnail spawn uses the exact binary detection approved.
+    let ffmpeg = ffmpeg_path().ok_or_else(|| "ffmpeg is not available".to_string())?;
+    let mut command = Command::new(&ffmpeg);
     command.arg("-y");
     if kind == MediaKind::Video {
         command.arg("-ss").arg(format!("{start_secs:.3}"));
@@ -205,7 +335,8 @@ fn video_sample_secs(duration_ms: Option<u64>) -> f64 {
 /// Duration of a video in whole milliseconds, via ffprobe. Best effort: None
 /// when ffprobe is missing or the probe fails (the video still plays).
 fn probe_duration_ms(path: &Path) -> Option<u64> {
-    let output = Command::new("ffprobe")
+    let ffprobe = ffprobe_path()?;
+    let output = Command::new(&ffprobe)
         .args([
             "-v",
             "error",
@@ -497,7 +628,11 @@ mod tests {
     const SKIP: &str = "ffmpeg not available — skipping media integration test";
 
     fn lavfi(dest: &Path, source: &str) -> bool {
-        Command::new("ffmpeg")
+        let ffmpeg = match ffmpeg_path() {
+            Some(p) => p,
+            None => return false,
+        };
+        Command::new(&ffmpeg)
             .arg("-y")
             .arg("-f")
             .arg("lavfi")
@@ -567,7 +702,14 @@ mod tests {
         }
         let dir = temp_dir("vid");
         let src = dir.join("source.mp4");
-        let ok = Command::new("ffmpeg")
+        let ffmpeg = match ffmpeg_path() {
+            Some(p) => p,
+            None => {
+                eprintln!("{SKIP}");
+                return;
+            }
+        };
+        let ok = Command::new(&ffmpeg)
             .arg("-y")
             .arg("-f")
             .arg("lavfi")

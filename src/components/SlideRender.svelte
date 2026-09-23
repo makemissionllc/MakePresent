@@ -14,6 +14,8 @@
     showBackground?: boolean;
     /** When true, Stage renders ChordPro bracketed chords as stacked band-view; Output always strips */
     isStage?: boolean;
+    /** Constrain rendered slide content to the project's presentation ratio. */
+    aspectRatio?: string;
     /** Independent overlay layer for Output (lower-third / logo) — background at z0, main at z1, overlay at z2 */
     overlay?: Overlay | null;
     /** Open a live camera stream for live_camera backgrounds. False renders a
@@ -23,11 +25,19 @@
     enableCamera?: boolean;
   }
 
-  let { slide, look, showText = true, showBackground = true, isStage = false, overlay = null, enableCamera = false }: Props = $props();
+  let { slide, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, enableCamera = false }: Props = $props();
 
   const effectiveShowBackground = $derived(showBackground && look.showBackground);
   const effectiveShowText = $derived(showText);
   const shouldShowChords = $derived(isStage && hasChords(slide.body));
+  const frameRatio = $derived.by(() => {
+    if (!aspectRatio) return null;
+    if (aspectRatio.toLowerCase() === "vertical") return 9 / 16;
+    const [width, height] = aspectRatio.split(":").map(Number);
+    return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+      ? width / height
+      : null;
+  });
 
   // Per-element styling (Title covers the scripture reference line — scripture
   // slides render the reference as the title). Fall back to the historic
@@ -73,6 +83,7 @@
   class="slide-render"
   class:no-bg={!effectiveShowBackground}
   class:absolute={look.positioning === "absolute"}
+  class:ratio-limited={frameRatio !== null}
   class:pos-top={look.textPosition === "top"}
   class:pos-center={look.textPosition === "center"}
   class:pos-bottom={look.textPosition === "bottom"}
@@ -82,6 +93,7 @@
   }}
   style:--look-title-size={`${look.titleSize}px`}
   style:--look-body-size={`${look.bodySize}px`}
+  style:--frame-ratio={frameRatio !== null ? `${frameRatio}` : undefined}
   style:--look-title-line-height={`${titleStyle.lineHeight}`}
   style:--look-body-line-height={`${bodyStyle.lineHeight}`}
   style:background-color={effectiveShowBackground ? solidColor(slide) : "transparent"}
@@ -251,6 +263,18 @@
     padding: 8vh 10vw;
     text-align: center;
     overflow: hidden;
+  }
+
+  /* Keep a chosen project ratio centered within any renderer size (Output,
+     Stage, or editor preview) while leaving the surrounding display black. */
+  .slide-render.ratio-limited {
+    inset: auto;
+    left: 50%;
+    top: 50%;
+    width: min(100cqw, calc(100cqh * var(--frame-ratio)));
+    height: min(100cqh, calc(100cqw / var(--frame-ratio)));
+    aspect-ratio: var(--frame-ratio);
+    transform: translate(-50%, -50%);
   }
 
   .slide-background {

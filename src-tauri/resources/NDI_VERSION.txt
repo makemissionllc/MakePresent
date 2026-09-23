@@ -23,13 +23,14 @@
 # and update this NDI_VERSION.txt. The redistributable is small (~9-12 MB, DLL-only)
 # — do NOT vendor the full NDI SDK (NDI_SDK/*) which is ~300MB.
 #
-# Runtime detection order (src-tauri/src/broadcast.rs:147 load_ndi):
-#   1) NDI_RUNTIME_DIR_V5 env var (set by the official redistributable installer to
-#      C:\Program Files\NDI\NDI 6 Runtime\  — still named V5 for compat, also check V6)
-#   2) Fallback: look for Processing.NDI.Lib.x64.dll next to the MakrStudio .exe
-#      (legacy manual SDK placement). Both bundled and manual SDKs work.
+# Runtime detection order (src-tauri/src/broadcast.rs load_ndi):
+#   1) NDI_RUNTIME_DIR_V6 then NDI_RUNTIME_DIR_V5 (the official runtime's
+#      compatibility variable), each checked for the platform library.
+#   2) Bare library names via the platform loader search path. On Linux this
+#      tries libndi.so.6 first, then libndi.so.5 for NDI 5 installations.
+#      Windows/macOS use Processing.NDI.Lib.x64.dll / libndi.dylib.
 #
-# Linux/macOS: Still require manual libndi.so.5 / libndi.dylib install (see README.md).
+# Linux/macOS: Still require manual libndi.so.6 (or compatible libndi.so.5) / libndi.dylib install (see README.md).
 # Windows: No manual step after this bundling — fresh install on a clean VM should
 # show in logs/app.log: "ndi: broadcast enabled — source \"MakrStudio - Sunday Output\""
 # with no "NDI SDK not found" error, and OBS (obs-ndi) should discover it automatically.

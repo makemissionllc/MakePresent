@@ -28,7 +28,13 @@ jobs:
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libclang-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libwayland-dev \
+            libegl-dev
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -53,8 +59,17 @@ jobs:
       - name: Typecheck frontend (svelte-check)
         run: npm run check
 
-      - name: Build Tauri app
-        run: npm run tauri build -- --no-bundle
+      - name: Build Tauri app (deb + AppImage)
+        run: npm run tauri build -- --bundles deb,appimage
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: MakrStudio-linux-packages
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
 
   windows:
     name: Windows Build (Native NSIS/MSI)

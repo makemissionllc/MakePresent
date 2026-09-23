@@ -38,11 +38,28 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
-    "publisher": "MakeSoftware",
+    "targets": ["nsis", "msi", "deb", "appimage"],
+    "publisher": "MakeMission",
     "category": "Productivity",
     "shortDescription": "Live presentation software for churches",
-    "longDescription": "MakrStudio - native Windows presentation app with live output, stage display, and scripture integration.",
+    "longDescription": "MakrStudio by MakeMission - presentation app with live output, stage display, and scripture integration.",
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libayatana-appindicator3-1",
+          "librsvg2-2",
+          "libxcb1",
+          "libxrandr2",
+          "libdbus-1-3",
+          "libwayland-client0",
+          "libegl1"
+        ]
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
     "resources": {
       "resources/kjv.json": "kjv.json",
       "resources/NDI_Runtime_V6.exe": "NDI_Runtime_V6.exe",
@@ -56,8 +73,10 @@
     },
     "icon": [
       "icons/32x32.png",
+      "icons/64x64.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.png",
       "icons/icon.icns",
       "icons/icon.ico"
     ],

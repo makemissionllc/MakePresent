@@ -36,7 +36,7 @@ use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use tauri::{AppHandle, Manager};
 
@@ -54,6 +54,10 @@ pub struct StageBroadcast {
     pub next: Option<crate::project::Slide>,
     pub looks: Vec<crate::project::Look>,
     pub stage_look_id: Option<String>,
+    pub aspect_ratio: String,
+    pub show_text: bool,
+    pub show_background: bool,
+    pub stage_message: Option<String>,
 }
 
 /// Build the current stage snapshot from the single source of truth — the same
@@ -72,11 +76,16 @@ pub fn stage_broadcast(app: &AppHandle) -> StageBroadcast {
         .as_deref()
         .and_then(|id| project.next_slide(id))
         .cloned();
+    let stage_message = state.stage_message.read().unwrap().clone();
     StageBroadcast {
         current,
         next,
         looks: project.looks.clone(),
         stage_look_id: settings.stage_look_id,
+        aspect_ratio: project.aspect_ratio.clone(),
+        show_text: project.show_text,
+        show_background: project.show_background,
+        stage_message,
     }
 }
 
@@ -97,7 +106,7 @@ struct NetworkInner {
     thread: Option<JoinHandle<()>>,
     clients: Arc<Mutex<Vec<ClientEntry>>>,
     /// Current PIN (empty string => "any PIN accepted", used by tests/automation).
-    pin: Arc<tokio::sync::RwLock<String>>,
+    pin: Arc<RwLock<String>>,
 }
 
 /// One connected, authenticated WebSocket client.
@@ -130,8 +139,12 @@ impl NetworkServer {
         let thread_stop = stop.clone();
         let clients: Arc<Mutex<Vec<ClientEntry>>> = Arc::new(Mutex::new(Vec::new()));
         let clients_inner = clients.clone();
-        let pin_store: Arc<tokio::sync::RwLock<String>> = Arc::new(tokio::sync::RwLock::new(pin));
+        let pin_store: Arc<RwLock<String>> = Arc::new(RwLock::new(pin));
         let pin_inner = pin_store.clone();
+        // Do not report the service as running until its socket is actually
+        // bound. Otherwise Settings persists a false-positive "enabled" state
+        // when the port is occupied and phones cannot connect.
+        let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
 
         let thread = thread::Builder::new()
             .name("network-stage".to_string())
@@ -150,64 +163,84 @@ impl NetworkServer {
                     .route("/asset", get(asset_handler))
                     .with_state(state);
 
-                let rt_result = tokio::runtime::Builder::new_multi_thread()
+                let rt = match tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(2)
                     .enable_all()
                     .thread_name("network-stage-rt")
-                    .build();
-
-                let listener = std::net::TcpListener::bind(addr);
-                match (rt_result, listener) {
-                    (Ok(rt), Ok(listener)) => {
-                        let _ = listener.set_nonblocking(true);
-                        let listener = match tokio::net::TcpListener::from_std(listener) {
-                            Ok(l) => l,
-                            Err(e) => {
-                                app.state::<AppState>().logger.log(
-                                    Level::Error,
-                                    &format!("stage-server: convert listener: {e}"),
-                                );
-                                return;
-                            }
-                        };
-                        app.state::<AppState>().logger.log(
-                            Level::Info,
-                            &format!("stage-server: listening on http://{addr}/stage"),
-                        );
-                        let thread_stop_owned = thread_stop.clone();
-                        rt.block_on(async move {
-                            let _ = axum::serve(listener, router)
-                                .with_graceful_shutdown(async move {
-                                    loop {
-                                        if thread_stop_owned.load(Ordering::Relaxed) {
-                                            break;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_millis(200))
-                                            .await;
-                                    }
-                                })
-                                .await;
-                        });
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        let message = format!("stage-server: runtime error: {e}");
+                        app.state::<AppState>().logger.log(Level::Error, &message);
+                        let _ = ready_tx.send(Err(message));
+                        return;
                     }
-                    (_, Err(e)) => {
-                        app.state::<AppState>().logger.log(
-                            Level::Error,
-                            &format!("stage-server: could not bind {addr}: {e}"),
-                        );
+                };
+                let listener = match std::net::TcpListener::bind(addr) {
+                    Ok(listener) => listener,
+                    Err(e) => {
+                        let message = format!("stage-server: could not bind {addr}: {e}");
+                        app.state::<AppState>().logger.log(Level::Error, &message);
+                        let _ = ready_tx.send(Err(message));
+                        return;
                     }
-                    (Err(e), _) => {
-                        app.state::<AppState>().logger.log(
-                            Level::Error,
-                            &format!("stage-server: runtime error: {e}"),
-                        );
-                    }
+                };
+                if let Err(e) = listener.set_nonblocking(true) {
+                    let message = format!("stage-server: could not configure {addr}: {e}");
+                    app.state::<AppState>().logger.log(Level::Error, &message);
+                    let _ = ready_tx.send(Err(message));
+                    return;
                 }
+                // Registering a std socket requires an entered Tokio reactor,
+                // even though the accept loop is started with block_on below.
+                let _runtime_guard = rt.enter();
+                let listener = match tokio::net::TcpListener::from_std(listener) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        let message = format!("stage-server: convert listener: {e}");
+                        app.state::<AppState>().logger.log(Level::Error, &message);
+                        let _ = ready_tx.send(Err(message));
+                        return;
+                    }
+                };
+                let _ = ready_tx.send(Ok(()));
+                app.state::<AppState>().logger.log(
+                    Level::Info,
+                    &format!("stage-server: listening on http://{addr}/stage"),
+                );
+                let thread_stop_owned = thread_stop.clone();
+                rt.block_on(async move {
+                    let _ = axum::serve(listener, router)
+                        .with_graceful_shutdown(async move {
+                            loop {
+                                if thread_stop_owned.load(Ordering::Relaxed) {
+                                    break;
+                                }
+                                tokio::time::sleep(std::time::Duration::from_millis(200))
+                                    .await;
+                            }
+                        })
+                        .await;
+                });
                 clients_clear.lock().unwrap().clear();
                 app.state::<AppState>()
                     .logger
                     .log(Level::Info, "stage-server: stopped");
             })
             .map_err(|e| format!("could not spawn stage server: {e}"))?;
+
+        match ready_rx.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                let _ = thread.join();
+                return Err(e);
+            }
+            Err(_) => {
+                let _ = thread.join();
+                return Err("stage server exited before it was ready".to_string());
+            }
+        }
 
         *self.inner.lock().unwrap() = Some(NetworkInner {
             stop,
@@ -254,7 +287,7 @@ impl NetworkServer {
         let Some(inner) = lock.as_ref() else {
             return false;
         };
-        *inner.pin.blocking_write() = pin.to_string();
+        *inner.pin.write().unwrap() = pin.to_string();
         true
     }
 }
@@ -264,7 +297,7 @@ impl NetworkServer {
 struct ServeState {
     app: AppHandle,
     clients: Arc<Mutex<Vec<ClientEntry>>>,
-    pin: Arc<tokio::sync::RwLock<String>>,
+    pin: Arc<RwLock<String>>,
     data_dir: PathBuf,
 }
 
@@ -330,19 +363,19 @@ async fn handle_socket(socket: WebSocket, state: ServeState) {
     let (mut sender, mut receiver) = socket.split();
 
     // Phase 1: require a valid PIN frame within a short window.
-    let required = state.pin.read().await.clone();
+    let required = state.pin.read().unwrap().clone();
     let mut authed = false;
     if required.is_empty() {
         authed = true;
     } else {
-        let target = pin_digest(&required);
         match tokio::time::timeout(std::time::Duration::from_secs(15), receiver.next()).await {
             Ok(Some(Ok(Message::Text(text)))) => {
                 if let Some(pin) = serde_json::from_str::<AuthFrame>(&text)
                     .ok()
                     .and_then(|a| a.pin)
                 {
-                    if pin_digest(&pin) == target {
+                    let latest_pin = state.pin.read().unwrap().clone();
+                    if latest_pin.is_empty() || pin_digest(&pin) == pin_digest(&latest_pin) {
                         authed = true;
                         let _ = sender.send(Message::Text("{\"type\":\"authed\"}".into())).await;
                     }
@@ -485,7 +518,7 @@ const STAGE_PAGE_HTML: &str = r###"<!doctype html>
   #err { color:#e07a7a; font-size:13px; min-height:1em; margin:0; }
   #stage { flex:1; display:none; position:relative; }
   .stage-inner { display:flex; width:100%; height:100%; overflow:hidden; }
-  .current { position:relative; flex:1; min-width:0; overflow:hidden; }
+  .current { position:relative; flex:1; min-width:0; overflow:hidden; container-type:size; }
   .side { width:30%; min-width:200px; display:flex; flex-direction:column;
     justify-content:space-between; border-left:1px solid var(--line); padding:4vh 2vw;
     background:var(--panel); }
@@ -498,6 +531,9 @@ const STAGE_PAGE_HTML: &str = r###"<!doctype html>
     color:#fff; }
   .slide-render { position:absolute; inset:0; display:flex; flex-direction:column;
     align-items:center; gap:2.5vh; padding:8vh 10vw; text-align:center; overflow:hidden; }
+  .slide-render.ratio-limited { inset:auto; left:50%; top:50%;
+    width:min(100cqw,calc(100cqh * var(--r))); height:min(100cqh,calc(100cqw / var(--r)));
+    aspect-ratio:var(--r); transform:translate(-50%,-50%); }
   .slide-render.pos-top { justify-content:flex-start; }
   .slide-render.pos-center { justify-content:center; }
   .slide-render.pos-bottom { justify-content:flex-end; }
@@ -513,6 +549,9 @@ const STAGE_PAGE_HTML: &str = r###"<!doctype html>
     text-align:center; padding:24px; }
   .offline .big { font-size:18px; }
   .offline .sub { color:var(--dim); font-size:13px; max-width:320px; line-height:1.5; }
+  .stage-banner { display:none; position:absolute; z-index:10; top:0; left:0; right:0;
+    padding:1.2vh 2vw; background:#e11d48; color:#fff; text-align:center;
+    font-size:clamp(1rem,3.5vmin,2.4rem); font-weight:800; text-transform:uppercase; }
 </style>
 </head>
 <body>
@@ -534,6 +573,7 @@ const STAGE_PAGE_HTML: &str = r###"<!doctype html>
         <div class="clock" id="clock">--:--:--</div>
       </div>
     </div>
+    <div class="stage-banner" id="stage-banner" role="alert"></div>
   </div>
 </div>
 <script>
@@ -542,6 +582,7 @@ const STAGE_PAGE_HTML: &str = r###"<!doctype html>
   var gate=document.getElementById("gate"),stageEl=document.getElementById("stage");
   var pin=document.getElementById("pin"),connect=document.getElementById("connect"),err=document.getElementById("err");
   var currentEl=document.getElementById("current"),nextEl=document.getElementById("next"),clockEl=document.getElementById("clock");
+  var bannerEl=document.getElementById("stage-banner");
   var ws=null,timer=null,desiredPin="",lastState=null;
 
   function esc(s){var d=document.createElement("div");d.textContent=s;return d.innerHTML;}
@@ -557,8 +598,11 @@ const STAGE_PAGE_HTML: &str = r###"<!doctype html>
     el.style.fontSize=Math.max(size,floor)+"px";}
   function renderCurrent(s){
     var look=resolveLook(s),slide=s&&s.current;
+    bannerEl.textContent=(s&&s.stageMessage)||"";
+    bannerEl.style.display=bannerEl.textContent?"block":"none";
     if(!slide){currentEl.innerHTML='<span class="ph">No live slide</span>';return;}
-    var showBg=!look||look.showBackground;
+    var showBg=s.showBackground!==false&&(!look||look.showBackground);
+    var showText=s.showText!==false;
     var bg="#000";if(slide.background.type==="solid")bg=slide.background.color;
     var media="";
     if(showBg&&(slide.background.type==="image"||slide.background.type==="video")){
@@ -569,9 +613,10 @@ const STAGE_PAGE_HTML: &str = r###"<!doctype html>
     var posCls=look?("pos-"+look.textPosition):"pos-center";
     var tSize=(look?look.titleSize:60)+"px",bSize=(look?look.bodySize:40)+"px";
     var textColor=look?look.textColor:"#ffffff";
-    var title=slide.title?'<h1 class="look-title">'+esc(slide.title)+'</h1>':"";
-    var body=slide.body?'<p class="look-body">'+esc(slide.body)+'</p>':"";
-    currentEl.innerHTML='<div class="slide-render '+posCls+'" style="background-color:'+
+    var title=showText&&slide.title?'<h1 class="look-title">'+esc(slide.title)+'</h1>':"";
+    var body=showText&&slide.body?'<p class="look-body">'+esc(slide.body)+'</p>':"";
+    var ratio=s.aspectRatio==="Vertical"?9/16:(function(){var p=String(s.aspectRatio||"16:9").split(":");var w=Number(p[0]),h=Number(p[1]);return w>0&&h>0?w/h:16/9;})();
+    currentEl.innerHTML='<div class="slide-render ratio-limited '+posCls+'" style="--r:'+ratio+';background-color:'+
       (showBg?bg:"transparent")+';color:'+textColor+';--t:'+tSize+';--b:'+bSize+'">'+
       media+title+body+'</div>';
     fit(currentEl);}

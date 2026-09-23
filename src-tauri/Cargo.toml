@@ -53,6 +53,6 @@ rodio = { version = "0.17", default-features = false, features = ["mp3", "wav", 
 # frames and JPEG-encode them for the low-rate base64 preview event.
 # `image` with only the pure-Rust JPEG codec (zune-jpeg, no system libs);
 # `base64` was already in the tree as a transitive dependency.
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "tiff", "webp", "pnm"] }
 xcap = "=0.4.1"
 base64 = "0.22"

@@ -275,10 +275,36 @@ fn extension_of(source: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Generate a thumbnail for an **image** without requiring ffmpeg.
+///
+/// Pure-Rust path using the `image` crate so `*.png`/`*.jpg` imports work on
+/// a fresh Linux install that has not yet installed ffmpeg. SVG/AVIF and other
+/// formats the crate cannot decode fall back to ffmpeg.
+fn make_image_thumbnail_builtin(src: &Path, dest: &Path) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let img = image::open(src).map_err(|e| format!("could not decode image {}: {e}", src.display()))?;
+    let (w, h) = (img.width(), img.height());
+    if w == 0 || h == 0 {
+        return Err(format!("image has zero dimensions: {}", src.display()));
+    }
+    let new_h = ((h as f64 * THUMB_WIDTH as f64 / w as f64).round() as u32).max(1);
+    let thumb = img.resize(THUMB_WIDTH, new_h, image::imageops::FilterType::Triangle);
+    // Write as JPEG — small, universally viewable in the UI.
+    thumb
+        .save_with_format(dest, image::ImageFormat::Jpeg)
+        .map_err(|e| format!("could not write thumbnail {}: {e}", dest.display()))?;
+    if !dest.is_file() || fs::metadata(dest).map(|m| m.len() == 0).unwrap_or(true) {
+        return Err(format!("thumbnail output missing or empty: {}", dest.display()));
+    }
+    Ok(())
+}
+
 /// Generate (or regenerate) the thumbnail for a media file into `out`.
-/// Uses ffmpeg for both kinds so there is a single, well-understood pipeline.
-/// `start_secs` is where a video is sampled from (a frame there is usually
-/// more representative than the first, often-black frame).
+///
+/// Images prefer the pure-Rust builtin path so they never require ffmpeg;
+/// videos and undecodable images fall back to ffmpeg.
 fn make_thumbnail(
     src: &Path,
     dest: &Path,
@@ -288,9 +314,30 @@ fn make_thumbnail(
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
+    if kind == MediaKind::Image {
+        match make_image_thumbnail_builtin(src, dest) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                // SVG, AVIF, or corrupt files land here — try ffmpeg before failing.
+                if ffmpeg_path().is_none() {
+                    // No ffmpeg to fall back to; surface the builtin error directly
+                    // with actionable install advice.
+                    return Err(format!("{e} — install ffmpeg to enable this image type (sudo apt install ffmpeg / brew install ffmpeg / winget install ffmpeg)"));
+                }
+                // fall through to ffmpeg
+                eprintln!("media: builtin image thumbnail failed for {}: {e} — trying ffmpeg", src.display());
+            }
+        }
+    }
     // Absolute resolved path (see ffmpeg_path): never bare-"ffmpeg", so the
     // thumbnail spawn uses the exact binary detection approved.
-    let ffmpeg = ffmpeg_path().ok_or_else(|| "ffmpeg is not available".to_string())?;
+    let ffmpeg = ffmpeg_path().ok_or_else(|| {
+        if kind == MediaKind::Video {
+            "ffmpeg is not available on this system — video thumbnails require it. Install with: Ubuntu/Debian: sudo apt update && sudo apt install -y ffmpeg | Fedora: sudo dnf install ffmpeg | Arch: sudo pacman -S ffmpeg | macOS: brew install ffmpeg | Windows: winget install Gyan.FFmpeg  (or set MAKRSTUDIO_FFMPEG=/path/to/ffmpeg)".to_string()
+        } else {
+            "ffmpeg is not available and the image could not be decoded natively. Install ffmpeg to enable this image type: sudo apt install ffmpeg / brew install ffmpeg / winget install ffmpeg".to_string()
+        }
+    })?;
     let mut command = Command::new(&ffmpeg);
     command.arg("-y");
     if kind == MediaKind::Video {
@@ -353,14 +400,6 @@ fn probe_duration_ms(path: &Path) -> Option<u64> {
 }
 
 fn media_asset_hash(path: &Path, kind: MediaKind, data_dir: &Path) -> Result<MediaRef, String> {
-    if !ffmpeg_available() {
-        return Err(
-            "ffmpeg is not available on this system, and thumbnail generation depends on it. \
-             Install ffmpeg, or bundle a static binary, then import again."
-                .to_string(),
-        );
-    }
-
     let hash = hash_file(path)?;
     let ext = extension_of(path);
     let file_name = format!("{hash}.{ext}");

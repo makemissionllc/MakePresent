@@ -229,13 +229,15 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
     // fit each role independently against its own box — never its sibling.
     if (mode === "absolute") {
       if (title) {
-        const tw = Math.max(1, title.getBoundingClientRect().width);
-        const th = Math.max(1, title.getBoundingClientRect().height);
+        // offset dimensions stay in the slide's logical coordinate space even
+        // when a thumbnail scales the entire renderer with a CSS transform.
+        const tw = Math.max(1, title.offsetWidth);
+        const th = Math.max(1, title.offsetHeight);
         fitElement(title, minTitlePx, tw, th);
       }
       if (body) {
-        const bw = Math.max(1, body.getBoundingClientRect().width);
-        const bh = Math.max(1, body.getBoundingClientRect().height);
+        const bw = Math.max(1, body.offsetWidth);
+        const bh = Math.max(1, body.offsetHeight);
         fitElement(body, minBodyPx, bw, bh);
       }
       return;

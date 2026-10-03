@@ -1,21 +1,26 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api } from "../lib/sync";
-  import type { Library, MediaAsset, ScriptureMatch } from "../lib/types";
+  import type { Library, LyricsHit, MediaAsset, ScriptureMatch } from "../lib/types";
   import { isMedia } from "../lib/types";
+  import { surface, veil } from "../lib/motion";
 
   interface Props {
     open: boolean;
     library: Library | null;
     onClose: () => void;
+    onImportLyrics: (hit: LyricsHit) => void;
   }
 
-  let { open, library, onClose }: Props = $props();
+  let { open, library, onClose, onImportLyrics }: Props = $props();
 
   let query = $state("");
   let inputEl = $state<HTMLInputElement | null>(null);
   let scriptureResults = $state<ScriptureMatch[]>([]);
   let mediaResults = $state<MediaAsset[]>([]);
+  let onlineSongs = $state<LyricsHit[]>([]);
+  let onlineError = $state<string | null>(null);
+  let onlineLoading = $state(false);
   let loading = $state(false);
   let errorMsg = $state<string | null>(null);
   let inserting = $state<string | null>(null);
@@ -54,6 +59,9 @@
       query = "";
       scriptureResults = [];
       mediaResults = [];
+      onlineSongs = [];
+      onlineError = null;
+      onlineLoading = false;
       errorMsg = null;
       loading = false;
       seq++;
@@ -68,8 +76,13 @@
   function onInput(e: Event): void {
     const v = (e.target as HTMLInputElement).value;
     query = v;
+    seq++;
+    loading = v.trim().length > 0;
+    onlineSongs = [];
+    onlineError = null;
+    onlineLoading = v.trim().length >= 3;
     if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(() => void doSearch(v), 180);
+    debounce = setTimeout(() => void doSearch(v), 420);
   }
 
   async function doSearch(q: string): Promise<void> {
@@ -78,6 +91,9 @@
     if (!trimmed) {
       // Empty query: show recent media, clear scripture/media filtered to empty? Keep top media
       scriptureResults = [];
+      onlineSongs = [];
+      onlineError = null;
+      onlineLoading = false;
       try {
         const all = await api.listMedia();
         if (cur !== seq) return;
@@ -90,7 +106,15 @@
     }
     loading = true;
     errorMsg = null;
-    // Parallel: scripture + media (library is client-side)
+    // Local library is immediate. Keep online results optional so a service
+    // outage never interferes with Scripture or cached media search.
+    if (trimmed.length >= 3) {
+      onlineLoading = true;
+      void api.searchLyrics(trimmed)
+        .then((found) => { if (cur === seq) onlineSongs = found.filter((hit) => hit.hasLyrics).slice(0, 6); })
+        .catch((e: unknown) => { if (cur === seq) onlineError = String(e); })
+        .finally(() => { if (cur === seq) onlineLoading = false; });
+    }
     const [scr, med] = await Promise.allSettled([
       api.searchScripture(trimmed),
       api.searchMedia(trimmed),
@@ -165,7 +189,7 @@
 </script>
 
 {#if open}
-  <div class="overlay" role="presentation">
+  <div class="overlay" role="presentation" transition:veil={{ duration: 170 }}>
     <button class="backdrop" aria-label="Close search" tabindex="-1" onclick={onBackdropClick}></button>
     <div
       class="palette"
@@ -173,6 +197,7 @@
       aria-modal="true"
       aria-label="Global search"
       tabindex="-1"
+      in:surface={{ duration: 260, distance: 10 }}
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => e.stopPropagation()}
     >
@@ -198,7 +223,7 @@
 
       <div class="palette-body">
         {#if !query.trim() && libraryResults.length === 0 && scriptureResults.length === 0 && mediaResults.length === 0 && !loading}
-          <p class="empty-hint">Type to search — songs, Bibles (KJV + imported), and media cache. Results insert directly into the playlist.</p>
+          <p class="empty-hint">Search your songs, online lyrics, Bibles, and media. Choose an online song to review its slides before adding it.</p>
         {/if}
 
         {#if loading}
@@ -224,6 +249,30 @@
                     <span class="result-meta">{songVerseCount(song)} {songVerseCount(song) === 1 ? "verse" : "verses"} • {songBlockTitles(song)}</span>
                   </button>
                 </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+
+        <section class="category">
+          <h3>Songs — Online lyrics <span class="count">{onlineSongs.length}</span></h3>
+          <p class="online-note">Search terms are sent to LRCLIB. Review lyrics before adding them.</p>
+          {#if !query.trim() || query.trim().length < 3}
+            <p class="empty">Type a song title or artist to find lyrics.</p>
+          {:else if onlineError}
+            <p class="empty">Online lyrics are unavailable right now. Your library search still works.</p>
+          {:else if onlineLoading}
+            <p class="empty"><span class="mini-spinner" aria-hidden="true"></span> Finding online lyrics…</p>
+          {:else if onlineSongs.length === 0}
+            <p class="empty">No online lyrics found. Try adding the artist name.</p>
+          {:else}
+            <ul class="result-list">
+              {#each onlineSongs as hit (hit.id)}
+                <li><button class="result online-result" onclick={() => onImportLyrics(hit)}>
+                  <span class="result-title">{hit.title}</span>
+                  <span class="result-meta">{hit.artist}{hit.album ? ` · ${hit.album}` : ""}</span>
+                  <span class="online-action">Review lyrics and slides →</span>
+                </button></li>
               {/each}
             </ul>
           {/if}
@@ -449,6 +498,12 @@
     padding: 9px 10px;
   }
   .result:hover { border-color: var(--accent); background: var(--panel); }
+  .result { transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out); }
+  .result:focus-visible { box-shadow: 0 0 0 3px rgba(129,170,149,0.14); }
+  .online-result { position: relative; padding-right: 130px; }
+  .online-note { margin: -3px 0 8px; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
+  .online-action { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--accent); font-size: 10px; font-weight: 700; white-space: nowrap; }
+  @media (max-width: 560px) { .online-result { padding-right: 10px; } .online-action { position: static; transform: none; margin-top: 4px; } }
   .result:disabled { opacity: 0.6; }
   .result-title { font-size: 13px; font-weight: 600; color: var(--text); }
   .result-meta, .result-preview {

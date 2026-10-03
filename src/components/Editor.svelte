@@ -1,14 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { cubicOut } from "svelte/easing";
+  import { crossfade, slide as slideTransition } from "svelte/transition";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
   import { api, subscribeAck, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide } from "../lib/types";
+  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, LyricsHit, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide } from "../lib/types";
   import { isMedia, isLiveCamera } from "../lib/types";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
-  import SlideRender from "./SlideRender.svelte";
+  import SlideThumbnail from "./SlideThumbnail.svelte";
   import SongEditorModal from "./SongEditorModal.svelte";
   import ProjectHub from "../lib/components/ProjectHub.svelte";
   import GlobalSearch from "./GlobalSearch.svelte";
@@ -17,6 +19,7 @@
   import HelpModal from "./HelpModal.svelte";
   import BrandLockup from "./BrandLockup.svelte";
   import Onboarding from "./Onboarding.svelte";
+  import { prefersReducedMotion } from "../lib/motion";
   import {
     dismissHint,
     dismissTour,
@@ -37,6 +40,14 @@
     "#2b2b3d",
     "#000000",
   ];
+
+  // Pair only the same slide between its grid thumbnail and edit canvas.
+  // Unmatched cards stay still; the output window has its own transitions.
+  const [sendPreview, receivePreview] = crossfade({
+    duration: (distance) => prefersReducedMotion() ? 0 : Math.min(390, Math.max(270, Math.sqrt(distance) * 18)),
+    easing: cubicOut,
+    fallback: () => ({ duration: 0 }),
+  });
 
   const MEDIA_FILTERS = [
     {
@@ -130,12 +141,11 @@
     "txt",
   ]);
 
-  // Add song modal (reusable Modal, replaces window.prompt "localhost:1420 says")
-  let showAddSongTitleModal = $state(false);
-  let showAddSongBodyModal = $state(false);
+  // Song editor accepts typed lyrics or an online result from Global Search.
   let showSongEditor = $state(false);
   let pendingSongTitle = $state("");
   let pendingSongBody = $state("");
+  let pendingLyricsId = $state<number | null>(null);
 
   // View Hub (Startup launcher)
   let showHub = $state(false);
@@ -275,6 +285,15 @@
     project?.slides.find((s) => s.id === selectedId) ??
       project?.slides[0] ??
       null,
+  );
+  const selectedPreviewSlide = $derived(
+    selected
+      ? {
+          ...selected,
+          title: draftId === selected.id ? draftTitle : selected.title,
+          body: draftId === selected.id ? draftBody : selected.body,
+        }
+      : null,
   );
   const librarySongs = $derived(
     (library?.songs ?? []).filter((song) =>
@@ -1325,27 +1344,17 @@
 
   function addLibrarySong(): void {
     pendingSongTitle = "";
-    showAddSongTitleModal = true;
-  }
-
-  function handleAddSongTitleConfirm(title: string): void {
-    const trimmed = title.trim();
-    if (!trimmed) return;
-    pendingSongTitle = trimmed;
-    showAddSongTitleModal = false;
     pendingSongBody = "";
+    pendingLyricsId = null;
     showSongEditor = true;
   }
 
-  function handleAddSongBodyConfirm(body: string): void {
-    const title = pendingSongTitle;
-    showAddSongBodyModal = false;
-    pendingSongTitle = "";
-    use("songs");
-    void api
-      .addLibrarySong(title, body)
-      .then((l) => (library = l))
-      .catch((e: unknown) => (errorMsg = String(e)));
+  function importLyricsFromSearch(hit: LyricsHit): void {
+    globalSearchOpen = false;
+    pendingSongTitle = hit.title;
+    pendingSongBody = "";
+    pendingLyricsId = hit.id;
+    showSongEditor = true;
   }
 
   function handleSongEditorConfirm(
@@ -1355,6 +1364,7 @@
     showSongEditor = false;
     pendingSongTitle = "";
     pendingSongBody = "";
+    pendingLyricsId = null;
     use("songs");
     void api
       .addLibrarySong(title, undefined, undefined, slides as any)
@@ -1362,17 +1372,11 @@
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
-  function handleSongEditorBack(): void {
-    showSongEditor = false;
-    showAddSongTitleModal = true;
-  }
-
   function handleAddSongCancel(): void {
-    showAddSongTitleModal = false;
-    showAddSongBodyModal = false;
     showSongEditor = false;
     pendingSongTitle = "";
     pendingSongBody = "";
+    pendingLyricsId = null;
   }
 
   function deleteSong(song: LibrarySong): void {
@@ -1573,8 +1577,6 @@
     // so checking only the active element lets the global arrows leak through.
     if (
       settingsOpen ||
-      showAddSongTitleModal ||
-      showAddSongBodyModal ||
       showSongEditor ||
       showHub ||
       showSavePlaylistModal ||
@@ -1946,6 +1948,7 @@
                 onclick={() => goLive(slide)}
                 draggable="false"
               >
+                <span class="playlist-index">{String(i + 1).padStart(2, "0")}</span>
                 <span
                   class="swatch"
                   class:camera={isLiveCamera(slide.background)}
@@ -2139,7 +2142,7 @@
                 title={songExpanded ? "Collapse verses" : `Expand — ${getBlocksArray(song).length} ${getBlocksArray(song).length === 1 ? "verse" : "verses"}`}
                 onclick={() => toggleSongExpanded(song.id)}
               >
-                {songExpanded ? "▾" : "▸"}
+                <span class:expanded={songExpanded} aria-hidden="true">▸</span>
               </button>
               <button
                 class="song-entry"
@@ -2161,8 +2164,10 @@
                   style:background-position="center"
                   title={isLiveCamera(song.defaultBackground) ? `Live camera: ${song.defaultBackground.label || "camera"}` : undefined}
                 >{#if isLiveCamera(song.defaultBackground)}<span aria-hidden="true">🎥</span>{/if}</span>
-                <span class="song-label">{song.title || "Untitled"}</span>
-                <span class="song-count">{getSongArrangementCount(song)} {getSongArrangementCount(song) === 1 ? "slide" : "slides"} • {getSongBlockCount(song)} blocks</span>
+                <span class="song-meta">
+                  <span class="song-label">{song.title || "Untitled"}</span>
+                  <span class="song-count">{getSongArrangementCount(song)} {getSongArrangementCount(song) === 1 ? "slide" : "slides"} · {getSongBlockCount(song)} blocks</span>
+                </span>
               </button>
               <button
                 class="delete"
@@ -2177,7 +2182,7 @@
             </li>
             {#if songExpanded}
             {#each getBlocksArray(song) as verse (verse.id)}
-              <li class="library-verse-row">
+              <li class="library-verse-row" transition:slideTransition={{ duration: librarySearch.trim() || prefersReducedMotion() ? 0 : 180, easing: cubicOut, axis: "y" }}>
                 <button
                   class="library-verse"
                   draggable="true"
@@ -2191,7 +2196,7 @@
               </li>
             {/each}
             {#if song.arrangement && song.arrangement.length > 0}
-              <li class="arrangement-row">
+              <li class="arrangement-row" transition:slideTransition={{ duration: librarySearch.trim() || prefersReducedMotion() ? 0 : 180, easing: cubicOut, axis: "y" }}>
                 <span class="arrangement-label">Order:</span>
                 <div class="chip-list">
                   {#each song.arrangement as blockKey, idx (blockKey + "-" + idx)}
@@ -2263,9 +2268,9 @@
           <strong>{centralView === "looks" ? "Shape the look" : showDetail && selected ? "Edit slide" : "Build your service"}</strong>
           <span class="editor-subtitle">{centralView === "looks" ? "Set the style shown on your screens." : showDetail && selected ? "Edit the wording and background, then preview the slide." : "Add content, arrange the order, then send a slide live."}</span>
         </div>
-        <div class="workspace-switch" aria-label="Workspace view">
-          <button class="ws-btn" class:active={centralView === "slides"} onclick={() => (centralView = "slides")} aria-label="Open slide workspace"><span aria-hidden="true">▦</span> Slides</button>
-          <button class="ws-btn" class:active={centralView === "looks"} onclick={() => { centralView = "looks"; use("looks"); }} aria-label="Open Look editor"><span aria-hidden="true">◉</span> Looks</button>
+        <div class="workspace-switch" class:looks-active={centralView === "looks"} aria-label="Workspace view">
+          <button class="ws-btn" class:active={centralView === "slides"} aria-pressed={centralView === "slides"} onclick={() => (centralView = "slides")} aria-label="Open slide workspace"><span aria-hidden="true">▦</span> Slides</button>
+          <button class="ws-btn" class:active={centralView === "looks"} aria-pressed={centralView === "looks"} onclick={() => { centralView = "looks"; use("looks"); }} aria-label="Open Look editor"><span aria-hidden="true">◉</span> Looks</button>
         </div>
       </div>
       {#if centralView === "slides" && showHint(onboarding, "looks")}
@@ -2281,6 +2286,7 @@
           <button class="ghost" class:active={project?.live === selected.id} onclick={() => goLive(selected)} title="Go live on Output">Go Live</button>
           <button class="ghost" onclick={() => closeDetail()}>Done</button>
         </div>
+        <div class="detail-workspace">
         <div class="edit-window">
           <label>
             Slide name
@@ -2469,6 +2475,30 @@
             <span class="field-hint">When live, advance to next slide after N seconds. Blank = manual.</span>
           </label>
         </div>
+        <aside class="detail-preview-panel" aria-label="Slide preview">
+          <div class="detail-preview-heading">
+            <div><span class="editor-eyebrow">ON SCREEN</span><strong>Slide preview</strong></div>
+            <span class="detail-preview-number">{String((project?.slides.findIndex((s) => s.id === selected.id) ?? 0) + 1).padStart(2, "0")}</span>
+          </div>
+          <div class="detail-preview-canvas" in:receivePreview|global={{ key: selected.id }} out:sendPreview|global={{ key: selected.id }}>
+            {#if selectedPreviewSlide && outputPreviewLook}
+              <SlideThumbnail
+                slide={selectedPreviewSlide}
+                look={outputPreviewLook}
+                showText={true}
+                showBackground={true}
+                aspectRatio={project?.aspectRatio ?? "16:9"}
+              />
+            {:else}
+              <div class="grid-thumb-fallback">Preview unavailable</div>
+            {/if}
+          </div>
+          <div class="detail-preview-foot">
+            <span>Updates as you type</span>
+            <button class="ghost" onclick={() => { centralView = "looks"; use("looks"); }}>Edit Look →</button>
+          </div>
+        </aside>
+        </div>
       {:else}
         <div class="grid-toolbar">
           <div class="grid-toolbar-label"><span class="grid-toolbar-mark">01</span><span><strong>Arrange slides</strong><small>Drag thumbnails to set the running order</small></span></div>
@@ -2504,6 +2534,7 @@
               {/if}
               <div
                 class="grid-cell"
+                style={`--item-index: ${Math.min(i, 8)}`}
                 class:selected={selectedId === slide.id}
                 class:live={project?.live === slide.id}
                 draggable="true"
@@ -2515,14 +2546,15 @@
                 ondrop={(e) => onPlaylistDrop(e, i)}
               >
                 <button class="grid-thumb" onclick={() => openDetail(slide)} aria-label={`Edit ${slideDisplayName(slide)}`}>
-                  <div class="grid-thumb-inner">
+                  <div class="grid-thumb-inner" in:receivePreview|global={{ key: slide.id }} out:sendPreview|global={{ key: slide.id }}>
                     {#if outputPreviewLook}
-                      <SlideRender
+                      <SlideThumbnail
                         slide={slide}
                         look={outputPreviewLook}
                         showText={true}
                         showBackground={true}
                         overlay={null}
+                        aspectRatio={project?.aspectRatio ?? "16:9"}
                       />
                     {:else}
                       <div class="grid-thumb-fallback">{slide.title || "Untitled"}</div>
@@ -2547,7 +2579,7 @@
       {/if}
       </div>
       {#if !browseCollapsed}
-        <div class="browse-dock" role="region" aria-label="Browse Scripture">
+        <div class="browse-dock" role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
           <div class="browse-dock-header"><strong>Browse Scripture</strong><button class="browse-dock-close" onclick={() => (browseCollapsed = true)} aria-label="Close Scripture browser">× Close</button></div>
           <div class="browse-dock-left">
             <label>
@@ -2670,7 +2702,7 @@
         <div class="preview-row">
           <div class="preview-box">
             {#if outputPreviewSlide && outputPreviewLook}
-              <SlideRender
+              <SlideThumbnail
                 slide={outputPreviewSlide}
                 look={outputPreviewLook}
                 showText={project?.showText ?? true}
@@ -2760,7 +2792,7 @@
       <div class="preview-row">
         <div class="preview-box">
           {#if stagePreviewSlide && stagePreviewLook}
-            <SlideRender
+            <SlideThumbnail
               slide={stagePreviewSlide}
               look={stagePreviewLook}
               showText={project?.showText ?? true}
@@ -2905,39 +2937,13 @@
   <SettingsPanel app={appState} onclose={() => (settingsOpen = false)} />
 {/if}
 
-<Modal
-  open={showAddSongTitleModal}
-  title="Add song"
-  label="Song title"
-  placeholder="e.g. Amazing Grace"
-  initialValue=""
-  confirmLabel="Next"
-  cancelLabel="Cancel"
-  onConfirm={handleAddSongTitleConfirm}
-  onCancel={handleAddSongCancel}
-/>
-<Modal
-  open={showAddSongBodyModal}
-  title="Add song"
-  label="Lyrics / body text (optional)"
-  placeholder="Enter lyrics, press Enter to save"
-  initialValue=""
-  confirmLabel="Add song"
-  cancelLabel="Back"
-  onConfirm={handleAddSongBodyConfirm}
-  onCancel={() => {
-    showAddSongBodyModal = false;
-    showAddSongTitleModal = true;
-  }}
-/>
-
 <SongEditorModal
   open={showSongEditor}
   initialTitle={pendingSongTitle}
   initialBody={pendingSongBody}
+  initialLyricsId={pendingLyricsId}
   onConfirm={handleSongEditorConfirm}
   onCancel={handleAddSongCancel}
-  onBack={handleSongEditorBack}
 />
 
 <ProjectHub
@@ -2963,7 +2969,7 @@
   onCancel={() => (showSavePlaylistModal = false)}
 />
 
-<GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} />
+<GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} onImportLyrics={importLyricsFromSearch} />
 
 {#if showTour}
   <GuidedTour
@@ -3356,16 +3362,6 @@
     position: relative;
     container-type: size;
     box-shadow: var(--shadow-soft);
-  }
-  .preview-box :global(.slide-render:not(.ratio-limited)) {
-    /* Scale down the 72px Look sizes to fit the ~280px preview; SlideRender is absolute inset:0 */
-    transform: scale(0.42);
-    transform-origin: top left;
-    width: 238%;
-    height: 238%;
-  }
-  .preview-box :global(.slide-render.ratio-limited) {
-    transform: translate(-50%, -50%);
   }
   .preview-empty {
     display: grid;
@@ -4037,12 +4033,6 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
-  }
-  .grid-thumb-inner :global(.slide-render) {
-    transform: scale(0.32);
-    transform-origin: top left;
-    width: 312%;
-    height: 312%;
   }
   .grid-thumb-fallback {
     display: grid;
@@ -5038,5 +5028,181 @@
     .editor-heading { flex-direction: row; align-items: center; }
     .editor { min-height: 620px; overflow: visible; }
     .editor-content { overflow: visible; flex: 0 0 auto; }
+  }
+
+  /* Roomy source rail. Each collection grows with its content and the rail
+     scrolls as a whole, so a busy library does not crush the playlist. */
+  .sidebar:not(.output-panel) {
+    gap: 18px;
+    padding: 18px 15px;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .sidebar-section,
+  .sidebar-section.has-content,
+  .sidebar-section.library-section.has-content.library-active {
+    flex: 0 0 auto;
+    min-height: 0;
+    gap: 11px;
+    padding: 14px;
+    overflow: visible;
+  }
+  .sidebar-section .slide-list,
+  .sidebar-section .song-list,
+  .sidebar-section .scripture-list,
+  .sidebar-section:not(.has-content) .slide-list,
+  .sidebar-section:not(.has-content) .song-list {
+    flex: 0 1 auto;
+    max-height: min(31vh, 320px);
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .sidebar-section .section-title,
+  .sidebar-section .library-title,
+  .sidebar-section .scripture-title {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .sidebar-section .search { margin: 0; }
+  .slide-list, .song-list { gap: 6px; }
+  .slide-entry { min-width: 0; min-height: 42px; padding: 8px; gap: 8px; }
+  .slide-entry .swatch { width: 27px; height: 18px; border-radius: 4px; }
+  .playlist-index { flex: none; color: var(--text-dim); font: 700 10px var(--font-mono); }
+  .slide-label { min-width: 0; font-size: 12px; }
+  .song-list li { min-width: 0; }
+  .song-entry { min-width: 0; padding: 9px 7px; border-radius: 8px; }
+  .song-swatch { width: 26px; height: 26px; }
+  .song-meta { display: grid; flex: 1; min-width: 0; gap: 3px; text-align: left; }
+  .song-label {
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    white-space: normal;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+  .song-count { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+  .song-list .delete, .slide-list .delete { align-self: center; flex: none; padding: 6px; }
+  .sidebar-section .add { margin-top: 0; padding: 8px 10px; border: 1px solid rgba(129,170,149,.17); border-radius: 7px; }
+  .external-drop-zone, .library-drop-zone { margin-top: 2px; padding: 13px 10px; line-height: 1.45; }
+  .browse-panel { flex: 0 0 auto; margin-top: 0; }
+  .browse-header { padding: 12px; }
+  .bibles-folder-hint { margin-top: 4px; padding: 9px; line-height: 1.55; }
+
+  /* The detail view uses the familiar canvas + properties arrangement.
+     Typing updates the slide canvas before the debounced save completes. */
+  .detail-workspace {
+    display: grid;
+    grid-template-columns: minmax(320px, 1fr) minmax(320px, 1.08fr);
+    align-items: start;
+    gap: clamp(20px, 2.4vw, 36px);
+  }
+  .edit-window { width: 100%; max-width: none; gap: 18px; }
+  .edit-window > label, .edit-window > .field {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 15px;
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 11px;
+    background: rgba(255,255,255,.025);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .edit-window .field-hint { margin-top: 0; line-height: 1.45; font-weight: 400; font-style: normal; }
+  .edit-window textarea { min-height: 170px; resize: vertical; }
+  .edit-window .swatches { gap: 12px; }
+  .edit-window .swatches .swatch { width: 30px; height: 30px; border-radius: 7px; }
+  .detail-preview-panel {
+    position: sticky;
+    top: 78px;
+    display: grid;
+    gap: 14px;
+    padding: 16px;
+    border: 1px solid rgba(255,255,255,.09);
+    border-radius: 13px;
+    background: linear-gradient(155deg, rgba(129,170,149,.07), transparent 50%), var(--panel);
+    box-shadow: 0 10px 28px rgba(0,0,0,.18);
+  }
+  .detail-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .detail-preview-heading > div { display: grid; gap: 4px; }
+  .detail-preview-heading strong { color: var(--text); font-size: 14px; }
+  .detail-preview-number { color: var(--text-dim); font: 700 12px var(--font-mono); }
+  .detail-preview-canvas {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.13);
+    border-radius: 8px;
+    background: #000;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28);
+  }
+  .detail-preview-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-dim); font-size: 11px; }
+  .detail-preview-foot button { flex: none; color: #b9d9c8; font-size: 11px; }
+  .slide-grid { gap: 20px; }
+
+  /* One clear motion language for the workspace: the selection travels,
+     while the destination content arrives with a short, quiet entrance. */
+  .workspace-switch { position: relative; isolation: isolate; }
+  .workspace-switch::before {
+    content: "";
+    position: absolute;
+    z-index: 0;
+    top: 4px;
+    bottom: 4px;
+    left: 4px;
+    width: calc((100% - 12px) / 2);
+    border: 1px solid rgba(129,170,149,0.25);
+    border-radius: 7px;
+    background: #303936;
+    box-shadow: 0 2px 7px rgba(0,0,0,0.22);
+    transition: transform var(--motion-slow) var(--ease-emphasized);
+  }
+  .workspace-switch.looks-active::before { transform: translateX(calc(100% + 4px)); }
+  .ws-btn { position: relative; z-index: 1; transition: color var(--motion-fast) var(--ease-out); }
+  .ws-btn.active { background: transparent; border-color: transparent; box-shadow: none; }
+  .grid-toolbar, .detail-workspace { animation: workspace-arrive var(--motion-normal) var(--ease-emphasized) both; }
+  .grid-cell {
+    animation: card-arrive var(--motion-slow) var(--ease-emphasized) both;
+    animation-delay: calc(var(--item-index, 0) * 24ms);
+    transition: background var(--motion-normal) var(--ease-out), border-color var(--motion-normal) var(--ease-out), box-shadow var(--motion-normal) var(--ease-out);
+  }
+  .grid-cell:hover { box-shadow: 0 9px 22px rgba(0,0,0,0.2); }
+  .slide-entry, .song-entry {
+    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+  }
+  .song-expand span { display: inline-block; transition: transform var(--motion-normal) var(--ease-out); }
+  .song-expand span.expanded { transform: rotate(90deg); }
+  @keyframes workspace-arrive {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes card-arrive {
+    from { opacity: 0; transform: translateY(8px) scale(0.99); }
+    to { opacity: 1; transform: none; }
+  }
+
+  .output-panel { gap: 16px; padding: 20px; }
+  .output-sticky-top { margin: -20px -20px 0; padding: 18px 20px 20px; gap: 16px; }
+  .output-panel label { gap: 8px; }
+  .output-panel .preview-row { flex-direction: column; align-items: stretch; gap: 8px; margin: 0; }
+  .output-panel .preview-box { flex: none; width: 100%; }
+  .output-panel .on-air-badge { align-self: flex-start; }
+
+  @media (max-width: 1100px) {
+    .detail-workspace { grid-template-columns: 1fr; }
+    .detail-preview-panel { position: static; grid-row: 1; }
+    .edit-window { grid-row: 2; }
+  }
+  @media (max-width: 700px) {
+    .sidebar:not(.output-panel) { overflow: visible; }
+    .detail-workspace { gap: 18px; }
   }
 </style>

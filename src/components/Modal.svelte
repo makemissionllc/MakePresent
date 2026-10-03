@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { surface, veil } from "../lib/motion";
   interface Props {
     open: boolean;
     title?: string;
@@ -61,7 +62,7 @@
 </script>
 
 {#if open}
-  <div class="overlay" role="presentation">
+  <div class="overlay" role="presentation" transition:veil={{ duration: 170 }}>
     <button class="backdrop" aria-label="Close dialog" tabindex="-1" onclick={handleCancel}></button>
     <div
       class="dialog"
@@ -69,6 +70,7 @@
       aria-modal="true"
       aria-label={title}
       tabindex="-1"
+      in:surface={{ duration: 250, distance: 12 }}
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => e.stopPropagation()}
     >

@@ -85,13 +85,13 @@
   --space-6: 32px;
   --space-7: 48px;
 
-  /* Motion — subtle, purposeful */
-  --motion-fast: 150ms;
-  --motion-normal: 200ms;
-  --motion-slow: 250ms;
+  /* One motion language for controls, surfaces, and workspace changes. */
+  --motion-fast: 140ms;
+  --motion-normal: 220ms;
+  --motion-slow: 320ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1);
-  --ease-out: cubic-bezier(0, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* Control radius + low-elevation shadow */
   --radius-sm: 6px;
@@ -116,8 +116,7 @@ body {
   overflow: hidden;
 }
 
-/* Desktop controls should feel deliberate and keyboard-friendly without
-   introducing the lifted-card motion common to web dashboards. */
+/* Controls respond immediately while larger surfaces use a softer pace. */
 button,
 select,
 input,
@@ -127,10 +126,24 @@ textarea {
 
 button {
   transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease,
-    box-shadow 120ms ease;
+    background-color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-normal) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+button:not(:disabled):not(.backdrop):active {
+  transform: scale(0.985);
+}
+
+input,
+textarea,
+select {
+  transition:
+    border-color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-normal) var(--ease-out);
 }
 
 button:focus-visible,

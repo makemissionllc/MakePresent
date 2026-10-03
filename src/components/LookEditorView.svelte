@@ -5,8 +5,9 @@
   import type { Background, BoxGeometry, ClientState, Look, LookPatch, Positioning, TextPosition, TextStyle, TextStylePatch } from "../lib/types";
   import { DEFAULT_BODY_STYLE, DEFAULT_TITLE_STYLE } from "../lib/types";
   import { isMedia } from "../lib/types";
-  import SlideRender from "./SlideRender.svelte";
+  import SlideThumbnail from "./SlideThumbnail.svelte";
   import LookStyleFields from "./LookStyleFields.svelte";
+  import { surface } from "../lib/motion";
   import type { Slide } from "../lib/types";
 
   const PALETTE = ["#1a1a24", "#0f2b4a", "#123a5c", "#1f3a2f", "#3a2b1f", "#3d1f1f", "#2b2b3d", "#000000"];
@@ -278,7 +279,7 @@
     </div>
     <div class="looks-list">
       {#each looks as lk (lk.id)}
-        <button class="look-pill" class:active={lk.id === activeLook?.id} onclick={() => selectLook(lk.id)}>
+        <button class="look-pill" class:active={lk.id === activeLook?.id} aria-pressed={lk.id === activeLook?.id} onclick={() => selectLook(lk.id)}>
           <span class="look-swatch" style:background-color={lk.textColor}></span>
           <span class="look-pill-name">{lk.name}</span>
           {#if appState?.outputLookId === lk.id}<span class="badge">Output</span>{/if}
@@ -293,9 +294,11 @@
     {#if draft}
       <div class="look-preview-wrap">
         <div class="look-preview-stage">
-          <div class="look-preview-box">
-            <SlideRender slide={sampleSlide} look={draft} showText={true} showBackground={draft.showBackground} />
-          </div>
+          {#key draft.id}
+            <div class="look-preview-box" in:surface={{ duration: 220, distance: 6, scale: 0.006 }}>
+              <SlideThumbnail slide={sampleSlide} look={draft} showText={true} showBackground={draft.showBackground} aspectRatio={appState?.project.aspectRatio ?? "16:9"} />
+            </div>
+          {/key}
           {#if draft.positioning === "absolute" && layoutEditMode}
             <div class="box-canvas" role="presentation" bind:this={canvasRef} onpointermove={onCanvasPointerMove} onpointerup={endBoxDrag} onpointercancel={endBoxDrag}>
               <div class="box title" role="button" tabindex="0" aria-label="Move or resize title" style:left={`${draft.titleBox.x}%`} style:top={`${draft.titleBox.y}%`} style:width={`${draft.titleBox.width}%`} style:height={`${draft.titleBox.height}%`} style:z-index={draft.titleBox.zIndex} onpointerdown={(e) => onBoxPointerDown(e, "title", "move")}>
@@ -788,6 +791,16 @@
     font-size: 9px;
   }
   .preset-card:hover { border-color: rgba(129,170,149,0.48); background: rgba(129,170,149,0.08); color: var(--text); }
+  .look-editor-view { animation: looks-arrive var(--motion-normal) var(--ease-emphasized) both; }
+  .look-pill, .preset-card {
+    transition: background var(--motion-normal) var(--ease-out), border-color var(--motion-normal) var(--ease-out), box-shadow var(--motion-normal) var(--ease-out), color var(--motion-normal) var(--ease-out);
+  }
+  .look-pill:hover { border-color: rgba(129,170,149,0.45); }
+  .preset-card:hover { box-shadow: 0 5px 14px rgba(0,0,0,0.15); }
+  @keyframes looks-arrive {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
   .preset-diagram {
     position: relative;
     display: flex;

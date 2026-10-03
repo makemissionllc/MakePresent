@@ -1,5 +1,6 @@
 <script lang="ts">
   import BrandLockup from "./BrandLockup.svelte";
+  import { surface } from "../lib/motion";
   interface Props {
     open: boolean;
     onClose: () => void;
@@ -34,6 +35,7 @@
       bind:this={dialog}
       class="dialog"
       aria-label="Help and keyboard shortcuts"
+      in:surface={{ duration: 250, distance: 10 }}
       oncancel={(e) => { e.preventDefault(); onClose(); }}
       onkeydown={(e) => { e.stopPropagation(); onKeydown(e); }}
     >

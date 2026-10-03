@@ -362,6 +362,23 @@ export interface Library {
   songs: LibrarySong[];
 }
 
+export interface LyricsHit {
+  id: number;
+  title: string;
+  artist: string;
+  album: string;
+  hasLyrics: boolean;
+}
+
+export interface LyricsRecord {
+  id: number;
+  title: string;
+  artist: string;
+  album: string;
+  lyrics: string;
+  source: string;
+}
+
 export interface TemplateItem {
   name?: string | null;
   title: string;

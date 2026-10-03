@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { surface } from "../lib/motion";
   export interface TourStep {
     eyebrow: string;
     title: string;
@@ -24,13 +25,17 @@
 <!-- Non-blocking: the wrapper ignores pointer events so a volunteer under
      time pressure can click straight through everywhere except the card. -->
 <div class="tour-layer" role="dialog" aria-label="MakrStudio guided tour">
-  <div class="tour-card">
+  <div class="tour-card" in:surface={{ duration: 240, distance: 10 }}>
     <div class="tour-top">
       <span class="tour-eyebrow">{current.eyebrow} · {step + 1} of {steps.length}</span>
       <button class="tour-x" title="End tour" aria-label="End tour" onclick={onSkip}>×</button>
     </div>
-    <strong class="tour-title">{current.title}</strong>
-    <p class="tour-body">{current.body}</p>
+    {#key step}
+      <div class="tour-copy" in:surface={{ duration: 190, distance: 5 }}>
+        <strong class="tour-title">{current.title}</strong>
+        <p class="tour-body">{current.body}</p>
+      </div>
+    {/key}
     <div class="tour-dots" aria-hidden="true">
       {#each steps as _, i}
         <span class="tour-dot" class:active={i === step}></span>
@@ -74,6 +79,7 @@
     flex-direction: column;
     gap: 8px;
   }
+  .tour-copy { display: grid; gap: 8px; }
   .tour-top {
     display: flex;
     align-items: center;
@@ -115,9 +121,11 @@
     height: 8px;
     border-radius: 50%;
     background: var(--border);
+    transition: background var(--motion-fast) var(--ease-out), transform var(--motion-normal) var(--ease-out);
   }
   .tour-dot.active {
     background: var(--accent, #4f8cff);
+    transform: scale(1.25);
   }
   .tour-actions {
     display: flex;

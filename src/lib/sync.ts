@@ -13,6 +13,8 @@ import type {
   ExportReport,
   ImportReport,
   Library,
+  LyricsHit,
+  LyricsRecord,
   LogEntry,
   LookPatch,
   MediaAsset,
@@ -162,6 +164,9 @@ export const api = {
   toggleStage: () => invoke<boolean>("toggle_stage"),
 
   getLibrary: () => invoke<Library>("get_library"),
+
+  searchLyrics: (query: string) => invoke<LyricsHit[]>("search_lyrics", { query }),
+  getLyrics: (id: number) => invoke<LyricsRecord>("get_lyrics", { id }),
 
   addLibrarySong: (
     title: string,

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { surface, veil } from "../lib/motion";
   import { onDestroy } from "svelte";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import {
@@ -872,9 +873,9 @@
 
 </script>
 
-<div class="overlay">
+<div class="overlay" in:veil={{ duration: 180 }}>
   <button class="backdrop" aria-label="Close settings" tabindex="-1" onclick={onclose}></button>
-  <div class="dialog" role="dialog" tabindex="-1" aria-label="Settings" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+  <div class="dialog" role="dialog" tabindex="-1" aria-label="Settings" in:surface={{ duration: 260, distance: 12 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
     <header class="dialog-head">
       <h2>Settings</h2>
       <button class="close" title="Close" onclick={onclose}>&times;</button>

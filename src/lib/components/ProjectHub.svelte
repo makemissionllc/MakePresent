@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PlaylistTemplate, ServicePreset } from "../types";
   import BrandLockup from "../../components/BrandLockup.svelte";
+  import { surface, veil } from "../motion";
 
   interface Props {
     open: boolean;
@@ -120,8 +121,8 @@
 </script>
 
 {#if open}
-  <div class="hub-overlay" role="presentation" onkeydown={onKey}>
-    <div class="hub" role="dialog" aria-modal="true" aria-label="View Hub" tabindex="-1">
+  <div class="hub-overlay" role="presentation" transition:veil={{ duration: 200 }} onkeydown={onKey}>
+    <div class="hub" role="dialog" aria-modal="true" aria-label="View Hub" tabindex="-1" in:surface={{ duration: 300, distance: 16 }}>
       <header class="hub-head">
         <div class="brand">
           <BrandLockup />
@@ -264,7 +265,7 @@
   .grid{display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px;}
   @media (max-width:640px){ .grid{grid-template-columns:1fr;} }
   .card-wrap{position:relative; min-width:0;}
-  .card{position:relative; width:100%; text-align:left; padding:14px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color 120ms ease,border-color 120ms ease;}
+  .card{position:relative; width:100%; text-align:left; padding:14px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color var(--motion-normal) var(--ease-out),border-color var(--motion-normal) var(--ease-out),box-shadow var(--motion-normal) var(--ease-out);}
   .card:hover{border-color:#46514e; background:var(--panel);}
   .card.selected{border-color:var(--accent); background:#202825; box-shadow:0 0 0 2px rgba(129,170,149,0.12);}
   .card-badge{position:absolute; top:10px; right:10px; font-size:9px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:3px 7px; border-radius:999px; border:1px solid transparent; color:white;}

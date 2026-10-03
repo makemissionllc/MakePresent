@@ -40,7 +40,7 @@ DwellPraise Ministries needed its own presentation software that:
 
 - fits the exact way **their** volunteers run a service,
 - is **free forever** and fully under their control,
-- keeps all data **on-premises** — nothing leaves the building,
+- keeps saved project and library data **on the device**; optional online lookups send search terms to their providers,
 - is simple enough for a **first-time volunteer** with ~15 minutes of training.
 
 The audience is a first-time volunteer: the app has to feel obvious. Every
@@ -54,9 +54,9 @@ screen state must answer *"what am I looking at and what do I do next?"*
    app" to "slide is live," with no dead ends and no unexplained states.
 2. **Clarity over density.** Fewer, clearer controls beat packed, powerful
    ones. If a feature makes the common path harder to read, it doesn't ship yet.
-3. **Polish is deferred.** Visual polish waits until the underlying flow is
-   simple without it. A boring-but-clear interface beats a pretty-but-confusing
-   one.
+3. **Motion explains change.** Shared elements move between editor states so
+   volunteers can follow them. Frequent controls stay quick, reduced-motion
+   settings are respected, and projection timing remains independent.
 4. **Single source of truth.** All application state lives in the Rust
    backend; every window (Editor, Output, Stage) is a *dumb renderer* pushed
    fresh state. No window computes its own copy of "what should be live."
@@ -183,7 +183,8 @@ and shows a recovery notice when the prior exit was unclean.
 - Persistent songs with multiple verses/sections, client-side search, and
   one-click **Add to playlist** that links each slide back to its source
   verse/section.
-- **Local song import (no cloud):** drag `.pro` (ProPresenter export, `quick-xml`), `.cho`/`.chordpro` (ChordPro, strip `[C]` chords + `{title:}` directives, split by blank lines), or CCLI USR `.usr`/`.txt` (Title/Author headers + `Verse 1`/`Chorus` labels) onto the Library — conservatively extracts title + verses into the existing `library.json` song structure (ignores ProPresenter styling/backgrounds), malformed files reported clearly via inline `Unsupported` / `malformed XML` errors.
+- **Local song import:** drag `.pro` (ProPresenter export, `quick-xml`), `.cho`/`.chordpro` (ChordPro, strip `[C]` chords + `{title:}` directives, split by blank lines), or CCLI USR `.usr`/`.txt` (Title/Author headers + `Verse 1`/`Chorus` labels) onto the Library — conservatively extracts title + verses into the existing `library.json` song structure (ignores ProPresenter styling/backgrounds), malformed files reported clearly via inline `Unsupported` / `malformed XML` errors.
+- **Online lyrics:** Add song opens the Song Editor directly. Search title or artist via LRCLIB (no account or API key), select a recording, review the automatically split verse/chorus slides, then add it to the local Library. Ctrl/Cmd+K shows online song matches too. The query and selected record ID go to LRCLIB; saved lyrics stay in the local Library. Check permission before projecting copyrighted lyrics.
 
 ### Scripture autocomplete
 - A bundled **KJV** index (`kjv.json`, all 66 books) with abbreviation support
@@ -276,10 +277,10 @@ and shows a recovery notice when the prior exit was unclean.
 - **During a View**, the playlist panel offers **Save as Playlist** (Modal prompts a name, upserts by name) — the "save it for next service" loop: run the View, then save its sequence back as a reusable Playlist for next time. Creating a View from a saved Playlist reuses the existing backend (`new_project_from_preset` + `load_template`), so library links and backgrounds are preserved and slides get fresh ids.
 
 ### Global search (Ctrl/Cmd+K)
-- **One overlay for everything** — `Ctrl+K` / `Cmd+K` (or topbar ⌕ Search) opens a search palette that queries the **song library**, **all cached/imported Bibles**, and the **media cache** simultaneously, showing categorized results for adapting quickly mid-service.
+- **One overlay for everything** — `Ctrl+K` / `Cmd+K` (or topbar ⌕ Search) opens a search palette that queries the **song library**, **online lyrics**, **all cached/imported Bibles**, and the **media cache** simultaneously, showing categorized results for adapting quickly mid-service.
 - Reuses existing backend search: `search_scripture` (KJV + all imported Bibles via `ScriptureIndex::search`), client-side `library.songs` filtering (title/body), and new `search_media`/`list_media` (scanning `media/<hash>.<ext>` via `media::search_media_assets`, same `MediaKind::from_extension` as import). No duplicated search logic — primarily a new frontend aggregator.
-- Each result is **clickable to insert directly into the playlist**: library song → `add_song_to_playlist` (whole song), scripture match → `add_slide(reference, text)`, media asset → `add_slide(fileName) + update_slide({background})` (same two-step as external drop, through the managed hash+thumb pipeline). Uses the same `snapshot_and_emit` / `request_save` path as any manual add, so undo/redo and autosave behave identically.
-- Lives in `src/components/GlobalSearch.svelte` — debounced input, parallel `Promise.allSettled` for scripture + media, capped at 8 per category, empty-state hints, thumbnails via `convertFileSrc`, and `Esc` / backdrop to close.
+- Library, scripture, and media results insert directly into the playlist. Online lyrics open the Song Editor for formatting and review before they are saved to the Library.
+- Lives in `src/components/GlobalSearch.svelte` — debounced input, parallel local Scripture/media requests, an independent online lyrics request, capped results, empty-state hints, thumbnails via `convertFileSrc`, and `Esc` / backdrop to close.
 
 ---
 
@@ -405,7 +406,7 @@ src-tauri/                                 Rust backend
 
 ---
 
-## IPC Commands (67)
+## IPC Commands
 
 **Scripture**
 | Command | Purpose |
@@ -472,6 +473,7 @@ src-tauri/                                 Rust backend
 | Command | Purpose |
 |---|---|
 | `get_library` / `add_library_song` / `delete_library_song` | Manage the song library |
+| `search_lyrics` / `get_lyrics` | Search LRCLIB and fetch a selected lyric for Song Editor review |
 | `add_song_to_playlist` | Add a whole song to the playlist (flattens arrangement) |
 | `import_media` | Import an image/video into the managed cache |
 | `search_media` / `list_media` | Search/list the managed media cache (for global search) |

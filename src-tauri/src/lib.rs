@@ -2,6 +2,7 @@ mod audio;
 mod commands;
 mod broadcast;
 mod logging;
+mod lyrics;
 mod media;
 mod midi;
 mod ndi_receive;
@@ -675,6 +676,8 @@ pub fn run() {
             commands::new_project_from_preset,
             commands::get_library,
             commands::add_library_song,
+            lyrics::search_lyrics,
+            lyrics::get_lyrics,
             commands::delete_library_song,
             commands::add_song_to_playlist,
             commands::set_live_slide,

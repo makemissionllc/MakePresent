@@ -1783,6 +1783,7 @@
 
   .dialog-head {
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
     justify-content: space-between;
     padding: 14px 18px;
@@ -1809,6 +1810,7 @@
 
   .tabs {
     display: flex;
+    flex: 0 0 auto;
     gap: 4px;
     padding: 10px 14px 0;
     border-bottom: 1px solid var(--border);

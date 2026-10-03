@@ -28,6 +28,7 @@
 
   let draft: Look | null = $state(null);
   let lookErr = $state<string | null>(null);
+  let layoutEditMode = $state(false);
 
   $effect(() => {
     // Sync draft when active look changes
@@ -82,6 +83,7 @@
 
   function selectLook(id: string): void {
     activeLookId = id;
+    layoutEditMode = false;
     if (commitTimer) clearTimeout(commitTimer);
   }
 
@@ -130,7 +132,13 @@
   }
 
   // Bounding box editor
-  let boxDrag: { role: "title" | "body"; mode: "move" | "resize" } | null = $state(null);
+  let boxDrag: {
+    role: "title" | "body";
+    mode: "move" | "resize";
+    startX: number;
+    startY: number;
+    initial: BoxGeometry;
+  } | null = $state(null);
   let canvasRef = $state<HTMLDivElement | null>(null);
 
   function boxOf(role: "title" | "body"): BoxGeometry {
@@ -145,10 +153,40 @@
     if (!draft) return;
     setDraft("positioning", p);
   }
+  function applyLayoutPreset(preset: "centered" | "lower-third" | "split"): void {
+    if (!draft) return;
+    const boxes = {
+      centered: {
+        title: { x: 8, y: 20, width: 84, height: 22, zIndex: 1 },
+        body: { x: 10, y: 46, width: 80, height: 34, zIndex: 1 },
+        align: "center" as const,
+      },
+      "lower-third": {
+        title: { x: 8, y: 58, width: 84, height: 13, zIndex: 1 },
+        body: { x: 8, y: 72, width: 84, height: 20, zIndex: 1 },
+        align: "left" as const,
+      },
+      split: {
+        title: { x: 7, y: 18, width: 39, height: 64, zIndex: 1 },
+        body: { x: 52, y: 18, width: 41, height: 64, zIndex: 1 },
+        align: "left" as const,
+      },
+    }[preset];
+    setPositioning("absolute");
+    updateBox("title", boxes.title);
+    updateBox("body", boxes.body);
+    setStyle("title", { align: boxes.align });
+    setStyle("body", { align: boxes.align });
+    layoutEditMode = true;
+  }
+  function startCanvasEdit(): void {
+    if (draft?.positioning !== "absolute") setPositioning("absolute");
+    layoutEditMode = true;
+  }
   function onBoxPointerDown(e: PointerEvent, role: "title" | "body", mode: "move" | "resize") {
     e.preventDefault();
     e.stopPropagation();
-    boxDrag = { role, mode };
+    boxDrag = { role, mode, startX: e.clientX, startY: e.clientY, initial: { ...boxOf(role) } };
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
   }
@@ -159,14 +197,22 @@
     const rect = el.getBoundingClientRect();
     const w = Math.max(1, rect.width);
     const h = Math.max(1, rect.height);
-    const px = (e.clientX - rect.left) / w;
-    const py = (e.clientY - rect.top) / h;
-    let cur = boxOf(boxDrag.role);
+    const initial = boxDrag.initial;
+    const dx = ((e.clientX - boxDrag.startX) / w) * 100;
+    const dy = ((e.clientY - boxDrag.startY) / h) * 100;
     let next: BoxGeometry;
     if (boxDrag.mode === "move") {
-      next = { ...cur, x: clamp(px * 100 - cur.width / 2), y: clamp(py * 100 - cur.height / 2) };
+      next = {
+        ...initial,
+        x: clamp(initial.x + dx, 0, 100 - initial.width),
+        y: clamp(initial.y + dy, 0, 100 - initial.height),
+      };
     } else {
-      next = { ...cur, width: clamp(px * 100 - cur.x, 5, 100 - cur.x), height: clamp(py * 100 - cur.y, 5, 100 - cur.y) };
+      next = {
+        ...initial,
+        width: clamp(initial.width + dx, 5, 100 - initial.x),
+        height: clamp(initial.height + dy, 5, 100 - initial.y),
+      };
     }
     updateBox(boxDrag.role, next);
   }
@@ -246,10 +292,47 @@
   <div class="look-main">
     {#if draft}
       <div class="look-preview-wrap">
-        <div class="look-preview-box">
-          <SlideRender slide={sampleSlide} look={draft} showText={true} showBackground={draft.showBackground} />
+        <div class="look-preview-stage">
+          <div class="look-preview-box">
+            <SlideRender slide={sampleSlide} look={draft} showText={true} showBackground={draft.showBackground} />
+          </div>
+          {#if draft.positioning === "absolute" && layoutEditMode}
+            <div class="box-canvas" role="presentation" bind:this={canvasRef} onpointermove={onCanvasPointerMove} onpointerup={endBoxDrag} onpointercancel={endBoxDrag}>
+              <div class="box title" role="button" tabindex="0" aria-label="Move or resize title" style:left={`${draft.titleBox.x}%`} style:top={`${draft.titleBox.y}%`} style:width={`${draft.titleBox.width}%`} style:height={`${draft.titleBox.height}%`} style:z-index={draft.titleBox.zIndex} onpointerdown={(e) => onBoxPointerDown(e, "title", "move")}>
+                <span class="box-label">Title <small>drag to move</small></span>
+                <span class="handle" role="button" tabindex="0" aria-label="Resize title box" onpointerdown={(e) => onBoxPointerDown(e, "title", "resize")}></span>
+              </div>
+              <div class="box body" role="button" tabindex="0" aria-label="Move or resize body" style:left={`${draft.bodyBox.x}%`} style:top={`${draft.bodyBox.y}%`} style:width={`${draft.bodyBox.width}%`} style:height={`${draft.bodyBox.height}%`} style:z-index={draft.bodyBox.zIndex} onpointerdown={(e) => onBoxPointerDown(e, "body", "move")}>
+                <span class="box-label">Body <small>drag to move</small></span>
+                <span class="handle" role="button" tabindex="0" aria-label="Resize body box" onpointerdown={(e) => onBoxPointerDown(e, "body", "resize")}></span>
+              </div>
+            </div>
+          {/if}
         </div>
-        <span class="field-hint">Preview — live sample rendered with this Look (updates instantly)</span>
+        <div class="layout-presets" aria-label="Starting layout">
+          <div class="preset-heading"><span>Start with a layout</span><small>Drag blocks on the preview to fine-tune</small></div>
+          <div class="preset-options">
+            <button class="preset-card" onclick={() => applyLayoutPreset("centered")} title="Title above centered body">
+              <span class="preset-diagram centered"><i></i><i></i></span><span>Centered</span>
+            </button>
+            <button class="preset-card" onclick={() => applyLayoutPreset("lower-third")} title="Text aligned along the lower third">
+              <span class="preset-diagram lower"><i></i><i></i></span><span>Lower third</span>
+            </button>
+            <button class="preset-card" onclick={() => applyLayoutPreset("split")} title="Title and body side by side">
+              <span class="preset-diagram split"><i></i><i></i></span><span>Side by side</span>
+            </button>
+          </div>
+          <div class="canvas-tools">
+            {#if draft.positioning === "absolute" && layoutEditMode}
+              <span class="canvas-edit-status"><span></span> Canvas editing</span>
+              <button class="canvas-edit-toggle" onclick={() => (layoutEditMode = false)}>Done</button>
+            {:else}
+              <span class="canvas-edit-status muted">Position blocks freely on the slide</span>
+              <button class="canvas-edit-toggle" onclick={startCanvasEdit}>Edit on canvas</button>
+            {/if}
+          </div>
+        </div>
+        <span class="field-hint">Live preview updates as you change this Look.</span>
       </div>
 
       <div class="look-form">
@@ -340,27 +423,17 @@
         <div class="positioning-row">
           <span class="assign-title">Layout</span>
           <label class="check">
-            <input type="radio" name="positioning" checked={draft.positioning === "auto"} onchange={() => setPositioning("auto")} />
+            <input type="radio" name="positioning" checked={draft.positioning === "auto"} onchange={() => { setPositioning("auto"); layoutEditMode = false; }} />
             Auto flow
           </label>
           <label class="check">
-            <input type="radio" name="positioning" checked={draft.positioning === "absolute"} onchange={() => setPositioning("absolute")} />
+            <input type="radio" name="positioning" checked={draft.positioning === "absolute"} onchange={() => { setPositioning("absolute"); layoutEditMode = true; }} />
             Bounding boxes
           </label>
         </div>
 
         {#if draft.positioning === "absolute"}
           <div class="box-editor">
-            <div class="box-canvas" role="presentation" bind:this={canvasRef} onpointermove={onCanvasPointerMove} onpointerup={endBoxDrag} onpointercancel={endBoxDrag}>
-              <div class="box title" role="button" tabindex="0" style:left={`${draft.titleBox.x}%`} style:top={`${draft.titleBox.y}%`} style:width={`${draft.titleBox.width}%`} style:height={`${draft.titleBox.height}%`} style:z-index={draft.titleBox.zIndex} onpointerdown={(e) => onBoxPointerDown(e, "title", "move")}>
-                <span class="box-label">Title</span>
-                <span class="handle" role="button" tabindex="0" aria-label="Resize title box" onpointerdown={(e) => onBoxPointerDown(e, "title", "resize")}></span>
-              </div>
-              <div class="box body" role="button" tabindex="0" style:left={`${draft.bodyBox.x}%`} style:top={`${draft.bodyBox.y}%`} style:width={`${draft.bodyBox.width}%`} style:height={`${draft.bodyBox.height}%`} style:z-index={draft.bodyBox.zIndex} onpointerdown={(e) => onBoxPointerDown(e, "body", "move")}>
-                <span class="box-label">Body</span>
-                <span class="handle" role="button" tabindex="0" aria-label="Resize body box" onpointerdown={(e) => onBoxPointerDown(e, "body", "resize")}></span>
-              </div>
-            </div>
             <div class="box-fields">
               <div class="box-field"><span class="assign-title">Title</span><code>X {n0(draft.titleBox.x)} · Y {n0(draft.titleBox.y)} · W {n0(draft.titleBox.width)} · H {n0(draft.titleBox.height)}</code></div>
               <div class="box-field"><span class="assign-title">Body</span><code>X {n0(draft.bodyBox.x)} · Y {n0(draft.bodyBox.y)} · W {n0(draft.bodyBox.width)} · H {n0(draft.bodyBox.height)}</code></div>
@@ -609,5 +682,162 @@
     .look-pill {
       flex: 1 1 140px;
     }
+  }
+
+  /* Canvas-first editor: keep the slide visible while controls stay within a
+     compact inspector, like arranging elements on the screen they affect. */
+  .look-editor-view {
+    gap: 18px;
+    height: calc(100vh - 220px);
+    min-height: 480px;
+  }
+  .looks-sidebar {
+    width: clamp(165px, 18vw, 220px);
+    padding: 4px 12px 4px 0;
+    border-color: rgba(255,255,255,0.07);
+  }
+  .looks-sidebar-head .section-title {
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .look-pill { background: rgba(255,255,255,0.025); border-color: rgba(255,255,255,0.06); }
+  .look-pill.active { background: rgba(129,170,149,0.11); border-color: rgba(129,170,149,0.42); box-shadow: inset 2px 0 var(--accent); }
+  .look-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 31%);
+    grid-template-rows: minmax(0, 1fr);
+    align-items: start;
+    gap: 18px;
+    overflow: hidden;
+    padding: 0 2px 0 0;
+  }
+  .look-preview-wrap {
+    position: sticky;
+    top: 0;
+    min-width: 0;
+    gap: 10px;
+  }
+  .look-preview-stage {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 12px;
+    background: #090d0c;
+    box-shadow: 0 14px 32px rgba(0,0,0,0.3);
+  }
+  .look-preview-box {
+    position: absolute;
+    inset: 0;
+    aspect-ratio: auto;
+    border: 0;
+    border-radius: 0;
+  }
+  .box-canvas {
+    position: absolute;
+    inset: 0;
+    aspect-ratio: auto;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    pointer-events: none;
+    touch-action: none;
+  }
+  .box {
+    pointer-events: auto;
+    border: 1px dashed rgba(255,255,255,0.88);
+    border-radius: 5px;
+    background: rgba(8,13,12,0.25);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.35);
+    touch-action: none;
+  }
+  .box.body { border-color: #72d4a5; background: rgba(23,100,66,0.26); }
+  .box:active { cursor: grabbing; }
+  .box-label {
+    display: grid;
+    gap: 3px;
+    color: #fff;
+    text-shadow: 0 1px 3px #000;
+    font-size: 10px;
+    letter-spacing: .08em;
+  }
+  .box-label small { color: rgba(255,255,255,.75); font-size: 8px; font-weight: 500; letter-spacing: 0; }
+  .layout-presets {
+    display: grid;
+    gap: 9px;
+    padding: 12px;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.025);
+  }
+  .preset-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .preset-heading span { color: var(--text); font-size: 11px; font-weight: 700; }
+  .preset-heading small { color: var(--text-dim); font-size: 9px; }
+  .preset-options { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+  .preset-card {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 8px 6px 7px;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    background: rgba(0,0,0,0.16);
+    color: var(--text-dim);
+    font-size: 9px;
+  }
+  .preset-card:hover { border-color: rgba(129,170,149,0.48); background: rgba(129,170,149,0.08); color: var(--text); }
+  .preset-diagram {
+    position: relative;
+    display: flex;
+    width: 58px;
+    height: 34px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 3px;
+    border: 1px solid rgba(129,170,149,0.32);
+    border-radius: 4px;
+    background: linear-gradient(145deg, #1e4437, #122a23);
+  }
+  .preset-diagram i { display: block; height: 3px; width: 29px; border-radius: 5px; background: #e8edeb; }
+  .preset-diagram i + i { width: 39px; height: 2px; background: #aac8b7; }
+  .preset-diagram.lower { align-items: flex-start; justify-content: flex-end; padding: 0 0 5px 6px; }
+  .preset-diagram.lower i { width: 21px; }
+  .preset-diagram.lower i + i { width: 34px; }
+  .preset-diagram.split { flex-direction: row; gap: 4px; }
+  .preset-diagram.split i { width: 17px; height: 19px; border: 1px solid #e8edeb; background: rgba(232,237,235,0.12); }
+  .preset-diagram.split i + i { width: 21px; height: 19px; }
+  .canvas-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .canvas-edit-status { display: inline-flex; align-items: center; gap: 6px; color: #a8dfc5; font-size: 9px; }
+  .canvas-edit-status > span { width: 6px; height: 6px; border-radius: 50%; background: var(--semantic-live); }
+  .canvas-edit-status.muted { color: var(--text-dim); }
+  .canvas-edit-toggle { padding: 6px 9px; border-color: rgba(129,170,149,0.3); border-radius: 7px; background: rgba(129,170,149,0.1); color: #c0ddcd; font-size: 10px; }
+  .look-form {
+    width: 100%;
+    max-width: none;
+    max-height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    gap: 11px;
+    padding: 4px 8px 20px 2px;
+  }
+  .look-form > label, .look-form > .field { padding: 9px; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; background: rgba(255,255,255,0.018); }
+  .look-form .field-row { gap: 8px; }
+  .look-form .field-row label { min-width: 0; }
+  .positioning-row, .box-editor, .assign-block { border-color: rgba(255,255,255,0.08); }
+  .positioning-row { flex-wrap: wrap; padding: 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.02); }
+  .box-editor { padding: 8px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; }
+  .box-fields { flex-direction: column; gap: 8px; }
+  .box-field code { font-size: 9px; }
+  .look-form :global(.ts-section) { padding: 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.018); }
+  .look-form .assign-block { padding: 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.018); }
+  @media (max-width: 960px) {
+    .look-editor-view { height: auto; min-height: 0; }
+    .look-main { display: flex; flex-direction: column; overflow: visible; }
+    .look-preview-wrap { position: static; width: 100%; }
+    .look-form { max-height: none; overflow: visible; }
+    .look-preview-stage { max-height: 52vh; }
   }
 </style>

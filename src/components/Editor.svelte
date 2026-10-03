@@ -1904,16 +1904,8 @@
         </div>
         {/if}
 
-      <div class="workspace-switch">
-        <button class="ws-btn" class:active={centralView === "slides"} onclick={() => (centralView = "slides")} title="Slide grid — primary workspace">Slides</button>
-        <button class="ws-btn" class:active={centralView === "looks"} onclick={() => { centralView = "looks"; use("looks"); }} title="Look editor — background, text style, layout">Looks</button>
-      </div>
-      {#if showHint(onboarding, "looks")}
-        <p class="hint-line">Looks set fonts &amp; layout per screen — try the Looks tab.<button class="hint-x" title="Dismiss" aria-label="Dismiss Looks hint" onclick={() => dismiss("looks")}>×</button></p>
-      {/if}
-
       <div class="sidebar-section playlist-section" class:has-content={(project?.slides.length ?? 0) > 0} class:tour-highlight={showTour && tourStep === 0}>
-        <div class="section-title">Playlist</div>
+        <div class="section-title playlist-title"><span class="section-icon">☷</span><span>Playlist</span><span class="section-count">{project?.slides.length ?? 0}</span></div>
         <ul
           class="slide-list"
           class:drag-active={isDragging || externalDragActive}
@@ -2066,7 +2058,7 @@
                       e.preventDefault();
                       selectScripture(match);
                     }}
-                    title="Drag to playlist • Click to add"
+                    aria-label={`Add ${match.reference} as a slide; drag to playlist to place it`}
                   >
                     <span class="scripture-ref">{match.reference}</span>
                     <span class="scripture-preview">{match.text}</span>
@@ -2154,7 +2146,7 @@
                 draggable="true"
                 ondragstart={(e) => onLibrarySongDragStart(e, song)}
                 onclick={() => addToPlaylist(song)}
-                title="Drag to playlist to add • Click to add (uses arrangement)"
+                aria-label={`Add ${song.title || "Untitled song"} to the playlist; drag to place it`}
               >
                 <span
                   class="swatch song-swatch"
@@ -2191,7 +2183,7 @@
                   draggable="true"
                   ondragstart={(e) => onLibraryVerseDragStart(e, song, verse)}
                   onclick={() => void api.addSlide(verse.title, verse.body, undefined, "song").then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)))}
-                  title="Drag verse to playlist • Click to add as slide"
+                  aria-label={`Add ${verse.title || "Untitled verse"} as a slide; drag to place it`}
                 >
                   <span class="verse-title">{verse.title || "Untitled verse"}</span>
                   <span class="verse-preview">{verse.body.slice(0, 60)}{verse.body.length > 60 ? "…" : ""}</span>
@@ -2264,6 +2256,21 @@
     </aside>
 
     <main class="editor">
+      <div class="editor-content">
+      <div class="editor-heading">
+        <div class="editor-heading-copy">
+          <span class="editor-eyebrow">SERVICE WORKSPACE</span>
+          <strong>{centralView === "looks" ? "Shape the look" : showDetail && selected ? "Edit slide" : "Build your service"}</strong>
+          <span class="editor-subtitle">{centralView === "looks" ? "Set the style shown on your screens." : showDetail && selected ? "Edit the wording and background, then preview the slide." : "Add content, arrange the order, then send a slide live."}</span>
+        </div>
+        <div class="workspace-switch" aria-label="Workspace view">
+          <button class="ws-btn" class:active={centralView === "slides"} onclick={() => (centralView = "slides")} aria-label="Open slide workspace"><span aria-hidden="true">▦</span> Slides</button>
+          <button class="ws-btn" class:active={centralView === "looks"} onclick={() => { centralView = "looks"; use("looks"); }} aria-label="Open Look editor"><span aria-hidden="true">◉</span> Looks</button>
+        </div>
+      </div>
+      {#if centralView === "slides" && showHint(onboarding, "looks")}
+        <p class="hint-line looks-hint">Looks control fonts and layout on each screen — open the Looks view to style them.<button class="hint-x" title="Dismiss" aria-label="Dismiss Looks hint" onclick={() => dismiss("looks")}>×</button></p>
+      {/if}
       {#if centralView === "looks"}
         <LookEditorView appState={appState} onUpdate={(s: ClientState) => (appState = s)} onError={(m: string) => (errorMsg = m)} />
       {:else if showDetail && selected}
@@ -2464,9 +2471,9 @@
         </div>
       {:else}
         <div class="grid-toolbar">
-          <span class="section-title" style="margin:0">Slides — {project?.slides.length ?? 0}</span>
+          <div class="grid-toolbar-label"><span class="grid-toolbar-mark">01</span><span><strong>Arrange slides</strong><small>Drag thumbnails to set the running order</small></span></div>
           <span class="spacer"></span>
-          <button class="ghost" onclick={() => addSlide()}>+ Add slide</button>
+          <button class="add-slide-button" onclick={() => addSlide()}><span aria-hidden="true">＋</span> Add slide</button>
         </div>
         {#if (project?.slides.length ?? 0) === 0}
           <div class="empty grid-empty">No slides yet. Add one to get started — it will appear here as a thumbnail.</div>
@@ -2507,7 +2514,7 @@
                 ondragend={onPlaylistDragEnd}
                 ondrop={(e) => onPlaylistDrop(e, i)}
               >
-                <button class="grid-thumb" onclick={() => openDetail(slide)} title="Click to edit — {slideDisplayName(slide)}">
+                <button class="grid-thumb" onclick={() => openDetail(slide)} aria-label={`Edit ${slideDisplayName(slide)}`}>
                   <div class="grid-thumb-inner">
                     {#if outputPreviewLook}
                       <SlideRender
@@ -2537,6 +2544,72 @@
             {/if}
           </div>
         {/if}
+      {/if}
+      </div>
+      {#if !browseCollapsed}
+        <div class="browse-dock" role="region" aria-label="Browse Scripture">
+          <div class="browse-dock-header"><strong>Browse Scripture</strong><button class="browse-dock-close" onclick={() => (browseCollapsed = true)} aria-label="Close Scripture browser">× Close</button></div>
+          <div class="browse-dock-left">
+            <label>
+              Translation
+              <select value={selectedBibleId ?? ""} onchange={onBrowseBibleChange} disabled={bibles.length === 0}>
+                {#each bibles as b}
+                  <option value={b.id}>{b.name} ({b.bookCount})</option>
+                {/each}
+              </select>
+            </label>
+            {#if browseError}
+              <p class="browse-error">{browseError}</p>
+            {/if}
+            <div class="browse-books">
+              {#each bibleBooks as book}
+                <button class="browse-book" class:active={book === selectedBook} onclick={() => onBrowseBookSelect(book)}>{book}</button>
+              {/each}
+            </div>
+          </div>
+          <div class="browse-dock-middle">
+            {#if selectedBook}
+              <div class="browse-chapters">
+                <span class="field-label">{selectedBook} — Chapters</span>
+                <div class="chapter-grid">
+                  {#each chapterNumbers as ch}
+                    <button class="chapter-pill" class:active={ch === selectedChapter} onclick={() => onBrowseChapterSelect(ch)}>{ch}</button>
+                  {/each}
+                </div>
+              </div>
+            {:else}
+              <p class="browse-placeholder">Select a book to see chapters</p>
+            {/if}
+            {#if browseLoading}
+              <span class="media-spinner" style="align-self:center; margin: 8px 0;"></span>
+            {/if}
+          </div>
+          <div class="browse-dock-right">
+            {#if chapterVerses.length > 0}
+              <ul class="browse-verses">
+                {#each chapterVerses as v}
+                  <li>
+                    <button
+                      class="browse-verse"
+                      draggable="true"
+                      ondragstart={(e) => onScriptureDragStart(e, `${selectedBook} ${selectedChapter}:${v.verse}`, v.text)}
+                      onclick={() => insertBrowseVerse(v)}
+                    >
+                      <span class="verse-num">{v.verse}</span>
+                      <span class="verse-text">{v.text}</span>
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {:else if selectedChapter}
+              <p class="browse-placeholder">No verses</p>
+            {:else if selectedBook}
+              <p class="browse-placeholder">Select a chapter to see verses — click a verse to add as slide (drag secondary)</p>
+            {:else}
+              <p class="browse-placeholder">Select a book and chapter to browse verses. Click a verse to add as slide.</p>
+            {/if}
+          </div>
+        </div>
       {/if}
     </main>
 
@@ -2824,71 +2897,7 @@
     </aside>
   </div>
 
-  {#if !browseCollapsed}
-    <div class="browse-dock" role="region" aria-label="Browse Scripture">
-      <div class="browse-dock-left">
-        <label>
-          Translation
-          <select value={selectedBibleId ?? ""} onchange={onBrowseBibleChange} disabled={bibles.length === 0}>
-            {#each bibles as b}
-              <option value={b.id}>{b.name} ({b.bookCount})</option>
-            {/each}
-          </select>
-        </label>
-        {#if browseError}
-          <p class="browse-error">{browseError}</p>
-        {/if}
-        <div class="browse-books">
-          {#each bibleBooks as book}
-            <button class="browse-book" class:active={book === selectedBook} onclick={() => onBrowseBookSelect(book)}>{book}</button>
-          {/each}
-        </div>
-      </div>
-      <div class="browse-dock-middle">
-        {#if selectedBook}
-          <div class="browse-chapters">
-            <span class="field-label">{selectedBook} — Chapters</span>
-            <div class="chapter-grid">
-              {#each chapterNumbers as ch}
-                <button class="chapter-pill" class:active={ch === selectedChapter} onclick={() => onBrowseChapterSelect(ch)}>{ch}</button>
-              {/each}
-            </div>
-          </div>
-        {:else}
-          <p class="browse-placeholder">Select a book to see chapters</p>
-        {/if}
-        {#if browseLoading}
-          <span class="media-spinner" style="align-self:center; margin: 8px 0;"></span>
-        {/if}
-      </div>
-      <div class="browse-dock-right">
-        {#if chapterVerses.length > 0}
-          <ul class="browse-verses">
-            {#each chapterVerses as v}
-              <li>
-                <button
-                  class="browse-verse"
-                  draggable="true"
-                  ondragstart={(e) => onScriptureDragStart(e, `${selectedBook} ${selectedChapter}:${v.verse}`, v.text)}
-                  onclick={() => insertBrowseVerse(v)}
-                >
-                  <span class="verse-num">{v.verse}</span>
-                  <span class="verse-text">{v.text}</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
-        {:else if selectedChapter}
-          <p class="browse-placeholder">No verses</p>
-        {:else if selectedBook}
-          <p class="browse-placeholder">Select a chapter to see verses — click a verse to add as slide (drag secondary)</p>
-        {:else}
-          <p class="browse-placeholder">Select a book and chapter to browse verses. Click a verse to add as slide.</p>
-        {/if}
-      </div>
-      <button class="browse-dock-close" onclick={() => (browseCollapsed = true)} title="Hide browse panel">× Hide</button>
-    </div>
-  {/if}
+
 </div>
 {/if}
 
@@ -4754,5 +4763,280 @@
     to {
       transform: rotate(360deg);
     }
+  }
+  /* A single visual workspace: sources and sequence on the left, canvas in
+     the middle, and the live screens on the right. */
+  .body {
+    grid-template-columns: clamp(228px, 20vw, 320px) minmax(0, 1fr) clamp(230px, 20vw, 320px);
+    background: radial-gradient(ellipse at 48% 4%, rgba(129, 170, 149, 0.055), transparent 52%), var(--bg);
+  }
+  .sidebar {
+    gap: 13px;
+    padding: 16px 14px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.018), transparent 34%), var(--panel);
+  }
+  .playlist-section, .scripture-section, .library-section {
+    padding: 10px;
+    border: 1px solid rgba(255,255,255,0.055);
+    border-radius: 11px;
+    background: rgba(8, 12, 11, 0.13);
+  }
+  .section-title.playlist-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    margin: 0 0 2px;
+  }
+  .section-icon {
+    display: grid;
+    place-items: center;
+    width: 23px;
+    height: 23px;
+    border: 1px solid var(--semantic-live-border);
+    border-radius: 7px;
+    background: var(--semantic-live-bg);
+    color: #a8dfc5;
+    font-size: 14px;
+  }
+  .section-count {
+    display: grid;
+    place-items: center;
+    min-width: 21px;
+    height: 20px;
+    margin-left: auto;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    color: var(--text-dim);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+  .library-title, .scripture-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .library-title::before, .scripture-title::before {
+    display: grid;
+    place-items: center;
+    width: 23px;
+    height: 23px;
+    border: 1px solid rgba(129,170,149,0.18);
+    border-radius: 7px;
+    background: rgba(129,170,149,0.08);
+    color: var(--accent);
+    font-size: 13px;
+  }
+  .library-title::before { content: "♫"; }
+  .scripture-title::before { content: "✦"; }
+  .editor { padding: 22px clamp(18px, 2.2vw, 34px) 28px; background: transparent; }
+  .editor-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 0 2px 18px;
+    margin-bottom: 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.075);
+  }
+  .editor-heading-copy { display: grid; gap: 4px; min-width: 0; }
+  .editor-eyebrow { color: var(--accent); font-size: 9px; font-weight: 700; letter-spacing: 0.14em; }
+  .editor-heading-copy strong { color: var(--text); font-size: clamp(18px, 1.55vw, 23px); letter-spacing: -0.035em; }
+  .editor-subtitle { color: var(--text-dim); font-size: 11px; }
+  .workspace-switch {
+    flex: 0 0 auto;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid rgba(255,255,255,0.075);
+    border-radius: 10px;
+    background: rgba(0,0,0,0.2);
+  }
+  .ws-btn {
+    min-width: 82px;
+    padding: 8px 11px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    border-radius: 7px;
+    font-size: 11px;
+  }
+  .ws-btn > span { color: var(--accent); font-size: 13px; }
+  .ws-btn.active { background: #303936; border-color: rgba(129,170,149,0.25); box-shadow: 0 2px 7px rgba(0,0,0,0.22); }
+  .looks-hint { margin: -5px 0 16px; }
+  .grid-toolbar { min-height: 52px; margin-bottom: 16px; padding: 4px 2px 13px; border-bottom-color: rgba(255,255,255,0.06); }
+  .grid-toolbar-label { display: flex; align-items: center; gap: 10px; }
+  .grid-toolbar-label > span:last-child { display: grid; gap: 3px; }
+  .grid-toolbar-label strong { color: var(--text); font-size: 12px; }
+  .grid-toolbar-label small { color: var(--text-dim); font-size: 10px; }
+  .grid-toolbar-mark {
+    display: grid;
+    place-items: center;
+    width: 29px;
+    height: 29px;
+    border-radius: 9px;
+    background: var(--semantic-live-bg);
+    color: #a8dfc5;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .05em;
+  }
+  .add-slide-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-color: rgba(129,170,149,0.34);
+    border-radius: 8px;
+    background: rgba(129,170,149,0.12);
+    color: #c0ddcd;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .add-slide-button:hover { background: rgba(129,170,149,0.2); }
+  .slide-grid {
+    grid-template-columns: repeat(auto-fill, minmax(clamp(165px, 16vw, 230px), 1fr));
+    gap: 16px;
+    padding: 4px 2px 28px;
+    counter-reset: slide;
+  }
+  .grid-cell {
+    position: relative;
+    gap: 8px;
+    padding: 8px;
+    border-color: rgba(255,255,255,0.075);
+    border-radius: 11px;
+    background: linear-gradient(145deg, rgba(255,255,255,0.035), transparent 65%), #1b2120;
+    counter-increment: slide;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.12);
+  }
+  .grid-cell:hover { background: linear-gradient(145deg, rgba(255,255,255,0.06), transparent 65%), #202826; border-color: rgba(129,170,149,0.34); }
+  .grid-thumb { border-radius: 7px; border-color: rgba(255,255,255,0.12); box-shadow: 0 3px 10px rgba(0,0,0,0.28); }
+  .grid-thumb::after {
+    content: counter(slide, decimal-leading-zero);
+    position: absolute;
+    left: 7px;
+    bottom: 7px;
+    display: grid;
+    place-items: center;
+    min-width: 24px;
+    height: 19px;
+    padding: 0 5px;
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 5px;
+    background: rgba(9,13,12,0.76);
+    color: rgba(255,255,255,0.82);
+    font: 700 9px var(--font-mono);
+    backdrop-filter: blur(5px);
+  }
+  .grid-live-badge { z-index: 1; }
+  .grid-label { text-align: left; padding: 2px; font-size: 11px; }
+  .grid-actions { justify-content: stretch; }
+  .grid-go-live, .grid-delete { border-radius: 6px; }
+  .output-panel { background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent 35%), var(--panel); }
+  .output-panel > .section-title, .output-sticky-top > .section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .output-sticky-top > .section-title::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--semantic-neutral);
+  }
+  .output-panel .preview-box { max-width: none; border-radius: 9px; }
+  .output-panel .stage-title { margin-top: 6px; padding-top: 15px; }
+  .output-sticky-top {
+    position: relative;
+    top: auto;
+    z-index: auto;
+    flex: 0 0 auto;
+  }
+  .editor {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  .editor-content {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 22px clamp(18px, 2.2vw, 34px) 28px;
+  }
+  .browse-dock {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 10px;
+    width: 100%;
+    min-height: 240px;
+    max-height: min(42vh, 390px);
+    padding: 12px 14px 14px;
+    overflow: hidden;
+    resize: none;
+  }
+  .browse-dock-header {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 27px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-size: 11px;
+  }
+  .browse-dock-left, .browse-dock-middle, .browse-dock-right {
+    width: auto;
+    min-width: 0;
+    min-height: 0;
+    padding-right: 10px;
+  }
+  .browse-dock-right { padding-right: 0; }
+  .browse-dock-close {
+    position: static;
+    flex: none;
+    padding: 4px 8px;
+  }
+  @media (max-width: 1180px) {
+    .body { grid-template-columns: clamp(205px, 21vw, 260px) minmax(0,1fr) clamp(205px, 21vw, 260px); }
+    .editor-content { padding-inline: 18px; }
+  }
+  @media (max-width: 960px) {
+    .body { grid-template-columns: minmax(155px, 23vw) minmax(0,1fr) minmax(155px, 23vw); }
+    .editor-heading { align-items: flex-start; flex-direction: column; }
+    .browse-dock {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto;
+      min-height: 220px;
+      max-height: 50vh;
+      overflow-y: auto;
+    }
+    .browse-dock-header { grid-column: 1; }
+    .browse-dock-left, .browse-dock-middle, .browse-dock-right {
+      min-height: 120px;
+      padding-right: 0;
+    }
+  }
+  @media (max-width: 700px) {
+    .body { grid-template-columns: 1fr; }
+    .editor-heading { flex-direction: row; align-items: center; }
+    .editor { min-height: 620px; overflow: visible; }
+    .editor-content { overflow: visible; flex: 0 0 auto; }
   }
 </style>

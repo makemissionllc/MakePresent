@@ -425,11 +425,7 @@
             label: "NDI broadcast",
             value: !appState.broadcast.enabled
               ? "Off"
-              : !appState.broadcast.hasRealFrames
-                ? `On (${appState.broadcast.sourceName}) — waiting for Output capture`
-                : appState.broadcast.isStale
-                  ? `On (${appState.broadcast.sourceName}) — stale`
-                  : `On (${appState.broadcast.sourceName})`,
+              : `On (${appState.broadcast.sourceName}) — ${appState.broadcast.message}`,
           },
           {
             label: "Exit animation",
@@ -932,9 +928,9 @@
                 Enabled
               </label>
               {#if appState?.broadcast.enabled}
-                {#if !appState.broadcast.hasRealFrames}
-                  <span class="badge" style="background: var(--semantic-idle, #64748b); color: white; font-size: 10px; padding: 3px 7px; border-radius: 4px;">Waiting for Output</span>
-                {:else if appState.broadcast.isStale}
+                {#if appState.broadcast.message !== "Live" && appState.broadcast.message !== "Stale"}
+                  <span class="badge" style="background: var(--semantic-idle, #64748b); color: white; font-size: 10px; padding: 3px 7px; border-radius: 4px;">{appState.broadcast.message}</span>
+                {:else if appState.broadcast.isStale || !appState.broadcast.hasRealFrames}
                   <span class="badge" style="background: var(--semantic-warning, #f7b538); color: var(--semantic-warning-text, #3a2e10); font-size: 10px; padding: 3px 7px; border-radius: 4px;">Stale</span>
                 {:else}
                   <span class="badge" style="background: var(--semantic-live, #1f9d6a); color: white; font-size: 10px; padding: 3px 7px; border-radius: 4px;">Live</span>
@@ -955,9 +951,9 @@
               <a href="https://github.com/DistroAV/DistroAV" target="_blank" rel="noopener noreferrer">DistroAV NDI plugin</a>
               enabled to list the source.
             </p>
-            {#if appState?.broadcast.enabled && !appState.broadcast.hasRealFrames}
+            {#if appState?.broadcast.enabled && appState.broadcast.message !== "Live" && appState.broadcast.message !== "Stale"}
               <p class="status" style="background: var(--semantic-warning-bg, rgba(247,181,56,0.14)); border: 1px solid var(--semantic-warning-border, rgba(247,181,56,0.32)); color: var(--semantic-warning, #f7b538); padding: 8px 10px; border-radius: 6px; font-size: 12px;">
-                Waiting for a capturable Output window. Choose <strong>Show Output</strong> and put a slide live; MakrStudio captures that window and sends it to OBS. On Linux, native window capture requires an X11 session; Wayland compositors may deny capture.
+                {appState.broadcast.message} On Linux, native window capture requires an X11 session; Wayland compositors may deny capture.
               </p>
             {:else if appState?.broadcast.enabled && appState.broadcast.isStale}
               <p class="status" style="background: var(--semantic-warning-bg, rgba(247,181,56,0.14)); border: 1px solid var(--semantic-warning-border, rgba(247,181,56,0.32)); color: var(--semantic-warning, #f7b538); padding: 8px 10px; border-radius: 6px; font-size: 12px;">

@@ -17,12 +17,12 @@
 //! calls the C ABI directly. If the SDK is missing it logs a clear error and
 //! everything else keeps working. See `README.md` for installation/licensing.
 //!
-//! # Frame capture — honest scope note
+//! # Frame capture
 //!
 //! This module owns the **sender** side: register a source, push BGRA+alpha
 //! frames on a dedicated thread, keep the source alive. The *webview → pixels*
-//! capture (an offscreen render target mirrored from the Output) is a runtime
-//! concern that lives elsewhere; [`BroadcastCore::send_frame`] is the clean
+//! capture uses Windows.Graphics.Capture on Windows and xcap on Linux/macOS;
+//! [`BroadcastCore::send_frame`] is the clean
 //! seam it plugs into. Nothing here needs actual NDI hardware or a screen to
 //! compile, so the crate builds and `cargo check` passes in CI.
 
@@ -34,7 +34,9 @@ use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(not(windows))]
+use tauri::Manager;
 
 /// Behavioural constant — the NDI *source name* receivers see on the network.
 /// Source names may be anything; the "NDI" mark itself is only restricted in
@@ -51,9 +53,64 @@ const FRAME_RATE_D: i32 = 1_001;
 const RESEND_PERIOD: Duration = Duration::from_millis(33);
 /// Window capture is deliberately moderate-rate; the NDI sender repeats the
 /// latest frame at 30 fps, while this worker updates motion/background video.
+#[cfg(not(windows))]
 const CAPTURE_PERIOD: Duration = Duration::from_millis(100);
 const MAX_CAPTURE_WIDTH: u32 = 1920;
 const MAX_CAPTURE_HEIGHT: u32 = 1080;
+
+type CapturedFrame = (u32, u32, Vec<u8>);
+
+fn broadcast_status_message(enabled: bool, real: bool, stale: bool, issue: Option<&str>) -> String {
+    if !enabled { return "Off".into(); }
+    if let Some(issue) = issue { return issue.into(); }
+    if !real { return "Waiting for Output capture".into(); }
+    if stale { "Stale".into() } else { "Live".into() }
+}
+
+/// Packed BGRA from a possibly padded GPU readback. Nearest-neighbour scaling
+/// bounds CPU/memory at 1080p and preserves black and alpha without heuristics.
+#[cfg(any(windows, test))]
+fn prepare_bgra(width: u32, height: u32, stride: usize, bytes: &[u8]) -> Result<CapturedFrame, String> {
+    let row = (width as usize).checked_mul(4).ok_or("frame width overflow")?;
+    let required = stride.checked_mul(height as usize).ok_or("frame size overflow")?;
+    if width == 0 || height == 0 || stride < row || bytes.len() < required {
+        return Err("invalid capture dimensions or row pitch".into());
+    }
+    let scale = (MAX_CAPTURE_WIDTH as f64 / width as f64)
+        .min(MAX_CAPTURE_HEIGHT as f64 / height as f64).min(1.0);
+    let w = ((width as f64 * scale).round() as u32).max(1);
+    let h = ((height as f64 * scale).round() as u32).max(1);
+    let mut output = vec![0; w as usize * h as usize * 4];
+    for y in 0..h as usize {
+        let src_y = y * height as usize / h as usize;
+        for x in 0..w as usize {
+            let src = src_y * stride + (x * width as usize / w as usize) * 4;
+            let dst = (y * w as usize + x) * 4;
+            output[dst..dst + 4].copy_from_slice(&bytes[src..src + 4]);
+        }
+    }
+    Ok((w, h, output))
+}
+
+/// Capture errors enqueue nothing, so only an actual frame can replace the
+/// sender's current image. All-black is intentionally accepted.
+fn queue_capture_result(tx: &SyncSender<Command>, frame: Result<CapturedFrame, String>) -> Result<bool, String> {
+    let (width, height, bgra) = frame?;
+    let length = (width as usize).checked_mul(height as usize).and_then(|n| n.checked_mul(4));
+    if width == 0 || height == 0 || length != Some(bgra.len()) {
+        return Err("invalid Output frame".into());
+    }
+    Ok(tx.try_send(Command::Frame { width, height, bgra }).is_ok())
+}
+
+#[cfg(windows)]
+#[path = "ndi_capture_windows.rs"]
+mod windows_capture_worker;
+
+#[cfg(windows)]
+fn spawn_capture_worker(app: AppHandle) -> Result<CaptureWorker, String> {
+    windows_capture_worker::spawn(app)
+}
 
 // ---------------------------------------------------------------------------
 // NDI C ABI — a hand-written, minimal `#[repr(C)]` mirror of the relevant part
@@ -313,17 +370,14 @@ impl BroadcastCore {
 
     /// Push a freshly captured BGRA+alpha frame to the send thread.
     ///
-    /// This is the seam the offscreen render capture plugs into — the pixel
-    /// data comes from the **Output window's WebView** (currently unwired;
-    /// future capture will mirror Output's `SlideRender` via an offscreen
-    /// render target / `window.capture` and call this). Non-blocking and
+    /// Pixel data comes from the native Output capture worker. Non-blocking and
     /// bounded (capacity-3 `try_send`), so it never blocks the render loop.
     ///
     /// Safety: validates dimensions before queuing; the capture worker only
     /// submits a frame after the Output window capture succeeds. Black is a
     /// valid intentional frame when the operator clears the Output.
     ///
-    /// Returns true if the frame was accepted (validated and queued), false if skipped (invalid/black).
+    /// Returns true if queued, false if invalid or the bounded queue is full.
     pub fn send_frame(&self, width: u32, height: u32, bgra: Vec<u8>) -> bool {
         // Safety check is also done here (defense in depth) before queuing
         let expected_len = (width as usize)
@@ -333,11 +387,7 @@ impl BroadcastCore {
             eprintln!("NDI: no valid Output frame source, skipping (invalid frame {}x{} len {})", width, height, bgra.len());
             return false;
         }
-        self.tx.try_send(Command::Frame {
-            width,
-            height,
-            bgra,
-        }).is_ok()
+        queue_capture_result(&self.tx, Ok((width, height, bgra))).unwrap_or(false)
     }
 
     /// Stop the send thread and tear down the NDI source + SDK. Caller should
@@ -432,6 +482,7 @@ pub struct Broadcaster {
     has_real_frames: AtomicBool,
     last_frame_at: RwLock<Option<String>>,
     last_frame_instant: Mutex<Option<Instant>>,
+    capture_issue: RwLock<Option<String>>,
 }
 
 struct CaptureWorker {
@@ -447,19 +498,28 @@ impl Default for Broadcaster {
             has_real_frames: AtomicBool::new(false),
             last_frame_at: RwLock::new(None),
             last_frame_instant: Mutex::new(None),
+            capture_issue: RwLock::new(None),
         }
     }
 }
 
 impl Broadcaster {
+    pub fn status_message(&self) -> String {
+        broadcast_status_message(self.is_active(), self.has_real_frames(), self.is_stale(), self.capture_issue.read().unwrap().as_deref())
+    }
+
+    #[cfg(windows)]
+    fn set_capture_issue(&self, issue: Option<String>) {
+        *self.capture_issue.write().unwrap() = issue;
+    }
     /// Whether a broadcaster is currently active.
     pub fn is_active(&self) -> bool {
         self.inner.lock().ok().is_some_and(|g| g.is_some())
     }
 
     /// Whether a real frame has ever been accepted (distinct from `is_active`).
-    /// While `current` in `spawn_send_thread` is still `None` (capture not yet
-    /// wired), this stays `false` — the source is discoverable but transmits
+    /// While `current` in `spawn_send_thread` is still `None` (no capture yet),
+    /// this stays `false` — the source is discoverable but transmits
     /// no real video. UI must not claim success until this is true.
     pub fn has_real_frames(&self) -> bool {
         self.has_real_frames.load(Ordering::Relaxed)
@@ -473,11 +533,14 @@ impl Broadcaster {
 
     /// Whether the feed is stale: enabled but no valid frame recently. True when
     /// `has_real_frames` is false or last frame older than ~5s (mirrors
-    /// `ACK_STALE_MS` heartbeat). Until capture is wired, this is always true
-    /// when active. When not active (`is_active` false), not stale — just off.
+    /// `ACK_STALE_MS` heartbeat). Capture issues are immediately stale. When
+    /// not active (`is_active` false), not stale — just off.
     pub fn is_stale(&self) -> bool {
         if !self.is_active() {
             return false;
+        }
+        if self.capture_issue.read().unwrap().is_some() {
+            return true;
         }
         if !self.has_real_frames.load(Ordering::Relaxed) {
             return true;
@@ -508,6 +571,7 @@ impl Broadcaster {
         self.has_real_frames.store(false, Ordering::Relaxed);
         *self.last_frame_at.write().unwrap() = None;
         *self.last_frame_instant.lock().unwrap() = None;
+        *self.capture_issue.write().unwrap() = None;
         *self.inner.lock().unwrap() = Some(core);
         *self.capture.lock().unwrap() = Some(capture);
         Ok(())
@@ -517,6 +581,7 @@ impl Broadcaster {
     pub fn stop(&self) {
         if let Some(worker) = self.capture.lock().unwrap().take() {
             worker.stop.store(true, Ordering::SeqCst);
+            worker.thread.thread().unpark();
             let _ = worker.thread.join();
         }
         if let Some(core) = self.inner.lock().unwrap().take() {
@@ -525,12 +590,13 @@ impl Broadcaster {
         self.has_real_frames.store(false, Ordering::Relaxed);
         *self.last_frame_at.write().unwrap() = None;
         *self.last_frame_instant.lock().unwrap() = None;
+        *self.capture_issue.write().unwrap() = None;
     }
 
     /// Push a BGRA+alpha frame to the running broadcaster (no-op when off).
     /// Tracks `has_real_frames`/`last_frame_at` distinctly from `is_active` so
     /// the UI can be honest about whether real video is actually flowing.
-    pub fn send_frame(&self, width: u32, height: u32, bgra: Vec<u8>) {
+    pub fn send_frame(&self, width: u32, height: u32, bgra: Vec<u8>) -> bool {
         let accepted = if let Some(core) = self.inner.lock().unwrap().as_ref() {
             core.send_frame(width, height, bgra)
         } else {
@@ -542,6 +608,7 @@ impl Broadcaster {
             *self.last_frame_at.write().unwrap() = Some(now_iso);
             *self.last_frame_instant.lock().unwrap() = Some(Instant::now());
         }
+        accepted
     }
 
     /// Window-handle-validated variant: verifies the Output window exists and is rendering
@@ -567,9 +634,10 @@ impl Broadcaster {
 
 /// Capture the actual native Output window, so NDI receives the same pixels
 /// shown to the congregation rather than a separately approximated renderer.
-/// XCap supports native window capture on Windows, macOS, and Linux/X11. On
+/// XCap remains the capture backend on macOS and Linux/X11. On
 /// unsupported desktop sessions (notably some Wayland compositors), it reports
 /// a throttled error and retries instead of crashing or sending fake frames.
+#[cfg(not(windows))]
 fn spawn_capture_worker(app: AppHandle) -> Result<CaptureWorker, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = stop.clone();
@@ -577,6 +645,11 @@ fn spawn_capture_worker(app: AppHandle) -> Result<CaptureWorker, String> {
         .name("ndi-window-capture".to_string())
         .spawn(move || {
             let mut output: Option<xcap::Window> = None;
+            let mut captured = 0u64;
+            app.state::<crate::state::AppState>().logger.log(
+                crate::logging::Level::Info,
+                "ndi-capture: method=xcap; rejected_black=0 (real black accepted)",
+            );
             let mut last_scan = Instant::now() - Duration::from_secs(2);
             let mut last_notice: Option<Instant> = None;
             let mut last_found = false;
@@ -624,6 +697,13 @@ fn spawn_capture_worker(app: AppHandle) -> Result<CaptureWorker, String> {
                 if let Some(window) = output.as_ref() {
                     match window.capture_image() {
                         Ok(image) if image.width() > 0 && image.height() > 0 => {
+                            captured += 1;
+                            if captured == 1 || captured % 100 == 0 {
+                                app.state::<crate::state::AppState>().logger.log(
+                                    crate::logging::Level::Info,
+                                    &format!("ndi-capture: title={:?} handle={:?} minimized={:?} first/current={}x{} captured={captured} rejected_black=0", window.title(), window.id(), window.is_minimized(), image.width(), image.height()),
+                                );
+                            }
                             let (width, height, bgra) = downscale_rgba_to_bgra(image);
                             app.state::<crate::state::AppState>()
                                 .broadcaster
@@ -665,6 +745,7 @@ fn spawn_capture_worker(app: AppHandle) -> Result<CaptureWorker, String> {
     Ok(CaptureWorker { stop, thread })
 }
 
+#[cfg(any(not(windows), test))]
 fn downscale_rgba_to_bgra(image: image::RgbaImage) -> (u32, u32, Vec<u8>) {
     let (width, height) = image.dimensions();
     let scale = (MAX_CAPTURE_WIDTH as f64 / width as f64)
@@ -699,6 +780,63 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gpu_bgra_padding_is_removed_without_changing_channels_or_alpha() {
+        let (w, h, pixels) = prepare_bgra(1, 2, 8, &[3, 2, 1, 255, 9, 9, 9, 9, 6, 5, 4, 128, 9, 9, 9, 9]).unwrap();
+        assert_eq!((w, h), (1, 2));
+        assert_eq!(pixels, [3, 2, 1, 255, 6, 5, 4, 128]);
+    }
+
+    #[test]
+    fn gpu_downscale_caps_landscape_and_portrait_without_upscaling() {
+        for (w, h, expected) in [(3840, 2160, (1920, 1080)), (1200, 2000, (648, 1080)), (2, 1, (2, 1))] {
+            let input = [7, 8, 9, 255].repeat(w as usize * h as usize);
+            let (width, height, pixels) = prepare_bgra(w, h, w as usize * 4, &input).unwrap();
+            assert_eq!((width, height), expected);
+            assert!(pixels.chunks_exact(4).all(|px| px == [7, 8, 9, 255]));
+        }
+    }
+
+    #[test]
+    fn malformed_gpu_frames_are_capture_errors() {
+        assert!(prepare_bgra(0, 1, 4, &[0; 4]).is_err());
+        assert!(prepare_bgra(2, 1, 4, &[0; 4]).is_err());
+        assert!(prepare_bgra(1, 2, 4, &[0; 4]).is_err());
+        assert!(prepare_bgra(1, 2, usize::MAX, &[]).is_err());
+    }
+
+    #[test]
+    fn real_black_replaces_previous_frame_but_capture_errors_hold_it() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        assert!(queue_capture_result(&tx, Ok((1, 1, vec![7, 8, 9, 255]))).unwrap());
+        let mut current = rx.try_recv().unwrap();
+        assert!(queue_capture_result(&tx, Err("GPU device lost".into())).is_err());
+        assert!(rx.try_recv().is_err());
+        assert!(matches!(&current, Command::Frame { bgra, .. } if bgra == &[7, 8, 9, 255]));
+        let black = prepare_bgra(1, 1, 4, &[0, 0, 0, 255]).unwrap();
+        assert!(queue_capture_result(&tx, Ok(black)).unwrap());
+        current = rx.try_recv().unwrap();
+        assert!(matches!(current, Command::Frame { bgra, .. } if bgra == [0, 0, 0, 255]));
+    }
+
+    #[test]
+    fn full_capture_queue_drops_without_waiting() {
+        let (tx, _rx) = mpsc::sync_channel(1);
+        assert!(queue_capture_result(&tx, Ok((1, 1, vec![0; 4]))).unwrap());
+        assert!(!queue_capture_result(&tx, Ok((1, 1, vec![1; 4]))).unwrap());
+    }
+
+    #[test]
+    fn status_never_claims_live_without_real_fresh_frames() {
+        assert_eq!(broadcast_status_message(false, true, false, None), "Off");
+        assert_eq!(broadcast_status_message(true, false, false, None), "Waiting for Output capture");
+        assert_eq!(broadcast_status_message(true, true, true, None), "Stale");
+        assert_eq!(broadcast_status_message(true, true, false, None), "Live");
+        for issue in ["Output window is hidden. Click Show Output.", "Output window is minimized. Restore Output.", "Capture error: GPU device lost"] {
+            assert_eq!(broadcast_status_message(true, true, false, Some(issue)), issue);
+        }
+    }
 
     // The real SDK is never installed in CI, so unit tests cover the
     // SDK-independent logic (constants/geometry) only.
@@ -765,6 +903,7 @@ mod tests {
         assert!(found.expect("initialize NDI finder"), "NDI source not discovered locally");
     }
 
+    #[cfg(not(windows))]
     #[test]
     #[ignore = "requires a desktop session with native window capture permissions"]
     fn xcap_captures_a_visible_native_window() {

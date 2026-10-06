@@ -207,6 +207,7 @@ export interface BroadcastView {
   hasRealFrames: boolean;
   lastFrameAt: string | null;
   isStale: boolean;
+  message: string;
 }
 
 /** One NDI source found by the receive confidence monitor's finder. */

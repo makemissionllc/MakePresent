@@ -54,6 +54,43 @@ Download from Actions → Artifacts.
 - **125%/150% DPI clipping** — fixed via `Editor.svelte:887` viewport-relative grid + `fitText.ts:46` DPR-aware epsilon.
 - **Header clicks swallowed** — drag zone isolated to `.spacer` only (`Editor.svelte:813`, `app.css:40`).
 
+## NDI / OBS capture verification (2026-10-06)
+
+Windows NDI uses Windows.Graphics.Capture (`windows-capture`), not xcap/GDI,
+to read GPU-composited WebView2 pixels. Output must be visible and not
+minimized. Enabling NDI never shows or moves Output. Check `logs/app.log`
+for `ndi-capture: method=WGC`, the actual title/HWND, visibility, first-frame
+size, captured/dropped/error counts, and `rejected_black=0`.
+
+1. Enable NDI, show Output, put a slide live, and select **MakrStudio - Sunday
+   Output** in an OBS DistroAV NDI Source. OBS shows the slide; Settings says Live.
+2. Clear output. OBS shows real black and Settings stays Live.
+3. Change slides. OBS follows within about one second.
+4. Hide or minimize Output. Settings says hidden/minimized, then recovers to
+   Live when you show/restore it. NDI must not show the window itself.
+5. Switch the Output display. Capture recovers automatically. Also check
+   display unplug/reconnect and unexpected Output recreation through self-healing.
+6. Disable NDI. Confirm `ndi-capture: ... stopped` in the log, no WGC/supervisor
+   thread remains and capture CPU use stops. Repeat enable/disable and tray Quit.
+
+### Windows Rust test executable activation context
+
+If `cargo test` compiles but exits before any tests with `0xc0000139`
+(`STATUS_ENTRYPOINT_NOT_FOUND`), the generated test executable may lack the
+Common Controls v6 manifest needed by Tauri/dialog imports. For the local
+test run, create a sidecar manifest beside the latest library test executable
+(build output only; no application manifest or app source changes):
+
+```powershell
+cd src-tauri
+cargo test --no-run
+$testExe = Get-ChildItem target/debug/deps/makepresent_lib-*.exe |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$testManifestPath = $testExe.FullName + '.manifest'
+Set-Content -LiteralPath $testManifestPath -Encoding utf8 -Value '<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0"><dependency><dependentAssembly><assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="amd64" publicKeyToken="6595b64144ccf1df" language="*" /></dependentAssembly></dependency></assembly>'
+cargo test
+```
+
 ## Releasing
 
 ```powershell

@@ -55,3 +55,6 @@ rodio = { version = "0.17", default-features = false, features = ["mp3", "wav", 
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "tiff", "webp", "pnm"] }
 xcap = "=0.4.1"
 base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
+windows-capture = "=2.0.1"

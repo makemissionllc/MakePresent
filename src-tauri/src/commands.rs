@@ -71,6 +71,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
             has_real_frames: state.broadcaster.has_real_frames(),
             last_frame_at: state.broadcaster.last_frame_at(),
             is_stale: state.broadcaster.is_stale(),
+            message: state.broadcaster.status_message(),
         },
         default_looks: settings.default_looks.clone(),
         exit_animation: settings.exit_animation.clone(),

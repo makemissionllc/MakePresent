@@ -36,6 +36,47 @@ pub const EDITOR_WINDOW: &str = "main";
 pub const OUTPUT_WINDOW: &str = "output";
 pub const STAGE_WINDOW: &str = "stage";
 
+/// Read-only snapshot for the NDI supervisor. No creation, placement or reveal.
+#[cfg(windows)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct OutputCaptureTarget {
+    pub hwnd: usize,
+    pub title: String,
+    pub visible: bool,
+    pub minimized: bool,
+    pub display_signature: String,
+}
+
+/// Use the deferred main-thread pattern, returning a channel rather than
+/// waiting in a command. The capture worker can cancel its wait during quit.
+#[cfg(windows)]
+pub(crate) fn request_output_capture_target(
+    app: &AppHandle,
+) -> Result<std::sync::mpsc::Receiver<Result<Option<OutputCaptureTarget>, String>>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let app_main = app.clone();
+    run_on_main_async(app, "ndi_capture_target", move || {
+        let result = (|| {
+            let Some(window) = app_main.get_webview_window(OUTPUT_WINDOW) else {
+                return Ok(None);
+            };
+            let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as usize;
+            let displays = window.available_monitors().map_err(|e| e.to_string())?;
+            let position = window.inner_position().map_err(|e| e.to_string())?;
+            let size = window.inner_size().map_err(|e| e.to_string())?;
+            Ok(Some(OutputCaptureTarget {
+                hwnd,
+                title: window.title().map_err(|e| e.to_string())?,
+                visible: window.is_visible().map_err(|e| e.to_string())?,
+                minimized: window.is_minimized().map_err(|e| e.to_string())?,
+                display_signature: format!("{position:?}/{size:?}/{displays:?}"),
+            }))
+        })();
+        let _ = tx.send(result);
+    })?;
+    Ok(rx)
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayInfo {

@@ -151,15 +151,26 @@ Phase 5 — NDI broadcast output (sending side)
 - **Settings + IPC**: `set_ndi_enabled` toggles the sender/capture worker;
   runtime `BroadcastView` reports actual frame freshness so the UI only shows
   Live after valid Output pixels reach the NDI sender.
-- **Native Output capture**: `xcap` captures the actual `MakrStudio - Output`
-  window on a worker thread (Windows/macOS/Linux X11), downsizes to at most
-  1920×1080, converts RGBA to BGRA, and pushes into the bounded NDI send queue
-  at up to 10 fps. The sender repeats the newest frame at 30 fps. Linux
+- **Native Output capture**: Windows uses `windows-capture` / Windows.Graphics.Capture
+  for the GPU-composited WebView2 Output, at up to 30 fps, without a cursor
+  and with border suppression where supported. A dedicated supervisor requests
+  a read-only Tauri HWND/visibility/display snapshot through the deferred
+  `run_on_main` pattern; WGC/D3D readback runs on its own capture thread.
+  macOS/Linux X11 keep `xcap` unchanged at up to 10 fps. Both paths downsize
+  to at most 1920×1080 BGRA and use the bounded, non-blocking NDI queue.
+  The sender repeats the newest frame at 30 fps. Linux
   Wayland/compositors that deny window capture stay visibly waiting/stale.
 - **OBS compatibility**: with the NDI Runtime installed and the DistroAV
   plugin enabled in OBS, add an NDI Source containing `MakrStudio - Sunday
   Output` (NDI may prefix the host name). Settings report real frames only
   after captured Output pixels reach the sender.
+- **Windows capture status/recovery**: hidden or minimized Output is reported
+  specifically and is never shown/moved by NDI. Capture errors hold the last
+  image; valid black (Clear output) is accepted. Window recreation, geometry/
+  display topology changes, closed/error sessions and a no-frame watchdog
+  restart WGC. Disable/quit cancels pending HWND lookup and joins capture.
+  Rust owns `hasRealFrames`, `lastFrameAt`, `isStale` and the serde-defaulted
+  status `message`. Frames never travel through `state`; only status changes do.
 
 Phase 6 — Native MIDI + OSC slide triggering
 - **Hardware cueing** so an operator can drive the service from a dedicated
@@ -487,7 +498,7 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - Live Editor preview thumbnails of Output/Stage (requires window/frame capture, not just state — meaningfully harder than a UI change)
 - Live video input via `getUserMedia` (UVC capture cards) — self-contained, moderate effort
 - NDI framepull/receiving (harder than existing NDI send; separate scope from Tier 2's remote control server)
-- **NDI send real-frame capture (WGC pipeline) — Option B (dedicated session, project-scale, not bundled)** — Real project-scale work: new `src-tauri/src/ndi_capture.rs` module, **Windows-only** via `windows-capture` crate (`Windows.Graphics.Capture`, D3D11, `Window::hwnd()` `tauri::Manager`), dedicated capture thread at **30 Hz BGRA** pushing validated frames to `src-tauri/src/broadcast.rs:324` `send_frame` (`broadcast.rs:324` black-frame guard + `broadcast.rs:347` `spawn_send_thread` hold-last-good-frame). **Explicitly scheduled as its own session later, not bundled with this honesty patch or any other feature.** The same WGC session would also finally deliver the real **"Actual screen" Editor live-preview thumbnail** from the earlier frame-capture research (`docs/PROJECT.md:765` / `README.md:1042` — currently `SlideRender` re-render `Editor.svelte:42` + `media.rs:151` ffmpeg thumbs only), at a much lower **1–2 Hz** downscaled JPEG cadence sharing the same session (different cadence, same `windows-capture` + `image` deps, same `Window::hwnd()` + D3D11 isolation pattern as `broadcast.rs:347`/`midi.rs`/`osc.rs`). Until then, this session's honest UI patch keeps `hasRealFrames` `false` and shows the discoverable-but-black warning (`src-tauri/src/project.rs:476` `BroadcastView { has_real_frames, last_frame_at, is_stale }` → `src/components/SettingsPanel.svelte:811`).
+- **NDI Windows WGC capture shipped (2026-10-06)** — see the current NDI section and dated change entry. The optional Actual screen Editor thumbnail remains deferred; no preview pixels were added to state.
 ## Changed (2026-09-02) - Playlist templates (save/load reusable structures)
 
 *Implements TIER 1 backlog item `Playlist templates`. Adds the ability to save the current playlist structure as a reusable template (e.g. Pre-Service Loop, Worship, Sermon) and load a template to quickly populate a new project's playlist. Templates store slide references (title/body/background/library refs) not full duplicated bytes, persisted in their own `templates.json` with atomic writes.*
@@ -1040,3 +1051,13 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Import/editor:** `src-tauri/src/song_import.rs` preserves available author, copyright, and CCLI values from `.usr` headers and `.cho` ChordPro directives. `src/components/SongEditorModal.svelte` accepts optional credits on song creation; `src/components/Editor.svelte` shows imported credits and provides an inline editor for existing songs plus the per-song Output toggle.
 - **Output authority:** Rust derives `ClientState.liveCreditLine` from the current live song and its setting. `src/components/Output.svelte` only displays that supplied value; Stage receives no credit line. Library detail changes also emit a fresh state snapshot. No new dependencies or migrations were added.
 - **Verify:** tests cover legacy library defaults, `.usr`/`.cho` metadata extraction, and credit-line formatting with the setting off/on. `npm run check` 0 errors/0 warnings; `cargo check` passes with two existing dead-code warnings; `cargo test` 82 passed, 2 hardware-dependent tests ignored; `npm run build` passes. Native Output text placement and live display behavior could not be visually verified here.
+
+
+---
+
+## Changed (2026-10-06) — Windows NDI WGC capture
+
+- Replaced Windows xcap/GDI capture with target-gated `windows-capture` 2.0.1 for GPU-composited WebView2. Dedicated supervisor and WGC threads capture only Output, with no cursor, border suppression where supported, packed BGRA at <=1920x1080 and <=30 fps. Linux/macOS xcap capture is unchanged; the bounded sender repeats its latest image at 30 fps.
+- Read-only Output HWND, title, visibility and display snapshots use the existing deferred main-thread pattern. Capture never creates, shows or moves Output. Hidden/minimized windows get specific Settings messages; recreation/display changes and capture errors recover automatically. Disable/quit cancels lookup waits and joins the WGC worker before stopping the sender.
+- Valid black is accepted (Clear output); capture errors enqueue nothing and retain the last image. Rust keeps hasRealFrames/lastFrameAt/isStale and adds a serde-defaulted status message. Logs include capture method, HWND/title, visible/minimized, first-frame dimensions and captured/dropped/error counts, with rejected_black=0. Output and Stage remain dumb renderers; no frame bytes use state events. Earlier historical notes about an unwired seam/black guard are superseded by this entry.
+- Verification: npm run check 0 errors/0 warnings; cargo check and cargo check --target x86_64-pc-windows-msvc pass with three existing dead-code warnings; cargo test 87 passed/1 hardware test ignored after adding a generated Common Controls v6 sidecar manifest to the Windows test executable; npm run build passes. Frontend commands required a sandbox-access rerun. No live Windows display capture, OBS, physical display switching, or Linux/macOS runtime test was performed. GPU-independent tests cover padded BGRA, conversion/downscale bounds, malformed frames, real-black/error-hold behavior, queue-full drops and status wording.

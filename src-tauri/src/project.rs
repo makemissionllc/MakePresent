@@ -635,7 +635,7 @@ pub struct BroadcastView {
     pub source_name: String,
     /// Whether a real frame has ever been accepted by `send_frame`'s validation
     /// (distinct from `enabled` which only reflects "source created"). While
-    /// `current` in `spawn_send_thread` is still `None` (capture not yet wired),
+    /// `current` in `spawn_send_thread` is still `None` (no capture yet),
     /// this stays `false` — the source is discoverable but transmits no real video.
     pub has_real_frames: bool,
     /// ISO timestamp of the last accepted real frame, if any. Used for staleness
@@ -646,6 +646,8 @@ pub struct BroadcastView {
     /// `has_real_frames` is false or `last_frame_at` is older than the staleness
     /// window (currently ~5s, mirroring `ACK_STALE_MS`).
     pub is_stale: bool,
+    #[serde(default)]
+    pub message: String,
 }
 
 #[derive(Clone, Debug, Serialize)]

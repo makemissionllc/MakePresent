@@ -239,7 +239,9 @@ and shows a recovery notice when the prior exit was unclean.
   builds, tests, and CI-runs without it. On **Windows**, the **NDI 6 Runtime redistributable** is **bundled into the installer** (`src-tauri/resources/NDI_Runtime_V6.exe` + `src-tauri/windows/hooks.nsi` `/verysilent`, `src-tauri/resources/NDI_VERSION.txt:3` 6.0.1 Apr 16 2026, detected via `NDI_RUNTIME_DIR_V6` → `V5` → app directory), so a fresh install needs no manual DLL step. On **Linux**, install the NDI SDK (`libndi.so.6` preferred, `.so.5` fallback); on **macOS**, install `libndi.dylib`.
 - Enable/disable the feed and check capture freshness in **Settings**. NDI is a
   pixel-identical mirror of the native Output, so it uses the Output Look.
-- Captures the native **MakrStudio - Output** window at up to 1080p and 10 fps,
+- Captures the native **MakrStudio - Output** window at up to 1080p: Windows
+  uses **Windows.Graphics.Capture** (`windows-capture`) at up to 30 fps;
+  Linux X11 and macOS retain **xcap** at up to 10 fps. Each path
   converts it to NDI BGRA, then the dedicated NDI sender repeats the latest
   frame at 30 fps. That keeps video backgrounds, camera feeds, Looks, and
   overlays identical to the projected Output. Linux window capture requires
@@ -248,6 +250,13 @@ and shows a recovery notice when the prior exit was unclean.
   Runtime, enable NDI Broadcast in MakrStudio, show Output with a live slide,
   then add an *NDI Source* in OBS and select the source containing
   `MakrStudio - Sunday Output` (NDI may prefix the computer name).
+- **Windows:** Output must be shown and not minimized. Enabling NDI never
+  shows or moves it. Settings reports hidden/minimized, capture errors, Live,
+  or Stale; Live requires accepted, recent real frames. Clear output sends
+  genuine black. Capture errors hold the last image while recovery retries.
+  Window recreation and display changes restart capture automatically. Check
+  `logs/app.log` for `ndi-capture` method, HWND/title, visibility, first frame
+  size, captured/dropped/error counts, and `rejected_black=0`.
 
 ### MIDI & OSC slide triggering
 - Drive the service from hardware: map a MIDI **Note / CC / Program Change**
@@ -604,8 +613,8 @@ npm run build
 Explicitly out of scope (by design — none should influence current architecture
 decisions):
 
-- NDI *framepull capture* from an offscreen render target (the sending side is
-  implemented; capture is a runtime follow-up, not CI-testable)
+- Native capture runtime verification on real displays and OBS (conversion,
+  queue behavior and status wording have GPU-independent unit tests)
 - Remote control (web / phone)
 - Audio playback (video backgrounds are muted this phase)
 - Custom GPU playback pipeline (native `<video>` / `<img>` in the webview for now)
@@ -1318,3 +1327,13 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **Song metadata:** `src-tauri/src/project.rs` adds serde-defaulted author, copyright, CCLI number, and Output-credit fields to library songs. `src-tauri/src/song_import.rs` reads available credits from ChordPro directives and CCLI USR headers; `src/components/SongEditorModal.svelte` and the Library credit editor let operators review and edit them.
 - **Output:** `src-tauri/src/commands.rs` resolves the active song's optional credit line in Rust and sends it in `ClientState`; `src/components/Output.svelte` renders it only when that song's Show credit line on Output setting is enabled. Existing library files default to no credits and the setting off.
 - **Verify:** `npm run check` 0 errors/0 warnings; `cargo check` passes with two existing dead-code warnings; `cargo test` 82 passed, 2 hardware-dependent tests ignored; `npm run build` passes. Native Output text placement could not be visually verified in this headless environment.
+
+
+---
+
+## Changed (2026-10-06) — Windows NDI WGC capture
+
+- Replaced Windows xcap/GDI capture with target-gated `windows-capture` 2.0.1 for GPU-composited WebView2. Dedicated supervisor and WGC threads capture only Output, with no cursor, border suppression where supported, packed BGRA at <=1920x1080 and <=30 fps. Linux/macOS xcap capture is unchanged; the bounded sender repeats its latest image at 30 fps.
+- Read-only Output HWND, title, visibility and display snapshots use the existing deferred main-thread pattern. Capture never creates, shows or moves Output. Hidden/minimized windows get specific Settings messages; recreation/display changes and capture errors recover automatically. Disable/quit cancels lookup waits and joins the WGC worker before stopping the sender.
+- Valid black is accepted (Clear output); capture errors enqueue nothing and retain the last image. Rust keeps hasRealFrames/lastFrameAt/isStale and adds a serde-defaulted status message. Logs include capture method, HWND/title, visible/minimized, first-frame dimensions and captured/dropped/error counts, with rejected_black=0. Output and Stage remain dumb renderers; no frame bytes use state events. Earlier historical notes about an unwired seam/black guard are superseded by this entry.
+- Verification: npm run check 0 errors/0 warnings; cargo check and cargo check --target x86_64-pc-windows-msvc pass with three existing dead-code warnings; cargo test 87 passed/1 hardware test ignored after adding a generated Common Controls v6 sidecar manifest to the Windows test executable; npm run build passes. Frontend commands required a sandbox-access rerun. No live Windows display capture, OBS, physical display switching, or Linux/macOS runtime test was performed. GPU-independent tests cover padded BGRA, conversion/downscale bounds, malformed frames, real-black/error-hold behavior, queue-full drops and status wording.

@@ -2,8 +2,9 @@ use crate::logging::{Level, LogEntry};
 use crate::project::{
     derive_items, is_first_run, now_iso, remove_playlist_item, reorder_item_slides,
     slides_from_template, Background, BroadcastView, ClientState, Library, LibrarySlide,
-    BoxGeometry, LibrarySong, Look, OutputView, Overlay, PlaylistTemplate, Positioning, Project,
-    Settings, Slide, SlideKind, StageView, TemplateItem, TextPosition, Transition, write_settings,
+    BoxGeometry, LibrarySong, Look, OutputView, Overlay, OverlayPlacement, OverlayStore,
+    PlaylistTemplate, Positioning, Project, SavedOverlay, Settings, Slide, SlideKind, StageView,
+    TemplateItem, TextPosition, Transition, write_settings,
 };
 use crate::scripture::ScriptureMatch;
 use crate::state::{AppState, CountdownView};
@@ -42,7 +43,13 @@ fn snapshot(app: &AppHandle) -> ClientState {
         (cloned, current, next, on_deck, looks)
     };
 
-    let items = derive_items(&project_snapshot, &state.library.read().unwrap());
+    let library = state.library.read().unwrap().clone();
+    let items = derive_items(&project_snapshot, &library);
+    let live_credit_line = current
+        .as_ref()
+        .and_then(|slide| slide.library_id.as_deref())
+        .and_then(|song_id| library.songs.iter().find(|song| song.id == song_id))
+        .and_then(song_credit_line);
     let snap = ClientState {
         project: project_snapshot,
         items,
@@ -70,6 +77,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
         first_run: is_first_run(&state.app_data_dir()),
         default_transition: settings.default_transition,
         current,
+        live_credit_line,
         next,
         on_deck,
         looks,
@@ -85,6 +93,16 @@ fn snapshot(app: &AppHandle) -> ClientState {
         stage_network_port: settings.stage_network_port,
         stage_message: state.stage_message.read().unwrap().clone(),
         overlay: state.overlay.read().unwrap().clone(),
+        overlays: {
+            let visible = state.visible_overlays.read().unwrap();
+            state
+                .overlay_library
+                .read()
+                .unwrap()
+                .iter()
+                .map(|overlay| overlay.runtime(visible.contains(&overlay.id)))
+                .collect()
+        },
         audio: state.audio.get_status(),
     };
 
@@ -95,6 +113,21 @@ fn snapshot(app: &AppHandle) -> ClientState {
     state.network.broadcast(&crate::network::stage_broadcast(app));
 
     snap
+}
+
+fn song_credit_line(song: &LibrarySong) -> Option<String> {
+    if !song.show_credit_line { return None; }
+    let mut parts = Vec::new();
+    if let Some(author) = song.author.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        parts.push(author.to_string());
+    }
+    if let Some(copyright) = song.copyright.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        parts.push(if copyright.starts_with('©') { copyright.to_string() } else { format!("© {copyright}") });
+    }
+    if let Some(ccli) = song.ccli_number.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        parts.push(format!("CCLI {ccli}"));
+    }
+    (!parts.is_empty()).then(|| parts.join("  ·  "))
 }
 
 fn log(app: &AppHandle, level: Level, message: &str) {
@@ -401,7 +434,12 @@ pub fn add_library_song(
     body: Option<String>,
     background: Option<Background>,
     slides: Option<Vec<LibrarySlideInput>>,
+    author: Option<String>,
+    copyright: Option<String>,
+    ccli_number: Option<String>,
+    show_credit_line: Option<bool>,
 ) -> Result<Library, String> {
+    validate_song_details(&author, &copyright, &ccli_number)?;
     let state = app.state::<AppState>();
     let (blocks, arrangement) = if let Some(inputs) = slides {
         if inputs.is_empty() {
@@ -460,6 +498,10 @@ pub fn add_library_song(
     let song = LibrarySong {
         id: Uuid::new_v4().to_string(),
         title,
+        author: clean_song_detail(author),
+        copyright: clean_song_detail(copyright),
+        ccli_number: clean_song_detail(ccli_number),
+        show_credit_line: show_credit_line.unwrap_or(false),
         default_background: background.unwrap_or_default(),
         blocks,
         arrangement,
@@ -468,6 +510,45 @@ pub fn add_library_song(
     state.library.write().unwrap().songs.push(song);
     state.request_save();
     Ok(broadcast_library(&app))
+}
+
+fn clean_song_detail(value: Option<String>) -> Option<String> {
+    value.map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
+}
+
+fn validate_song_details(author: &Option<String>, copyright: &Option<String>, ccli_number: &Option<String>) -> Result<(), String> {
+    for (label, value, max) in [("Author", author, 240), ("Copyright", copyright, 240), ("CCLI number", ccli_number, 80)] {
+        if value.as_deref().is_some_and(|text| text.chars().count() > max) {
+            return Err(format!("{label} must be {max} characters or fewer."));
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_song_details(
+    app: AppHandle,
+    song_id: String,
+    author: Option<String>,
+    copyright: Option<String>,
+    ccli_number: Option<String>,
+    show_credit_line: bool,
+) -> Result<Library, String> {
+    validate_song_details(&author, &copyright, &ccli_number)?;
+    let state = app.state::<AppState>();
+    {
+        let mut library = state.library.write().unwrap();
+        let song = library.songs.iter_mut().find(|song| song.id == song_id)
+            .ok_or_else(|| format!("library song {song_id} not found"))?;
+        song.author = clean_song_detail(author);
+        song.copyright = clean_song_detail(copyright);
+        song.ccli_number = clean_song_detail(ccli_number);
+        song.show_credit_line = show_credit_line;
+    }
+    state.request_save();
+    let library = broadcast_library(&app);
+    let _ = snapshot_and_emit(&app);
+    Ok(library)
 }
 
 #[tauri::command]
@@ -481,7 +562,9 @@ pub fn delete_library_song(app: AppHandle, song_id: String) -> Result<Library, S
         library.songs.retain(|s| s.id != song_id);
     }
     state.request_save();
-    Ok(broadcast_library(&app))
+    let library = broadcast_library(&app);
+    let _ = snapshot_and_emit(&app);
+    Ok(library)
 }
 
 /// Update a song's default arrangement (e.g. ["Verse 1", "Chorus", "Verse 2", "Chorus"]).
@@ -1968,8 +2051,111 @@ pub fn clear_stage_message(app: AppHandle) -> Result<ClientState, String> {
     Ok(snapshot_and_emit(&app))
 }
 
-/// Overlay layer for Output — independent of main slide/background, lower-third / logo.
-/// Background at bottom, main slide in middle, overlay on top via z-index. Each layer independently toggleable.
+/// Save a named Output overlay. The library is persisted separately from the project;
+/// visibility remains runtime-only so a prior service overlay cannot surprise on restart.
+#[tauri::command]
+pub fn save_overlay(
+    app: AppHandle,
+    overlay_id: Option<String>,
+    name: String,
+    text: String,
+    background: Option<Background>,
+    placement: OverlayPlacement,
+) -> Result<ClientState, String> {
+    let name = name.trim().to_string();
+    let text = text.trim().to_string();
+    if name.is_empty() {
+        return Err("Overlay name is required.".to_string());
+    }
+    if name.chars().count() > 80 {
+        return Err("Overlay name must be 80 characters or fewer.".to_string());
+    }
+    if text.is_empty() && background.is_none() {
+        return Err("Add text or choose an image before saving this overlay.".to_string());
+    }
+    if text.chars().count() > 500 {
+        return Err("Overlay text must be 500 characters or fewer.".to_string());
+    }
+    if background.as_ref().is_some_and(|bg| !matches!(bg, Background::Image { .. } | Background::Video { .. })) {
+        return Err("Overlay media must be an imported image or video.".to_string());
+    }
+
+    let state = app.state::<AppState>();
+    let data_dir = state.app_data_dir();
+    let mut overlays = state.overlay_library.write().unwrap();
+    let mut updated = overlays.clone();
+    let id = overlay_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
+    if updated.iter().any(|overlay| overlay.id == id) {
+        if updated.iter().any(|overlay| overlay.id != id && overlay.name.eq_ignore_ascii_case(&name)) {
+            return Err("An overlay with that name already exists.".to_string());
+        }
+        let saved = updated.iter_mut().find(|overlay| overlay.id == id).unwrap();
+        saved.name = name.clone();
+        saved.text = text;
+        saved.background = background;
+        saved.placement = placement;
+        let store = OverlayStore { schema_version: 1, overlays: updated.clone() };
+        crate::project::write_overlays(&data_dir, &store)
+            .map_err(|e| format!("Could not save overlays: {e}"))?;
+        *overlays = updated;
+        log(&app, Level::Info, &format!("overlay: updated \"{name}\""));
+    } else {
+        if overlay_id.is_some() {
+            return Err("That saved overlay no longer exists.".to_string());
+        }
+        if updated.iter().any(|overlay| overlay.name.eq_ignore_ascii_case(&name)) {
+            return Err("An overlay with that name already exists.".to_string());
+        }
+        updated.push(SavedOverlay { id: id.clone(), name: name.clone(), text, background, placement });
+        let store = OverlayStore { schema_version: 1, overlays: updated.clone() };
+        crate::project::write_overlays(&data_dir, &store)
+            .map_err(|e| format!("Could not save overlays: {e}"))?;
+        *overlays = updated;
+        log(&app, Level::Info, &format!("overlay: saved \"{name}\""));
+    }
+    // Save edits do not change the runtime visibility set.
+    drop(overlays);
+    Ok(snapshot_and_emit(&app))
+}
+
+#[tauri::command]
+pub fn set_saved_overlay_visible(
+    app: AppHandle,
+    overlay_id: String,
+    visible: bool,
+) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    if !state.overlay_library.read().unwrap().iter().any(|overlay| overlay.id == overlay_id) {
+        return Err("That saved overlay no longer exists.".to_string());
+    }
+    let mut visible_ids = state.visible_overlays.write().unwrap();
+    if visible { visible_ids.insert(overlay_id.clone()); } else { visible_ids.remove(&overlay_id); }
+    drop(visible_ids);
+    log(&app, Level::Info, &format!("overlay: {} {overlay_id}", if visible { "shown" } else { "hidden" }));
+    Ok(snapshot_and_emit(&app))
+}
+
+#[tauri::command]
+pub fn delete_saved_overlay(app: AppHandle, overlay_id: String) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    let data_dir = state.app_data_dir();
+    let mut overlays = state.overlay_library.write().unwrap();
+    let updated: Vec<_> = overlays.iter().filter(|overlay| overlay.id != overlay_id).cloned().collect();
+    if updated.len() == overlays.len() {
+        return Err("That saved overlay no longer exists.".to_string());
+    }
+    let store = OverlayStore { schema_version: 1, overlays: updated.clone() };
+    crate::project::write_overlays(&data_dir, &store)
+        .map_err(|e| format!("Could not save overlay changes: {e}"))?;
+    *overlays = updated;
+    drop(overlays);
+    state.visible_overlays.write().unwrap().remove(&overlay_id);
+    log(&app, Level::Info, &format!("overlay: deleted {overlay_id}"));
+    Ok(snapshot_and_emit(&app))
+}
+
+/// Legacy single-overlay command kept available for existing callers.
+/// Background at bottom, main slide in middle, overlay on top via z-index.
 #[tauri::command]
 pub fn set_overlay(
     app: AppHandle,
@@ -1985,8 +2171,10 @@ pub fn set_overlay(
     }
     let overlay = Overlay {
         id: Uuid::new_v4().to_string(),
+        name: "Overlay".to_string(),
         text: trimmed.clone(),
         background,
+        placement: OverlayPlacement::LowerThird,
         visible: true,
     };
     {
@@ -3345,6 +3533,26 @@ pub fn set_stage_network_pin(app: AppHandle, pin: String) -> Result<ClientState,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn song_credit_line_is_formatted_and_disabled_by_default() {
+        let song = LibrarySong {
+            id: "song".into(),
+            title: "Song".into(),
+            author: Some("Ada Writer".into()),
+            copyright: Some("2026 Example".into()),
+            ccli_number: Some("12345".into()),
+            show_credit_line: false,
+            default_background: Background::default(),
+            blocks: Default::default(),
+            arrangement: Vec::new(),
+            slides: None,
+        };
+        assert_eq!(song_credit_line(&song), None);
+        let mut song = song;
+        song.show_credit_line = true;
+        assert_eq!(song_credit_line(&song).as_deref(), Some("Ada Writer  ·  © 2026 Example  ·  CCLI 12345"));
+    }
 
     #[test]
     fn countdown_duration_enforces_minutes_range() {

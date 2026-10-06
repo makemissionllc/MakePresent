@@ -18,6 +18,9 @@ pub struct ParsedSlide {
 #[derive(Debug)]
 pub struct ParsedSong {
     pub title: String,
+    pub author: Option<String>,
+    pub copyright: Option<String>,
+    pub ccli_number: Option<String>,
     pub slides: Vec<ParsedSlide>,
 }
 
@@ -94,6 +97,10 @@ pub fn parsed_to_library_song(parsed: ParsedSong) -> LibrarySong {
     LibrarySong {
         id: song_id,
         title: parsed.title,
+        author: parsed.author,
+        copyright: parsed.copyright,
+        ccli_number: parsed.ccli_number,
+        show_credit_line: false,
         default_background: Background::default(),
         blocks,
         arrangement,
@@ -308,7 +315,7 @@ fn parse_pro(path: &Path) -> Result<ParsedSong, String> {
         return Err(format!("ProPresenter file resulted in no slides: {}", path.display()));
     }
 
-    Ok(ParsedSong { title, slides })
+    Ok(ParsedSong { title, author: None, copyright: None, ccli_number: None, slides })
 }
 
 fn strip_xml_tags(s: &str) -> String {
@@ -338,6 +345,9 @@ fn parse_cho(path: &Path) -> Result<ParsedSong, String> {
         return Err(format!("ChordPro file is empty: {}", path.display()));
     }
     let mut title: Option<String> = None;
+    let mut author: Option<String> = None;
+    let mut copyright: Option<String> = None;
+    let mut ccli_number: Option<String> = None;
     let mut body_blocks: Vec<String> = Vec::new();
     let mut current_block: Vec<String> = Vec::new();
 
@@ -362,9 +372,12 @@ fn parse_cho(path: &Path) -> Result<ParsedSong, String> {
                             title = Some(val);
                         }
                     }
-                    "subtitle" | "st" | "artist" | "composer" | "lyricist" => {
-                        // Could be used as slide title hint, ignore for now
+                    "author" | "artist" | "composer" | "lyricist" => {
+                        if author.is_none() && !val.is_empty() { author = Some(val); }
                     }
+                    "copyright" => if !val.is_empty() { copyright = Some(val); },
+                    "ccli" | "ccli_number" | "ccli number" => if !val.is_empty() { ccli_number = Some(val); },
+                    "subtitle" | "st" => {}
                     _ => {} // other directives like {c: comment}, {soc}, {eoc} — ignore
                 }
             } else {
@@ -431,6 +444,9 @@ fn parse_cho(path: &Path) -> Result<ParsedSong, String> {
 
     Ok(ParsedSong {
         title: final_title,
+        author,
+        copyright,
+        ccli_number,
         slides,
     })
 }
@@ -463,6 +479,11 @@ fn parse_usr(path: &Path) -> Result<ParsedSong, String> {
         return Err(format!("USR file is empty: {}", path.display()));
     }
     let mut title: Option<String> = None;
+    let mut author: Option<String> = None;
+    let mut words: Option<String> = None;
+    let mut music: Option<String> = None;
+    let mut copyright: Option<String> = None;
+    let mut ccli_number: Option<String> = None;
     let mut lines: Vec<String> = Vec::new();
     let mut in_header = true;
     let mut header_done = false;
@@ -477,7 +498,24 @@ fn parse_usr(path: &Path) -> Result<ParsedSong, String> {
                     title = Some(v);
                 }
                 continue;
-            } else if lower.starts_with("words:") || lower.starts_with("music:") || lower.starts_with("author:") || lower.starts_with("copyright:") || lower.starts_with("ccli") {
+            } else if lower.starts_with("author:") {
+                author = nonempty_header_value(line, "author:");
+                continue;
+            } else if lower.starts_with("words:") {
+                words = nonempty_header_value(line, "words:");
+                continue;
+            } else if lower.starts_with("music:") {
+                music = nonempty_header_value(line, "music:");
+                continue;
+            } else if lower.starts_with("copyright:") {
+                copyright = nonempty_header_value(line, "copyright:");
+                continue;
+            } else if lower.starts_with("ccli") {
+                ccli_number = line
+                    .split_once(':')
+                    .or_else(|| line.split_once('#'))
+                    .map(|(_, value)| value.trim().trim_start_matches('#').trim().to_string())
+                    .filter(|value| !value.is_empty());
                 continue;
             } else if line.trim().is_empty() {
                 // Empty line after header block — transition to lyrics
@@ -595,8 +633,16 @@ fn parse_usr(path: &Path) -> Result<ParsedSong, String> {
         ));
     }
 
+    let author = author.or_else(|| {
+        let credits = [words, music].into_iter().flatten().collect::<Vec<_>>();
+        (!credits.is_empty()).then(|| credits.join(" / "))
+    });
+
     Ok(ParsedSong {
         title: final_title,
+        author,
+        copyright,
+        ccli_number,
         slides,
     })
 }
@@ -635,7 +681,11 @@ fn parse_plain(path: &Path) -> Result<ParsedSong, String> {
     if slides.is_empty() {
         return Err(format!("file contains no text: {}", path.display()));
     }
-    Ok(ParsedSong { title, slides })
+    Ok(ParsedSong { title, author: None, copyright: None, ccli_number: None, slides })
+}
+
+fn nonempty_header_value(line: &str, prefix: &str) -> Option<String> {
+    line.get(prefix.len()..).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string)
 }
 
 #[cfg(test)]
@@ -674,6 +724,19 @@ mod tests {
     }
 
     #[test]
+    fn cho_imports_available_song_credits() {
+        let p = tmp_path(
+            "{title: Grace Song}\n{artist: Ada Writer}\n{copyright: 2024 Example}\n{ccli: 7654321}\n[G]Amazing grace\n",
+            "cho",
+        );
+        let song = parsed_to_library_song(parse_cho(&p).unwrap());
+        assert_eq!(song.author.as_deref(), Some("Ada Writer"));
+        assert_eq!(song.copyright.as_deref(), Some("2024 Example"));
+        assert_eq!(song.ccli_number.as_deref(), Some("7654321"));
+        assert!(!song.show_credit_line);
+    }
+
+    #[test]
     fn cho_to_library_blocks() {
         let p = tmp_path(
             "{title: Test}\nVerse 1 line\n\nChorus line\n\nVerse 1 line\n",
@@ -694,10 +757,13 @@ mod tests {
 
     #[test]
     fn usr_parses_title_and_verses() {
-        let txt = "Title: Holy Holy\nAuthor: Someone\n\nVerse 1\nHoly holy holy\nLord God almighty\n\nChorus\nHoly is the Lord\n";
+        let txt = "Title: Holy Holy\nAuthor: Someone\nCopyright: 2024 Example\nCCLI Song # 1234567\n\nVerse 1\nHoly holy holy\nLord God almighty\n\nChorus\nHoly is the Lord\n";
         let p = tmp_path(txt, "usr");
         let song = parse_usr(&p).unwrap();
         assert_eq!(song.title, "Holy Holy");
+        assert_eq!(song.author.as_deref(), Some("Someone"));
+        assert_eq!(song.copyright.as_deref(), Some("2024 Example"));
+        assert_eq!(song.ccli_number.as_deref(), Some("1234567"));
         assert!(song.slides.len() >= 2);
         assert_eq!(song.slides[0].title.to_lowercase(), "verse 1");
     }

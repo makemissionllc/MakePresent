@@ -6,7 +6,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
   import { api, subscribeAck, subscribeCountdown, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, CountdownView, DisplayInfo, Library, LibrarySong, LyricsHit, MediaAsset, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide, PlaylistItem } from "../lib/types";
+  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, CountdownView, DisplayInfo, Library, LibrarySong, LyricsHit, MediaAsset, Overlay, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide, PlaylistItem } from "../lib/types";
   import { isMedia, isLiveCamera } from "../lib/types";
   import { addCachedMediaSlide } from "../lib/mediaSlide";
   import SettingsPanel from "./SettingsPanel.svelte";
@@ -239,6 +239,12 @@
   let pendingSongTitle = $state("");
   let pendingSongBody = $state("");
   let pendingLyricsId = $state<number | null>(null);
+  let editingSongCreditsId = $state<string | null>(null);
+  let songAuthorDraft = $state("");
+  let songCopyrightDraft = $state("");
+  let songCcliDraft = $state("");
+  let songShowCreditDraft = $state(false);
+  let songCreditError = $state<string | null>(null);
 
   // View Hub (Startup launcher)
   let showHub = $state(false);
@@ -342,6 +348,10 @@
 
   // Overlay for Output — independent lower-third / logo, stage_message-like but for main Output
   let overlayTextDraft = $state("");
+  let overlayNameDraft = $state("");
+  let overlayPlacementDraft = $state<"lower_third" | "logo">("lower_third");
+  let overlayEditingId = $state<string | null>(null);
+  let overlayError = $state<string | null>(null);
   let overlayBackgroundDraft = $state<Background | null>(null);
   let overlayImporting = $state(false);
 
@@ -1591,6 +1601,30 @@
     showSongEditor = true;
   }
 
+  function editSongCredits(song: LibrarySong): void {
+    editingSongCreditsId = song.id;
+    songAuthorDraft = song.author ?? "";
+    songCopyrightDraft = song.copyright ?? "";
+    songCcliDraft = song.ccliNumber ?? "";
+    songShowCreditDraft = song.showCreditLine ?? false;
+    songCreditError = null;
+  }
+
+  async function saveSongCredits(songId: string): Promise<void> {
+    songCreditError = null;
+    try {
+      library = await api.updateSongDetails(songId, {
+        author: songAuthorDraft,
+        copyright: songCopyrightDraft,
+        ccliNumber: songCcliDraft,
+        showCreditLine: songShowCreditDraft,
+      });
+      editingSongCreditsId = null;
+    } catch (e) {
+      songCreditError = String(e);
+    }
+  }
+
   function importLyricsFromSearch(hit: LyricsHit): void {
     globalSearchOpen = false;
     pendingSongTitle = hit.title;
@@ -1602,6 +1636,8 @@
   function handleSongEditorConfirm(
     title: string,
     slides: { title: string; body: string; positioning?: { vAlign: string; hAlign: string }; groupId?: string; groupLabel?: string }[],
+    _raw: string,
+    details: { author: string; copyright: string; ccliNumber: string; showCreditLine: boolean },
   ): void {
     showSongEditor = false;
     pendingSongTitle = "";
@@ -1609,7 +1645,7 @@
     pendingLyricsId = null;
     use("songs");
     void api
-      .addLibrarySong(title, undefined, undefined, slides as any)
+      .addLibrarySong(title, undefined, undefined, slides as any, details)
       .then((l) => (library = l))
       .catch((e: unknown) => (errorMsg = String(e)));
   }
@@ -1877,56 +1913,62 @@
   }
 
   async function setOverlay(): Promise<void> {
+    overlayError = null;
     const text = overlayTextDraft.trim();
     const bg = overlayBackgroundDraft;
     if (!text && !bg) {
-      errorMsg = "Overlay must have text or image";
+      overlayError = "Add text or choose an image before saving this overlay.";
       return;
     }
     try {
-      errorMsg = null;
-      appState = await api.setOverlay(text, bg);
+      const updated = await api.saveOverlay(overlayEditingId, overlayNameDraft, text, bg, overlayPlacementDraft);
+      appState = updated;
+      overlayEditingId = updated.overlays.find((overlay) => overlay.name === overlayNameDraft.trim())?.id ?? null;
     } catch (e) {
-      errorMsg = String(e);
+      overlayError = String(e);
     }
   }
 
-  async function showOverlay(): Promise<void> {
+  function newOverlayDraft(): void {
+    overlayEditingId = null;
+    overlayNameDraft = "";
+    overlayTextDraft = "";
+    overlayBackgroundDraft = null;
+    overlayPlacementDraft = "lower_third";
+    overlayError = null;
+  }
+
+  function editSavedOverlay(overlay: Overlay): void {
+    overlayEditingId = overlay.id;
+    overlayNameDraft = overlay.name;
+    overlayTextDraft = overlay.text;
+    overlayBackgroundDraft = overlay.background;
+    overlayPlacementDraft = overlay.placement;
+    overlayError = null;
+  }
+
+  async function toggleSavedOverlay(overlay: Overlay): Promise<void> {
     try {
-      errorMsg = null;
-      if (!appState?.overlay) {
-        await setOverlay();
-      } else {
-        appState = await api.setOverlayVisible(true);
-      }
+      overlayError = null;
+      appState = await api.setSavedOverlayVisible(overlay.id, !overlay.visible);
     } catch (e) {
-      errorMsg = String(e);
+      overlayError = String(e);
     }
   }
 
-  async function hideOverlay(): Promise<void> {
+  async function removeSavedOverlay(overlay: Overlay): Promise<void> {
     try {
-      errorMsg = null;
-      appState = await api.setOverlayVisible(false);
+      overlayError = null;
+      appState = await api.deleteSavedOverlay(overlay.id);
+      if (overlayEditingId === overlay.id) newOverlayDraft();
     } catch (e) {
-      errorMsg = String(e);
-    }
-  }
-
-  async function clearOverlay(): Promise<void> {
-    try {
-      errorMsg = null;
-      appState = await api.clearOverlay();
-      overlayTextDraft = "";
-      overlayBackgroundDraft = null;
-    } catch (e) {
-      errorMsg = String(e);
+      overlayError = String(e);
     }
   }
 
   async function pickOverlayImage(): Promise<void> {
     try {
-      errorMsg = null;
+      overlayError = null;
       const picked = await open({ multiple: false, filters: MEDIA_FILTERS });
       if (typeof picked !== "string") return;
       overlayImporting = true;
@@ -1938,7 +1980,7 @@
       }
     } catch (e) {
       overlayImporting = false;
-      errorMsg = String(e);
+      overlayError = String(e);
     }
   }
 
@@ -2675,6 +2717,7 @@
                 look={outputPreviewLook}
                 showText={project?.showText ?? true}
                 showBackground={project?.showBackground ?? true}
+                overlays={appState?.overlays ?? []}
                 overlay={appState?.overlay ?? null}
                 aspectRatio={project?.aspectRatio ?? "16:9"}
                 enableCamera={true}
@@ -2885,26 +2928,43 @@
       </div>
 
       <div class="stage-message-panel">
-        <span class="field-label">Overlays — Output only (never Stage)</span>
-        {#if appState?.overlay}
-          <div class="stage-message-current">
-            <span class="stage-message-text">{appState.overlay.text || "(image)"} — {appState.overlay.visible ? "Visible" : "Hidden"}</span>
-            <span class="live-dot" style:background={appState.overlay.visible ? "var(--semantic-live, #1f9d6a)" : "var(--semantic-idle, #64748b)"}></span>
+        <span class="field-label">Overlay library — Output only</span>
+        {#if (appState?.overlays.length ?? 0) > 0}
+          <div class="overlay-library-list">
+            {#each appState?.overlays ?? [] as overlay (overlay.id)}
+              <div class="overlay-library-item">
+                <div class="overlay-library-info">
+                  <strong>{overlay.name}</strong>
+                  <span>{overlay.placement === "logo" ? "Logo" : "Lower third"} · {overlay.background ? "Text/image" : "Text"}</span>
+                </div>
+                <div class="overlay-library-actions">
+                  <button class="ghost" class:overlay-visible={overlay.visible} onclick={() => void toggleSavedOverlay(overlay)}>{overlay.visible ? "Hide" : "Show"}</button>
+                  <button class="ghost" onclick={() => editSavedOverlay(overlay)}>Edit</button>
+                  <button class="ghost overlay-delete" onclick={() => void removeSavedOverlay(overlay)} aria-label={`Delete ${overlay.name}`}>×</button>
+                </div>
+              </div>
+            {/each}
           </div>
+        {:else}
+          <p class="overlay-library-empty">No saved overlays yet. Create one below for a reusable lower third or logo.</p>
         {/if}
-        <div class="stage-message-row">
-          <input
-            type="text"
-            placeholder="Lower-third text…"
-            bind:value={overlayTextDraft}
-            onkeydown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void setOverlay();
-              }
-            }}
-          />
-        </div>
+        <div class="overlay-form">
+          <div class="overlay-form-heading">
+            <strong>{overlayEditingId ? "Edit overlay" : "New overlay"}</strong>
+            {#if overlayEditingId}<button class="ghost" onclick={newOverlayDraft}>New</button>{/if}
+          </div>
+          <label>Name
+            <input type="text" placeholder="Guest speaker" bind:value={overlayNameDraft} maxlength="80" />
+          </label>
+          <label>Layout
+            <select bind:value={overlayPlacementDraft}>
+              <option value="lower_third">Lower third</option>
+              <option value="logo">Logo</option>
+            </select>
+          </label>
+          <label>Text <span class="overlay-optional">Optional</span>
+            <textarea placeholder="Name, announcement, or short message…" bind:value={overlayTextDraft} maxlength="500" rows="2"></textarea>
+          </label>
         {#if overlayBackgroundDraft && isMedia(overlayBackgroundDraft)}
           <div class="overlay-preview" style="display:flex; gap:8px; align-items:center; font-size:11px;">
             <span
@@ -2918,16 +2978,15 @@
             <button class="ghost" onclick={() => removeOverlayBackground()} title="Remove image">×</button>
           </div>
         {/if}
-        <div class="stage-message-actions">
-          <button class="ghost" onclick={() => void pickOverlayImage()} disabled={overlayImporting} title="Pick image/video for overlay">
-            {overlayImporting ? "…" : "Image…"}
-          </button>
-          <button class="ghost" onclick={() => void setOverlay()} title="Set overlay (visible)">Set</button>
-          <button class="ghost" onclick={() => void showOverlay()} title="Show overlay">Show</button>
-          <button class="ghost" onclick={() => void hideOverlay()} title="Hide overlay">Hide</button>
-          <button class="ghost" onclick={() => void clearOverlay()} title="Clear overlay">Clear</button>
+          <div class="stage-message-actions">
+            <button class="ghost" onclick={() => void pickOverlayImage()} disabled={overlayImporting} title="Pick image/video for overlay">
+              {overlayImporting ? "Importing…" : "Add image…"}
+            </button>
+            <button class="ghost primary" onclick={() => void setOverlay()} disabled={overlayImporting}>{overlayEditingId ? "Save changes" : "Save overlay"}</button>
+          </div>
         </div>
-        <span class="field-hint">Lower-third / logo on Output only — background (z0), main (z1), overlay (z2). Video keeps playing when overlay toggles.</span>
+        {#if overlayError}<p class="overlay-error" role="alert">{overlayError}</p>{/if}
+        <span class="field-hint">Saved overlays layer above the live slide on Output. Showing or hiding one leaves its background video playing.</span>
       </div>
     </aside>
   </div>
@@ -3001,12 +3060,16 @@
                         style:background-position="center"
                         title={isLiveCamera(song.defaultBackground) ? `Live camera: ${song.defaultBackground.label || "camera"}` : undefined}
                       >{#if isLiveCamera(song.defaultBackground)}<span aria-hidden="true">🎥</span>{/if}</span>
-                      <span class="song-meta">
-                        <span class="song-label">{song.title || "Untitled"}</span>
-                        <span class="song-count">{getSongArrangementCount(song)} {getSongArrangementCount(song) === 1 ? "slide" : "slides"} · {getSongBlockCount(song)} blocks</span>
-                      </span>
-                    </button>
-                    <button
+                        <span class="song-meta">
+                          <span class="song-label">{song.title || "Untitled"}</span>
+                          <span class="song-count">{getSongArrangementCount(song)} {getSongArrangementCount(song) === 1 ? "slide" : "slides"} · {getSongBlockCount(song)} blocks</span>
+                          {#if song.author || song.copyright || song.ccliNumber}
+                            <span class="song-credit-summary">{[song.author, song.copyright, song.ccliNumber ? `CCLI ${song.ccliNumber}` : null].filter(Boolean).join(" · ")}</span>
+                          {/if}
+                        </span>
+                      </button>
+                      <button class="credit-edit" title="Edit song credits" aria-label={`Edit credits for ${song.title}`} onclick={(e) => { e.stopPropagation(); editSongCredits(song); }}>Credits</button>
+                      <button
                       class="delete"
                       title="Delete song"
                       onclick={(e) => {
@@ -3017,6 +3080,19 @@
                       &times;
                     </button>
                   </li>
+                  {#if editingSongCreditsId === song.id}
+                    <li class="song-credit-editor">
+                      <label>Author<input bind:value={songAuthorDraft} maxlength="240" placeholder="Writer or composer" /></label>
+                      <label>Copyright<input bind:value={songCopyrightDraft} maxlength="240" placeholder="© Year Name" /></label>
+                      <label>CCLI number<input bind:value={songCcliDraft} maxlength="80" placeholder="123456" /></label>
+                      <label class="song-credit-toggle"><input type="checkbox" bind:checked={songShowCreditDraft} /> Show credit line on Output</label>
+                      {#if songCreditError}<span class="song-credit-error" role="alert">{songCreditError}</span>{/if}
+                      <div class="song-credit-actions">
+                        <button class="ghost" onclick={() => { editingSongCreditsId = null; songCreditError = null; }}>Cancel</button>
+                        <button class="ghost primary" onclick={() => void saveSongCredits(song.id)}>Save credits</button>
+                      </div>
+                    </li>
+                  {/if}
                   {#if songExpanded}
                   {#each getBlocksArray(song) as verse (verse.id)}
                     <li class="library-verse-row" transition:slideTransition={{ duration: librarySearch.trim() || prefersReducedMotion() ? 0 : 180, easing: cubicOut, axis: "y" }}>
@@ -4275,6 +4351,65 @@
     color: var(--text-dim);
     flex: none;
   }
+  .song-credit-summary {
+    overflow: hidden;
+    color: var(--text-dim);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .credit-edit {
+    flex: none;
+    align-self: center;
+    padding: 5px 6px;
+    color: var(--text-dim);
+    font-size: 10px;
+  }
+  .song-list .song-credit-editor {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: end;
+    gap: 7px;
+    margin: 0 0 3px 25px;
+    padding: 9px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .song-credit-editor label {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+    color: var(--text-dim);
+    font-size: 10px;
+  }
+  .song-credit-editor input:not([type="checkbox"]) {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 10px;
+  }
+  .song-credit-editor label:first-child { grid-column: 1 / -1; }
+  .song-credit-editor .song-credit-toggle {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .song-credit-toggle input { accent-color: var(--accent); }
+  .song-credit-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .song-credit-actions button { padding: 5px 8px; font-size: 10px; }
+  .song-credit-error { grid-column: 1 / -1; color: var(--semantic-error); font-size: 10px; }
 
   /* Per-song verse toggle: a narrow chevron so rows stay compact. */
   .song-expand {
@@ -5087,6 +5222,90 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  .overlay-library-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    max-height: 180px;
+    overflow: auto;
+    padding-right: 2px;
+  }
+  .overlay-library-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .overlay-library-info {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .overlay-library-info strong {
+    overflow: hidden;
+    color: var(--text);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .overlay-library-info span,
+  .overlay-library-empty,
+  .overlay-optional {
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+  .overlay-library-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .overlay-library-actions button {
+    padding: 4px 7px;
+    font-size: 10px;
+  }
+  .overlay-library-actions .overlay-visible {
+    border-color: var(--semantic-live-border);
+    background: var(--semantic-live-bg);
+    color: var(--text);
+  }
+  .overlay-delete { color: var(--text-muted); }
+  .overlay-library-empty { margin: 0; line-height: 1.5; }
+  .overlay-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .overlay-form-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--text);
+    font-size: 11px;
+  }
+  .overlay-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+  .overlay-form textarea {
+    resize: vertical;
+    min-height: 46px;
+  }
+  .overlay-error {
+    margin: 0;
+    color: var(--semantic-error, #e11d48);
+    font-size: 11px;
+    line-height: 1.45;
   }
   .stage-message-current {
     display: flex;

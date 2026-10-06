@@ -254,6 +254,7 @@ export interface ClientState {
   firstRun: boolean;
   defaultTransition: Transition;
   current: Slide | null;
+  liveCreditLine?: string | null;
   next: Slide | null;
   onDeck: Slide | null;
   looks: Look[];
@@ -272,6 +273,7 @@ export interface ClientState {
   stageNetworkPort: number;
   stageMessage: string | null;
   overlay: Overlay | null;
+  overlays: Overlay[];
   audio: AudioStateView;
 }
 
@@ -328,6 +330,10 @@ export interface LibrarySlide {
 export interface LibrarySong {
   id: string;
   title: string;
+  author?: string | null;
+  copyright?: string | null;
+  ccliNumber?: string | null;
+  showCreditLine?: boolean;
   defaultBackground: Background;
   /** Master blocks — unique named slides keyed by block name (e.g. "Verse 1", "Chorus") */
   blocks: Record<string, LibrarySlide>;
@@ -356,9 +362,11 @@ export interface AudioStateView {
 
 export interface Overlay {
   id: string;
+  name: string;
   text: string;
   background: Background | null;
   visible: boolean;
+  placement: "lower_third" | "logo";
 }
 
 export interface ServicePresetItem {

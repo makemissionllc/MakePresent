@@ -9,6 +9,7 @@
     showText?: boolean;
     showBackground?: boolean;
     overlay?: Overlay | null;
+    overlays?: Overlay[];
     aspectRatio?: string;
     isStage?: boolean;
     enableCamera?: boolean;
@@ -20,6 +21,7 @@
     showText = true,
     showBackground = true,
     overlay = null,
+    overlays = [],
     aspectRatio,
     isStage = false,
     enableCamera = false,
@@ -61,6 +63,7 @@
       {showText}
       {showBackground}
       {overlay}
+      {overlays}
       {aspectRatio}
       {isStage}
       {enableCamera}

@@ -69,7 +69,12 @@
   const showText = $derived(project?.showText ?? true);
   const showBackground = $derived(project?.showBackground ?? true);
   const aspectRatio = $derived(project?.aspectRatio ?? "16:9");
-  const overlay = $derived(appState?.overlay ?? null);
+  const overlays = $derived.by(() => {
+    const saved = appState?.overlays ?? [];
+    if (saved.length > 0) return saved.filter((item) => item.visible);
+    const legacy = appState?.overlay;
+    return legacy?.visible ? [legacy] : [];
+  });
 
   // The on-deck slide comes straight from state (the backend decides who is
   // "likely next"). Its media is preloaded here — in the window that will
@@ -200,8 +205,8 @@
     {/if}
   {/if}
 
-  {#if overlay?.visible}
-    <div class="overlay-layer" style:z-index={2}>
+  {#each overlays as overlay (overlay.id)}
+    <div class="overlay-layer" class:logo={overlay.placement === "logo"} style:z-index={2}>
       {#if overlay.background?.type === "image"}
         <img
           class="overlay-media"
@@ -227,6 +232,10 @@
         <div class="overlay-text">{overlay.text}</div>
       {/if}
     </div>
+  {/each}
+
+  {#if appState?.liveCreditLine}
+    <div class="live-credit-line">{appState.liveCreditLine}</div>
   {/if}
 
   {#if countdown.active && countdown.outputVisible}
@@ -388,6 +397,13 @@
     pointer-events: none;
     z-index: 2;
   }
+  .overlay-layer.logo {
+    inset: auto 4vw 4vh auto;
+    width: min(22vw, 320px);
+    height: min(22vh, 220px);
+    justify-content: flex-end;
+    align-items: flex-end;
+  }
   .overlay-media {
     position: absolute;
     bottom: 0;
@@ -397,6 +413,13 @@
     height: 18vh;
     object-fit: cover;
     z-index: 0;
+  }
+  .overlay-layer.logo .overlay-media {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
   .overlay-text {
     position: relative;
@@ -414,5 +437,23 @@
     backdrop-filter: blur(4px);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
     white-space: pre-wrap;
+  }
+  .overlay-layer.logo .overlay-text {
+    max-width: 100%;
+    margin: 0;
+    padding: 0.55em 0.8em;
+    font-size: clamp(0.8rem, 1.4vmin, 1.2rem);
+  }
+  .live-credit-line {
+    position: absolute;
+    z-index: 4;
+    right: 3vw;
+    bottom: 1.4vh;
+    left: 3vw;
+    color: rgba(255, 255, 255, 0.88);
+    font: 500 clamp(10px, 1.35vmin, 17px)/1.3 var(--font-body);
+    text-align: center;
+    text-shadow: 0 1px 5px #000, 0 0 10px #000;
+    pointer-events: none;
   }
 </style>

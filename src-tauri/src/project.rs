@@ -665,6 +665,9 @@ pub struct ClientState {
     pub default_transition: Transition,
     /// Resolved live slide (None when output is black).
     pub current: Option<Slide>,
+    /// Optional song credit display resolved by Rust for Output only.
+    #[serde(default)]
+    pub live_credit_line: Option<String>,
     /// Resolved next slide in the playlist (None when nothing queued).
     pub next: Option<Slide>,
     /// Resolved on-deck slide: the selected-but-not-live slide when there is
@@ -701,6 +704,9 @@ pub struct ClientState {
     /// Independent overlay layer for Output — lower-third / logo on top of background+main.
     /// `None` = no overlay, `Some` with `visible=false` = hidden but content preserved.
     pub overlay: Option<Overlay>,
+    /// Saved overlay library and runtime visibility, rendered in stable id order.
+    #[serde(default)]
+    pub overlays: Vec<Overlay>,
     /// Single-track backing audio state (rodio on cpal) — ONE track at a time, not tied to slides.
     pub audio: AudioStateView,
 }
@@ -841,6 +847,15 @@ pub struct LibrarySlide {
 pub struct LibrarySong {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub copyright: Option<String>,
+    #[serde(default)]
+    pub ccli_number: Option<String>,
+    /// Optional Output credit line. Defaults off for existing and new songs.
+    #[serde(default)]
+    pub show_credit_line: bool,
     pub default_background: Background,
     /// Master blocks — unique named slides keyed by block name (e.g. "Verse 1", "Chorus", "Bridge")
     #[serde(default)]
@@ -934,10 +949,63 @@ impl LibrarySong {
 #[serde(rename_all = "camelCase")]
 pub struct Overlay {
     pub id: String,
+    #[serde(default)]
+    pub name: String,
     pub text: String,
     #[serde(default)]
     pub background: Option<Background>,
+    #[serde(default)]
+    pub placement: OverlayPlacement,
     pub visible: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlayPlacement {
+    #[default]
+    LowerThird,
+    Logo,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedOverlay {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub background: Option<Background>,
+    #[serde(default)]
+    pub placement: OverlayPlacement,
+}
+
+impl SavedOverlay {
+    pub fn runtime(&self, visible: bool) -> Overlay {
+        Overlay {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            text: self.text.clone(),
+            background: self.background.clone(),
+            placement: self.placement,
+            visible,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OverlayStore {
+    pub schema_version: u32,
+    pub overlays: Vec<SavedOverlay>,
+}
+
+impl Default for OverlayStore {
+    fn default() -> Self {
+        Self { schema_version: 1, overlays: Vec::new() }
+    }
 }
 
 #[allow(dead_code)]
@@ -945,16 +1013,20 @@ impl Overlay {
     pub fn new_text(text: String) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
+            name: "Text overlay".to_string(),
             text,
             background: None,
+            placement: OverlayPlacement::LowerThird,
             visible: true,
         }
     }
     pub fn new_image(bg: Background) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
+            name: "Image overlay".to_string(),
             text: String::new(),
             background: Some(bg),
+            placement: OverlayPlacement::LowerThird,
             visible: true,
         }
     }
@@ -1124,6 +1196,22 @@ pub fn read_templates(data_dir: &Path) -> TemplateStore {
 
 pub fn write_templates(data_dir: &Path, store: &TemplateStore) -> io::Result<()> {
     atomic_write_json(data_dir, "templates.json", store)
+}
+
+fn overlays_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("overlays.json")
+}
+
+pub fn read_overlays(data_dir: &Path) -> OverlayStore {
+    let raw = fs::read_to_string(overlays_path(data_dir)).ok();
+    match raw.and_then(|r| serde_json::from_str::<OverlayStore>(&r).ok()) {
+        Some(store) => store,
+        None => OverlayStore::default(),
+    }
+}
+
+pub fn write_overlays(data_dir: &Path, store: &OverlayStore) -> io::Result<()> {
+    atomic_write_json(data_dir, "overlays.json", store)
 }
 
 // ---------------------------------------------------------------------------
@@ -1412,6 +1500,10 @@ fn seed_library() -> Library {
             LibrarySong {
                 id: Uuid::new_v4().to_string(),
                 title: "Amazing Grace".to_string(),
+                author: None,
+                copyright: None,
+                ccli_number: None,
+                show_credit_line: false,
                 default_background: Background::Solid {
                     color: "#1f3a2f".to_string(),
                 },
@@ -1422,6 +1514,10 @@ fn seed_library() -> Library {
             LibrarySong {
                 id: Uuid::new_v4().to_string(),
                 title: "Great Is Thy Faithfulness".to_string(),
+                author: None,
+                copyright: None,
+                ccli_number: None,
+                show_credit_line: false,
                 default_background: Background::Solid {
                     color: "#0f2b4a".to_string(),
                 },
@@ -1436,6 +1532,48 @@ fn seed_library() -> Library {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_store_round_trips_through_atomic_file() {
+        let data_dir = std::env::temp_dir().join(format!("makrstudio-overlays-{}", Uuid::new_v4()));
+        let store = OverlayStore {
+            schema_version: 1,
+            overlays: vec![SavedOverlay {
+                id: "welcome".into(),
+                name: "Welcome".into(),
+                text: "Welcome to worship".into(),
+                background: None,
+                placement: OverlayPlacement::LowerThird,
+            }],
+        };
+
+        write_overlays(&data_dir, &store).unwrap();
+        assert_eq!(read_overlays(&data_dir), store);
+        fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn old_runtime_overlay_defaults_new_fields() {
+        let overlay: Overlay = serde_json::from_str(
+            r#"{"id":"old","text":"Hello","visible":true}"#,
+        )
+        .unwrap();
+        assert_eq!(overlay.name, "");
+        assert_eq!(overlay.placement, OverlayPlacement::LowerThird);
+        assert_eq!(overlay.background, None);
+    }
+
+    #[test]
+    fn legacy_library_song_defaults_credit_details_off() {
+        let song: LibrarySong = serde_json::from_str(
+            r##"{"id":"old-song","title":"Old Song","defaultBackground":{"type":"solid","color":"#000000"},"blocks":{},"arrangement":[]}"##,
+        )
+        .unwrap();
+        assert_eq!(song.author, None);
+        assert_eq!(song.copyright, None);
+        assert_eq!(song.ccli_number, None);
+        assert!(!song.show_credit_line);
+    }
 
     fn test_slide(id: &str, item_id: Option<&str>, library_id: Option<&str>) -> Slide {
         Slide {

@@ -286,6 +286,7 @@ pub fn run() {
             // seed) the reusable slide library (with one-time v1 -> v2 blocks+arrangement migration).
             let (project, notice) = recover_or_seed(&data_dir);
             let (library, migrated) = read_library_with_migration_info(&data_dir);
+            let overlay_store = project::read_overlays(&data_dir);
 
             state.logger.log(
                 Level::Info,
@@ -312,6 +313,7 @@ pub fn run() {
 
             *state.project.write().unwrap() = project;
             *state.library.write().unwrap() = library;
+            *state.overlay_library.write().unwrap() = overlay_store.overlays;
             state.set_notice(notice);
             *state.data_dir.write().unwrap() = data_dir.clone();
             {
@@ -682,6 +684,7 @@ pub fn run() {
             commands::new_project_from_preset,
             commands::get_library,
             commands::add_library_song,
+            commands::update_song_details,
             lyrics::search_lyrics,
             lyrics::get_lyrics,
             commands::delete_library_song,
@@ -763,6 +766,9 @@ pub fn run() {
             commands::set_overlay,
             commands::set_overlay_visible,
             commands::clear_overlay,
+            commands::save_overlay,
+            commands::set_saved_overlay_visible,
+            commands::delete_saved_overlay,
             commands::list_audio_devices,
             commands::get_audio_state,
             commands::load_audio,

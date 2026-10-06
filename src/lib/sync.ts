@@ -187,7 +187,11 @@ export const api = {
     body?: string,
     background?: Background,
     slides?: { title: string; body: string; positioning?: { vAlign: string; hAlign: string }; groupId?: string; groupLabel?: string }[],
-  ) => invoke<Library>("add_library_song", { title, body, background, slides }),
+    details?: { author?: string; copyright?: string; ccliNumber?: string; showCreditLine?: boolean },
+  ) => invoke<Library>("add_library_song", { title, body, background, slides, author: details?.author, copyright: details?.copyright, ccliNumber: details?.ccliNumber, showCreditLine: details?.showCreditLine }),
+
+  updateSongDetails: (songId: string, details: { author: string; copyright: string; ccliNumber: string; showCreditLine: boolean }) =>
+    invoke<Library>("update_song_details", { songId, author: details.author, copyright: details.copyright, ccliNumber: details.ccliNumber, showCreditLine: details.showCreditLine }),
 
   deleteLibrarySong: (songId: string) =>
     invoke<Library>("delete_library_song", { songId }),
@@ -361,6 +365,15 @@ export const api = {
 
   setOverlay: (text: string, background?: Background | null) =>
     invoke<ClientState>("set_overlay", { text, background: background ?? null }),
+
+  saveOverlay: (overlayId: string | null, name: string, text: string, background: Background | null, placement: "lower_third" | "logo") =>
+    invoke<ClientState>("save_overlay", { overlayId, name, text, background, placement }),
+
+  setSavedOverlayVisible: (overlayId: string, visible: boolean) =>
+    invoke<ClientState>("set_saved_overlay_visible", { overlayId, visible }),
+
+  deleteSavedOverlay: (overlayId: string) =>
+    invoke<ClientState>("delete_saved_overlay", { overlayId }),
 
   setOverlayVisible: (visible: boolean) =>
     invoke<ClientState>("set_overlay_visible", { visible }),

@@ -11,7 +11,7 @@
     initialTitle?: string;
     initialBody?: string;
     initialLyricsId?: number | null;
-    onConfirm: (title: string, slides: { title: string; body: string; positioning?: { vAlign: VAlign; hAlign: HAlign }; groupId?: string; groupLabel?: string }[], raw: string) => void;
+    onConfirm: (title: string, slides: { title: string; body: string; positioning?: { vAlign: VAlign; hAlign: HAlign }; groupId?: string; groupLabel?: string }[], raw: string, details: { author: string; copyright: string; ccliNumber: string; showCreditLine: boolean }) => void;
     onCancel: () => void;
   }
 
@@ -48,6 +48,10 @@
 
   let songTitle = $state("");
   let rawText = $state("");
+  let author = $state("");
+  let copyright = $state("");
+  let ccliNumber = $state("");
+  let showCreditLine = $state(false);
   let maxLines = $state<1 | 2 | 4>(2);
   let globalVAlign = $state<VAlign>("center");
   let globalHAlign = $state<HAlign>("center");
@@ -78,6 +82,10 @@
       lyricsFetchSeq++;
       songTitle = initialTitle;
       rawText = initialBody;
+      author = "";
+      copyright = "";
+      ccliNumber = "";
+      showCreditLine = false;
       lyricsQuery = initialTitle;
       lyricsMatches = [];
       lyricsError = null;
@@ -300,7 +308,7 @@
         groupLabel: s.groupLabel,
       };
     });
-    onConfirm(title, payload, rawText);
+    onConfirm(title, payload, rawText, { author, copyright, ccliNumber, showCreditLine });
   }
 
   function onKeydown(e: KeyboardEvent): void {
@@ -383,6 +391,16 @@
             <span class="meta-hint">Detected title: <strong>{parsedMeta.metadata.title}</strong></span>
           {/if}
           {#if parsedMeta.metadata.style}<span class="meta-hint">Style: {parsedMeta.metadata.style}</span>{/if}
+
+          <details class="song-credit-fields">
+            <summary>Song credits <span>Optional</span></summary>
+            <div class="credit-input-grid">
+              <label>Author<input bind:value={author} maxlength="240" placeholder="Writer or composer" /></label>
+              <label>Copyright<input bind:value={copyright} maxlength="240" placeholder="© Year Name" /></label>
+              <label>CCLI number<input bind:value={ccliNumber} maxlength="80" placeholder="123456" /></label>
+            </div>
+            <label class="credit-toggle"><input type="checkbox" bind:checked={showCreditLine} /> Show credit line on Output</label>
+          </details>
 
           <div class="chips">
             {#each TAGS as tag}<button class="chip" onclick={()=>insertTag(tag)}>{tag}</button>{/each}
@@ -512,6 +530,15 @@
   .title-input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,140,255,0.15);}
   .meta-hint{font-size:11px; color:var(--text-dim);}
   .meta-hint strong{color:var(--text);}
+  .song-credit-fields{display:grid;gap:9px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--panel-2);}
+  .song-credit-fields summary{color:var(--text);font-size:11px;font-weight:700;cursor:pointer;}
+  .song-credit-fields summary span{margin-left:5px;color:var(--text-dim);font-size:10px;font-weight:400;}
+  .credit-input-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .credit-input-grid label{display:grid;gap:4px;color:var(--text-dim);font-size:10px;}
+  .credit-input-grid label:first-child{grid-column:1/-1;}
+  .credit-input-grid input{min-width:0;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--panel);color:var(--text);font-size:11px;}
+  .credit-toggle{display:flex;align-items:center;gap:7px;color:var(--text-dim);font-size:10px;}
+  .credit-toggle input{accent-color:var(--accent);}
   .chips{display:flex; flex-wrap:wrap; gap:5px;}
   .chip{font-size:10px; font-weight:600; padding:4px 8px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); color:var(--text-dim); cursor:pointer;}
   .chip:hover{background:var(--panel); color:var(--text); border-color:var(--accent);}

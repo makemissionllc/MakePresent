@@ -18,6 +18,8 @@
     aspectRatio?: string;
     /** Independent overlay layer for Output (lower-third / logo) — background at z0, main at z1, overlay at z2 */
     overlay?: Overlay | null;
+    /** Saved overlays share the independent top layer. */
+    overlays?: Overlay[];
     /** Open a live camera stream for live_camera backgrounds. False renders a
         quiet placeholder instead — grid thumbs, Stage, and Look previews must
         leave this off so capture devices are only open on Output (live +
@@ -25,7 +27,12 @@
     enableCamera?: boolean;
   }
 
-  let { slide, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, enableCamera = false }: Props = $props();
+  let { slide, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, overlays = [], enableCamera = false }: Props = $props();
+
+  const visibleOverlays = $derived.by(() => {
+    if (overlays.length > 0) return overlays.filter((item) => item.visible);
+    return overlay?.visible ? [overlay] : [];
+  });
 
   const effectiveShowBackground = $derived(showBackground && look.showBackground);
   const effectiveShowText = $derived(showText);
@@ -218,22 +225,22 @@
       </p>
     {/if}
   {/if}
-  {#if overlay?.visible}
-    <div class="overlay-layer" style:z-index={2}>
-      {#if overlay.background?.type === "image"}
+  {#each visibleOverlays as overlayItem (overlayItem.id)}
+    <div class="overlay-layer" class:logo={overlayItem.placement === "logo"} style:z-index={2}>
+      {#if overlayItem.background?.type === "image"}
         <img
           class="overlay-media"
-          src={convertFileSrc(overlay.background.path)}
+          src={convertFileSrc(overlayItem.background.path)}
           alt=""
           draggable="false"
           onerror={(e) => {
             (e.currentTarget as HTMLImageElement).style.display = "none";
           }}
         />
-      {:else if overlay.background?.type === "video"}
+      {:else if overlayItem.background?.type === "video"}
         <video
           class="overlay-media"
-          src={convertFileSrc(overlay.background.path)}
+          src={convertFileSrc(overlayItem.background.path)}
           autoplay
           loop
           muted
@@ -241,11 +248,11 @@
           preload="auto"
         ></video>
       {/if}
-      {#if overlay.text}
-        <div class="overlay-text">{overlay.text}</div>
+      {#if overlayItem.text}
+        <div class="overlay-text">{overlayItem.text}</div>
       {/if}
     </div>
-  {/if}
+  {/each}
 </div>
 
 <style>
@@ -429,6 +436,13 @@
     pointer-events: none;
     z-index: 2;
   }
+  .overlay-layer.logo {
+    inset: auto 4vw 4vh auto;
+    width: min(22vw, 320px);
+    height: min(22vh, 220px);
+    justify-content: flex-end;
+    align-items: flex-end;
+  }
   .overlay-media {
     position: absolute;
     bottom: 0;
@@ -438,6 +452,13 @@
     height: 18vh;
     object-fit: cover;
     z-index: 0;
+  }
+  .overlay-layer.logo .overlay-media {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
   .overlay-text {
     position: relative;
@@ -455,5 +476,11 @@
     backdrop-filter: blur(4px);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
     white-space: pre-wrap;
+  }
+  .overlay-layer.logo .overlay-text {
+    max-width: 100%;
+    margin: 0;
+    padding: 0.55em 0.8em;
+    font-size: clamp(0.8rem, 1.4vmin, 1.2rem);
   }
 </style>

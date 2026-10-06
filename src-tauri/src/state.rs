@@ -6,7 +6,9 @@ use crate::network::NetworkServer;
 use crate::osc::OscListener;
 use crate::audio::AudioPlayer;
 use crate::project::{now_iso, Library, Notice, Overlay, Project, RenderAck, AckUpdate, Settings};
+use crate::project::SavedOverlay;
 use crate::scripture::ScriptureIndex;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -147,6 +149,9 @@ pub struct AppState {
     /// background + main slide. Separate from `Project.live`; toggling never
     /// affects main slide. `None` = no overlay, `Some` with `visible=false` = hidden but content preserved.
     pub overlay: RwLock<Option<Overlay>>,
+    /// Named overlay assets loaded from overlays.json. Visibility is runtime-only.
+    pub overlay_library: RwLock<Vec<SavedOverlay>>,
+    pub visible_overlays: RwLock<HashSet<String>>,
     /// Single-track backing audio player (rodio on cpal) — dedicated thread, not tied to slides.
     /// ONE track at a time, routable to a specific output device, independent of system default.
     pub audio: AudioPlayer,
@@ -179,6 +184,8 @@ impl Default for AppState {
             stage_message: RwLock::new(None),
             stage_message_gen: AtomicU64::new(0),
             overlay: RwLock::new(None),
+            overlay_library: RwLock::new(Vec::new()),
+            visible_overlays: RwLock::new(HashSet::new()),
             audio: AudioPlayer::default(),
             output_ack: RwLock::new(None),
             stage_ack: RwLock::new(None),

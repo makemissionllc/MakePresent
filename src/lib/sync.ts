@@ -11,6 +11,7 @@ import type {
   CountdownView,
   DisplayInfo,
   Background,
+  SlideKind,
   ExportReport,
   ImportReport,
   Library,
@@ -158,6 +159,18 @@ export const api = {
     slideId: string,
     patch: { title?: string; body?: string; background?: Background; autoAdvanceSecs?: number | null; name?: string },
   ) => invoke<ClientState>("update_slide", { slideId, ...patch }),
+
+  setItemBackground: (itemId: string, background: Background | null) =>
+    invoke<ClientState>("set_item_background", { itemId, background }),
+
+  setKindBackground: (kind: SlideKind, background: Background | null) =>
+    invoke<ClientState>("set_kind_background", { kind, background }),
+
+  applyBackgroundToAllItems: (kind: SlideKind | null, background: Background) =>
+    invoke<ClientState>("apply_background_to_all_items", { kind, background }),
+
+  clearSlideBackground: (slideId: string) =>
+    invoke<ClientState>("clear_slide_background", { slideId }),
 
   deleteSlide: (slideId: string) =>
     invoke<ClientState>("delete_slide", { slideId }),

@@ -186,7 +186,7 @@
         class:gpu={crossfading}
         style:opacity={inOpacity}
       >
-        <SlideRender slide={shown} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} />
+        <SlideRender slide={shown} effectiveBackground={appState?.effectiveBackgrounds?.[shown.id] ?? shown.background} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} />
       </div>
     {/if}
   {:else if !leaving}
@@ -200,7 +200,7 @@
         class:gpu={crossfading}
         style:opacity={outOpacity}
       >
-        <SlideRender slide={leaving} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} />
+        <SlideRender slide={leaving} effectiveBackground={appState?.effectiveBackgrounds?.[leaving.id] ?? leaving.background} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} />
       </div>
     {/if}
   {/if}
@@ -245,23 +245,26 @@
     </div>
   {/if}
 
-  {#if onDeck && onDeck.background.type === "video"}
-    <video
-      class="preloader"
-      src={convertFileSrc(onDeck.background.path)}
-      preload="auto"
-      muted
-      tabindex="-1"
-      aria-hidden="true"
-    ></video>
-  {:else if onDeck && onDeck.background.type === "image"}
-    <img
-      class="preloader"
-      src={convertFileSrc(onDeck.background.path)}
-      alt=""
-      tabindex="-1"
-      aria-hidden="true"
-    />
+  {#if onDeck}
+    {@const onDeckBackground = appState?.effectiveBackgrounds?.[onDeck.id] ?? onDeck.background}
+    {#if onDeckBackground.type === "video"}
+      <video
+        class="preloader"
+        src={convertFileSrc(onDeckBackground.path)}
+        preload="auto"
+        muted
+        tabindex="-1"
+        aria-hidden="true"
+      ></video>
+    {:else if onDeckBackground.type === "image"}
+      <img
+        class="preloader"
+        src={convertFileSrc(onDeckBackground.path)}
+        alt=""
+        tabindex="-1"
+        aria-hidden="true"
+      />
+    {/if}
   {/if}
 
   {#if outroUrl}

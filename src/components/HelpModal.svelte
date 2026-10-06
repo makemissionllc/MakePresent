@@ -58,6 +58,13 @@
       >
         Replay guided tour
       </button>
+      <div class="section-title">Backgrounds</div>
+      <p class="muted">
+        Inheriting text slides use the playlist item's background, then the default Look for their kind. A slide with its own custom background keeps it. Open Background in the slide grid to choose a color or imported media for an item.
+      </p>
+      <p class="muted">
+        You can drag an image or video onto a slide to change that slide's background, or onto the item Background chip to share it across the item.
+      </p>
       <div class="section-title">Keyboard shortcuts</div>
       <ul class="shortcuts">
         <li><span class="keys"><kbd>←</kbd> <kbd>→</kbd></span> Previous / next slide (when not typing)</li>

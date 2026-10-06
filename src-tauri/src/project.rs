@@ -81,6 +81,15 @@ pub enum SlideKind {
     Scripture,
 }
 
+/// Whether a slide uses its own background or the item/kind defaults.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundMode {
+    Inherit,
+    #[default]
+    Custom,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Slide {
@@ -109,6 +118,9 @@ pub struct Slide {
     pub title: String,
     pub body: String,
     pub background: Background,
+    /// Legacy slides remain Custom by default; new text slides are Inherit.
+    #[serde(default)]
+    pub background_mode: BackgroundMode,
     /// Optional per-slide auto-advance timer: when Some(n) and this slide is
     /// live, the backend automatically advances to the next playlist item after
     /// n seconds. None / 0 means no auto-advance. Stored per slide so templates
@@ -355,9 +367,7 @@ pub struct Look {
     /// Geometry of the body box (absolute mode).
     #[serde(default)]
     pub body_box: BoxGeometry,
-    /// Optional default background for slides of a kind that uses this Look.
-    /// When a new slide is created with a kind whose default Look has a background,
-    /// that background is copied to the new slide (one-time, not a live link).
+    /// Optional background used by inheriting slides whose kind maps to this Look.
     #[serde(default)]
     pub background: Option<Background>,
 }
@@ -418,6 +428,9 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub slides: Vec<Slide>,
+    /// Shared background overrides keyed by playlist item id.
+    #[serde(default)]
+    pub item_backgrounds: HashMap<String, Background>,
     /// Named style profiles (Looks) that outputs render against. Stored with
     /// the project so they save/load with autosave. Defaults are seeded on new
     /// (and legacy) projects.
@@ -460,8 +473,10 @@ impl Project {
                 title: "Welcome to MakrStudio".to_string(),
                 body: "This is the Phase 1 test slide.".to_string(),
                 background: Background::default(),
+                background_mode: BackgroundMode::Custom,
                 auto_advance_secs: None,
             }],
+            item_backgrounds: HashMap::new(),
             looks: vec![Look::main_default(), Look::stage_default()],
             live: None,
             show_text: true,
@@ -503,6 +518,7 @@ impl Project {
                     title: it.title.clone(),
                     body: it.content.clone().unwrap_or_default(),
                     background: Background::default(),
+                    background_mode: BackgroundMode::Custom,
                     auto_advance_secs: None,
                 })
                 .collect();
@@ -551,6 +567,31 @@ impl Project {
             Some(id) => self.find(id),
             None => self.live.as_deref().and_then(|id| self.next_slide(id)),
         }
+    }
+
+    pub fn effective_background(&self, slide: &Slide, defaults: &DefaultLooks) -> Background {
+        if slide.background_mode == BackgroundMode::Custom {
+            return slide.background.clone();
+        }
+        if let Some(background) = slide.item_id.as_ref().and_then(|id| self.item_backgrounds.get(id)) {
+            return background.clone();
+        }
+        let configured_id = match slide.kind {
+            SlideKind::Scripture => defaults.scripture.as_deref(),
+            SlideKind::Song => defaults.song.as_deref(),
+            SlideKind::Generic => defaults.generic.as_deref(),
+        };
+        let look = configured_id
+            .and_then(|id| self.find_look(id))
+            .or_else(|| self.looks.iter().find(|look| look.name == "Main"))
+            .or_else(|| self.looks.first());
+        look.and_then(|look| look.background.clone()).unwrap_or_default()
+    }
+
+    pub fn effective_backgrounds(&self, defaults: &DefaultLooks) -> HashMap<String, Background> {
+        self.slides.iter().map(|slide| {
+            (slide.id.clone(), self.effective_background(slide, defaults))
+        }).collect()
     }
 }
 
@@ -656,6 +697,9 @@ pub struct ClientState {
     pub project: Project,
     /// Derived from the flat slide order; this is not separately persisted.
     pub items: Vec<PlaylistItem>,
+    /// Rust-resolved background for each slide; derived at snapshot time and never persisted.
+    #[serde(default)]
+    pub effective_backgrounds: HashMap<String, Background>,
     pub notice: Option<Notice>,
     pub output: OutputView,
     pub stage: StageView,
@@ -785,11 +829,90 @@ pub fn remove_playlist_item(project: &mut Project, item_id: &str) -> Result<bool
         .filter(|s| s.item_id.as_deref() == Some(item_id)).map(|s| s.id.clone()).collect();
     let removed_live = project.live.as_ref().is_some_and(|id| removed.contains(id));
     project.slides.retain(|s| !removed.contains(&s.id));
+    project.item_backgrounds.remove(item_id);
     if removed_live { project.live = None; }
     if project.selected.as_ref().is_some_and(|id| removed.contains(id)) {
         project.selected = project.slides.first().map(|s| s.id.clone());
     }
     Ok(removed_live)
+}
+
+pub fn set_item_background(project: &mut Project, item_id: &str, background: Option<Background>) -> Result<(), String> {
+    if !project.slides.iter().any(|slide| slide.item_id.as_deref() == Some(item_id)) {
+        return Err(format!("playlist item {item_id} not found"));
+    }
+    if let Some(background) = background {
+        project.item_backgrounds.insert(item_id.to_string(), background);
+    } else {
+        project.item_backgrounds.remove(item_id);
+    }
+    Ok(())
+}
+
+pub fn set_kind_background(project: &mut Project, defaults: &mut DefaultLooks, kind: SlideKind, background: Option<Background>) -> String {
+    let current_id = match kind {
+        SlideKind::Scripture => defaults.scripture.clone(),
+        SlideKind::Song => defaults.song.clone(),
+        SlideKind::Generic => defaults.generic.clone(),
+    };
+    if let Some(id) = current_id.filter(|id| project.find_look(id).is_some()) {
+        if let Some(look) = project.looks.iter_mut().find(|look| look.id == id) {
+            look.background = background;
+            return id;
+        }
+    }
+    let mut look = project.looks.iter()
+        .find(|look| look.name == "Main")
+        .or_else(|| project.looks.first())
+        .cloned()
+        .unwrap_or_else(Look::main_default);
+    look.id = Uuid::new_v4().to_string();
+    look.name = match kind { SlideKind::Song => "Songs", SlideKind::Scripture => "Scripture", SlideKind::Generic => "Text" }.to_string();
+    look.background = background;
+    let id = look.id.clone();
+    project.looks.push(look);
+    match kind {
+        SlideKind::Scripture => defaults.scripture = Some(id.clone()),
+        SlideKind::Song => defaults.song = Some(id.clone()),
+        SlideKind::Generic => defaults.generic = Some(id.clone()),
+    }
+    id
+}
+
+pub fn apply_background_to_all_items(project: &mut Project, kind: Option<SlideKind>, background: Background) -> usize {
+    let ids: Vec<String> = derive_items(project, &Library::default()).into_iter()
+        .filter(|item| kind.map_or(true, |kind| item.kind == kind))
+        .map(|item| item.id)
+        .collect();
+    let count = ids.len();
+    for id in ids { project.item_backgrounds.insert(id, background.clone()); }
+    count
+}
+
+pub fn clear_slide_background(project: &mut Project, slide_id: &str) -> Result<(), String> {
+    let slide = project.slides.iter_mut().find(|slide| slide.id == slide_id)
+        .ok_or_else(|| format!("slide {slide_id} not found"))?;
+    slide.background = Background::default();
+    slide.background_mode = BackgroundMode::Inherit;
+    Ok(())
+}
+
+pub fn item_backgrounds_in_template(project: &Project) -> HashMap<String, Background> {
+    let live_ids: std::collections::HashSet<String> = project.slides.iter()
+        .filter_map(|slide| slide.item_id.clone())
+        .collect();
+    project.item_backgrounds.iter()
+        .filter(|(id, _)| live_ids.contains(*id))
+        .map(|(id, background)| (id.clone(), background.clone()))
+        .collect()
+}
+
+pub fn remap_template_item_backgrounds(items: &[TemplateItem], saved: &HashMap<String, Background>, loaded: &[Slide]) -> HashMap<String, Background> {
+    items.iter().zip(loaded).filter_map(|(item, slide)| {
+        let old_id = item.item_id.as_ref()?;
+        let new_id = slide.item_id.as_ref()?;
+        saved.get(old_id).map(|background| (new_id.clone(), background.clone()))
+    }).collect()
 }
 
 pub fn slides_from_template(items: &[TemplateItem]) -> Vec<Slide> {
@@ -810,6 +933,7 @@ pub fn slides_from_template(items: &[TemplateItem]) -> Vec<Slide> {
             library_id: it.library_id.clone(), library_slide_id: it.library_slide_id.clone(),
             name: it.name.clone().or_else(|| Some(it.title.clone())), kind: it.kind,
             title: it.title.clone(), body: it.body.clone(), background: it.background.clone(),
+            background_mode: it.background_mode,
             auto_advance_secs: it.auto_advance_secs }
     }).collect()
 }
@@ -1152,6 +1276,8 @@ pub struct TemplateItem {
     pub body: String,
     pub background: Background,
     #[serde(default)]
+    pub background_mode: BackgroundMode,
+    #[serde(default)]
     pub library_id: Option<String>,
     #[serde(default)]
     pub library_slide_id: Option<String>,
@@ -1166,6 +1292,8 @@ pub struct PlaylistTemplate {
     pub name: String,
     pub created_at: String,
     pub items: Vec<TemplateItem>,
+    #[serde(default)]
+    pub item_backgrounds: HashMap<String, Background>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1287,7 +1415,7 @@ pub struct Settings {
     #[serde(default = "default_audio_volume")]
     pub audio_volume: f32,
     /// Default Look per slide kind — Scripture/Song/Generic, each optionally a Look id.
-    /// `None` means follow the global Main Look. Stored as metadata, one-time copy at creation.
+    /// Inheriting slides follow the mapped Look live; `None` falls back to Main.
     #[serde(default)]
     pub default_looks: DefaultLooks,
     /// Optional exit/outro animation: absolute path to a user-provided video
@@ -1298,7 +1426,7 @@ pub struct Settings {
 }
 
 /// Default Look mapping per slide kind — Scripture/Song/Generic.
-/// Each optionally points to a Look id; `None` means fallback to Main Look.
+/// Inheriting slides follow the assigned Look live; `None` falls back to Main.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DefaultLooks {
@@ -1589,6 +1717,7 @@ mod tests {
             title: id.to_string(),
             body: String::new(),
             background: Background::Solid { color: "#000000".into() },
+            background_mode: BackgroundMode::Custom,
             auto_advance_secs: None,
         }
     }
@@ -1651,7 +1780,7 @@ mod tests {
         let template_items: Vec<TemplateItem> = project.slides.iter().map(|slide| TemplateItem {
             item_id: slide.item_id.clone(), item_name: Some("Saved item".into()),
             name: slide.name.clone(), kind: slide.kind, title: slide.title.clone(), body: slide.body.clone(),
-            background: slide.background.clone(), library_id: slide.library_id.clone(),
+            background: slide.background.clone(), background_mode: slide.background_mode, library_id: slide.library_id.clone(),
             library_slide_id: slide.library_slide_id.clone(), auto_advance_secs: slide.auto_advance_secs,
         }).collect();
         let loaded = slides_from_template(&template_items);
@@ -1666,6 +1795,106 @@ mod tests {
         let item: TemplateItem = serde_json::from_str(old).unwrap();
         assert!(item.item_id.is_none());
         assert!(item.item_name.is_none());
+        assert_eq!(item.background_mode, BackgroundMode::Custom);
+        let legacy_item: serde_json::Value = serde_json::from_str(old).unwrap();
+        let legacy_template = serde_json::json!({
+            "id": "legacy", "name": "Legacy", "createdAt": "now", "items": [legacy_item]
+        });
+        let template: PlaylistTemplate = serde_json::from_value(legacy_template).unwrap();
+        assert!(template.item_backgrounds.is_empty());
+    }
+
+    #[test]
+    fn effective_background_uses_custom_then_item_then_kind_look_precedence() {
+        let mut project = Project::test();
+        project.slides = vec![test_slide("custom", Some("item"), None), test_slide("inherited", Some("item"), None)];
+        let mut defaults = DefaultLooks::default();
+        let mut song_look = Look::main_default();
+        song_look.id = "song-look".into();
+        song_look.background = Some(Background::Solid { color: "#112233".into() });
+        project.looks.push(song_look);
+        defaults.generic = Some("song-look".into());
+        project.item_backgrounds.insert("item".into(), Background::Solid { color: "#445566".into() });
+        project.slides[1].background_mode = BackgroundMode::Inherit;
+        assert_eq!(project.effective_background(&project.slides[0], &defaults), Background::Solid { color: "#000000".into() });
+        assert_eq!(project.effective_background(&project.slides[1], &defaults), Background::Solid { color: "#445566".into() });
+        project.item_backgrounds.clear();
+        assert_eq!(project.effective_background(&project.slides[1], &defaults), Background::Solid { color: "#112233".into() });
+    }
+
+    #[test]
+    fn legacy_project_backgrounds_remain_custom_and_render_unchanged() {
+        let mut project = Project::test();
+        project.slides[0].background = Background::Solid { color: "#765432".into() };
+        let expected = project.slides[0].background.clone();
+        let mut json = serde_json::to_value(&project).unwrap();
+        json.as_object_mut().unwrap().remove("itemBackgrounds");
+        json["slides"][0].as_object_mut().unwrap().remove("backgroundMode");
+        let loaded: Project = serde_json::from_value(json).unwrap();
+        assert_eq!(loaded.slides[0].background_mode, BackgroundMode::Custom);
+        assert_eq!(loaded.effective_background(&loaded.slides[0], &DefaultLooks::default()), expected);
+    }
+
+    #[test]
+    fn template_roundtrip_preserves_item_backgrounds_with_fresh_item_ids() {
+        let mut project = Project::test();
+        project.slides = vec![test_slide("one", Some("old-item"), None), test_slide("two", Some("old-item"), None)];
+        let saved_background = Background::Solid { color: "#aabbcc".into() };
+        project.item_backgrounds.insert("old-item".into(), saved_background.clone());
+        let template_items: Vec<TemplateItem> = project.slides.iter().map(|slide| TemplateItem {
+            item_id: slide.item_id.clone(), item_name: Some("Saved".into()), name: slide.name.clone(), kind: slide.kind,
+            title: slide.title.clone(), body: slide.body.clone(), background: slide.background.clone(),
+            background_mode: slide.background_mode, library_id: slide.library_id.clone(),
+            library_slide_id: slide.library_slide_id.clone(), auto_advance_secs: slide.auto_advance_secs,
+        }).collect();
+        let template = PlaylistTemplate { id: "t".into(), name: "T".into(), created_at: now_iso(), items: template_items.clone(), item_backgrounds: item_backgrounds_in_template(&project) };
+        let roundtrip: PlaylistTemplate = serde_json::from_str(&serde_json::to_string(&template).unwrap()).unwrap();
+        let loaded = slides_from_template(&roundtrip.items);
+        let backgrounds = remap_template_item_backgrounds(&roundtrip.items, &roundtrip.item_backgrounds, &loaded);
+        let new_id = loaded[0].item_id.as_ref().unwrap();
+        assert_ne!(new_id, "old-item");
+        assert_eq!(loaded[0].item_id, loaded[1].item_id);
+        assert_eq!(backgrounds.get(new_id), Some(&saved_background));
+    }
+
+    #[test]
+    fn deleting_item_cleans_its_background_and_clear_slide_inherits() {
+        let mut project = Project::test();
+        project.slides = vec![test_slide("one", Some("item"), None), test_slide("two", Some("other"), None)];
+        project.item_backgrounds.insert("item".into(), Background::Solid { color: "#123456".into() });
+        remove_playlist_item(&mut project, "item").unwrap();
+        assert!(!project.item_backgrounds.contains_key("item"));
+        project.slides[0].background_mode = BackgroundMode::Custom;
+        clear_slide_background(&mut project, "two").unwrap();
+        assert_eq!(project.slides[0].background_mode, BackgroundMode::Inherit);
+    }
+
+    #[test]
+    fn setting_kind_background_creates_a_kind_look_when_missing() {
+        let mut project = Project::test();
+        let mut defaults = DefaultLooks::default();
+        let color = Some(Background::Solid { color: "#334455".into() });
+        let id = set_kind_background(&mut project, &mut defaults, SlideKind::Song, color.clone());
+        assert_eq!(defaults.song.as_deref(), Some(id.as_str()));
+        assert_eq!(project.find_look(&id).unwrap().background, color);
+        assert_eq!(project.find_look(&id).unwrap().name, "Songs");
+    }
+
+    #[test]
+    fn bulk_background_targets_only_requested_kind_without_changing_live_slide() {
+        let mut project = Project::test();
+        project.slides = vec![test_slide("song", Some("song-item"), Some("s")), test_slide("text", Some("text-item"), None)];
+        project.live = Some("song".into());
+        let background = Background::Solid { color: "#223344".into() };
+        project.slides[0].background_mode = BackgroundMode::Inherit;
+        assert_eq!(apply_background_to_all_items(&mut project, Some(SlideKind::Song), background.clone()), 1);
+        assert_eq!(project.item_backgrounds.get("song-item"), Some(&background));
+        assert!(!project.item_backgrounds.contains_key("text-item"));
+        let effective_before = project.effective_background(&project.slides[0], &DefaultLooks::default());
+        assert_eq!(project.live.as_deref(), Some("song"));
+        assert_eq!(apply_background_to_all_items(&mut project, Some(SlideKind::Song), background.clone()), 1);
+        assert_eq!(project.effective_background(&project.slides[0], &DefaultLooks::default()), effective_before);
+        assert_eq!(project.live.as_deref(), Some("song"));
     }
 
     #[test]

@@ -1,7 +1,10 @@
 use crate::logging::{Level, LogEntry};
 use crate::project::{
-    derive_items, is_first_run, now_iso, remove_playlist_item, reorder_item_slides,
-    slides_from_template, Background, BroadcastView, ClientState, Library, LibrarySlide,
+    apply_background_to_all_items as apply_background_to_all_items_project,
+    clear_slide_background as clear_slide_background_project,
+    derive_items, is_first_run, item_backgrounds_in_template, now_iso, remove_playlist_item, reorder_item_slides,
+    remap_template_item_backgrounds, set_item_background as set_item_background_project,
+    set_kind_background as set_kind_background_project, slides_from_template, Background, BackgroundMode, BroadcastView, ClientState, Library, LibrarySlide,
     BoxGeometry, LibrarySong, Look, OutputView, Overlay, OverlayPlacement, OverlayStore,
     PlaylistTemplate, Positioning, Project, SavedOverlay, Settings, Slide, SlideKind, StageView,
     TemplateItem, TextPosition, Transition, write_settings,
@@ -50,9 +53,11 @@ fn snapshot(app: &AppHandle) -> ClientState {
         .and_then(|slide| slide.library_id.as_deref())
         .and_then(|song_id| library.songs.iter().find(|song| song.id == song_id))
         .and_then(song_credit_line);
+    let effective_backgrounds = project_snapshot.effective_backgrounds(&settings.default_looks);
     let snap = ClientState {
         project: project_snapshot,
         items,
+        effective_backgrounds,
         notice: state.notice.read().unwrap().clone(),
         output: OutputView {
             visible: windows::output_visible(app),
@@ -650,25 +655,6 @@ pub fn add_song_to_playlist(app: AppHandle, song_id: String) -> Result<ClientSta
     mutate(&app, |project| {
         let item_id = Uuid::new_v4().to_string();
         for slide in &flattened {
-            // One-time copy of default Look background for Song kind, if configured; otherwise use song's own background
-            let bg = {
-                let state = app.state::<AppState>();
-                let settings = state.current_settings();
-                if let Some(id) = &settings.default_looks.song {
-                    if let Some(look) = project.find_look(id) {
-                        if let Some(bg) = &look.background {
-                            Some(bg.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            .unwrap_or_else(|| song.default_background.clone());
             project.slides.push(Slide {
                 id: Uuid::new_v4().to_string(),
                 item_id: Some(item_id.clone()),
@@ -679,7 +665,8 @@ pub fn add_song_to_playlist(app: AppHandle, song_id: String) -> Result<ClientSta
                 kind: SlideKind::Song,
                 title: slide.title.clone(),
                 body: slide.body.clone(),
-                background: bg,
+                background: Background::default(),
+                background_mode: BackgroundMode::Inherit,
                 auto_advance_secs: None,
             });
         }
@@ -1467,54 +1454,34 @@ pub fn save_template(app: AppHandle, name: String) -> Result<Vec<PlaylistTemplat
     let state = app.state::<AppState>();
     let data_dir = state.app_data_dir();
     let mut store = crate::project::read_templates(&data_dir);
+    let project = state.project.read().unwrap().clone();
+    let items: Vec<TemplateItem> = project.slides.iter().map(|s| TemplateItem {
+        item_id: s.item_id.clone(),
+        item_name: s.item_name.clone(),
+        name: s.name.clone(),
+        kind: s.kind,
+        title: s.title.clone(),
+        body: s.body.clone(),
+        background: s.background.clone(),
+        background_mode: s.background_mode,
+        library_id: s.library_id.clone(),
+        library_slide_id: s.library_slide_id.clone(),
+        auto_advance_secs: s.auto_advance_secs,
+    }).collect();
+    let item_backgrounds = item_backgrounds_in_template(&project);
     // Avoid duplicate names — replace existing with same name case-insensitively
     if let Some(existing) = store.templates.iter_mut().find(|t| t.name.to_lowercase() == trimmed.to_lowercase()) {
-        existing.items = state
-            .project
-            .read()
-            .unwrap()
-            .slides
-            .iter()
-            .map(|s| TemplateItem {
-                item_id: s.item_id.clone(),
-                item_name: s.item_name.clone(),
-                name: s.name.clone(),
-                kind: s.kind,
-                title: s.title.clone(),
-                body: s.body.clone(),
-                background: s.background.clone(),
-                library_id: s.library_id.clone(),
-                library_slide_id: s.library_slide_id.clone(),
-                auto_advance_secs: s.auto_advance_secs,
-            })
-            .collect();
+        existing.items = items;
+        existing.item_backgrounds = item_backgrounds;
         existing.created_at = now_iso();
         log(&app, Level::Info, &format!("template: updated \"{trimmed}\" ({} slides)", existing.items.len()));
     } else {
-        let items: Vec<TemplateItem> = state
-            .project
-            .read()
-            .unwrap()
-            .slides
-            .iter()
-            .map(|s| TemplateItem {
-                item_id: s.item_id.clone(),
-                item_name: s.item_name.clone(),
-                name: s.name.clone(),
-                kind: s.kind,
-                title: s.title.clone(),
-                body: s.body.clone(),
-                background: s.background.clone(),
-                library_id: s.library_id.clone(),
-                library_slide_id: s.library_slide_id.clone(),
-                auto_advance_secs: s.auto_advance_secs,
-            })
-            .collect();
         let tmpl = PlaylistTemplate {
             id: Uuid::new_v4().to_string(),
             name: trimmed.clone(),
             created_at: now_iso(),
             items,
+            item_backgrounds,
         };
         let count = tmpl.items.len();
         store.templates.push(tmpl);
@@ -1536,12 +1503,14 @@ pub fn load_template(app: AppHandle, template_id: String) -> Result<ClientState,
         .cloned()
         .ok_or_else(|| format!("template {template_id} not found"))?;
     let new_slides = slides_from_template(&tmpl.items);
+    let new_item_backgrounds = remap_template_item_backgrounds(&tmpl.items, &tmpl.item_backgrounds, &new_slides);
     let count = new_slides.len();
     let name = tmpl.name.clone();
     // Loading a template clears the live slide, so cancel any auto-advance.
     cancel_auto_advance(&app);
     mutate(&app, |project| {
         project.slides = new_slides;
+        project.item_backgrounds = new_item_backgrounds;
         project.live = None;
         project.selected = project.slides.first().map(|s| s.id.clone());
         project.show_text = true;
@@ -1568,24 +1537,6 @@ pub fn delete_template(app: AppHandle, template_id: String) -> Result<Vec<Playli
     Ok(store.templates)
 }
 
-fn background_for_kind(app: &AppHandle, kind: &SlideKind) -> Background {
-    let state = app.state::<AppState>();
-    let settings = state.current_settings();
-    let look_id = match kind {
-        SlideKind::Scripture => &settings.default_looks.scripture,
-        SlideKind::Song => &settings.default_looks.song,
-        SlideKind::Generic => &settings.default_looks.generic,
-    };
-    if let Some(id) = look_id {
-        if let Some(look) = state.project.read().unwrap().find_look(id) {
-            if let Some(bg) = &look.background {
-                return bg.clone();
-            }
-        }
-    }
-    Background::default()
-}
-
 #[tauri::command]
 pub fn add_slide(
     app: AppHandle,
@@ -1605,7 +1556,6 @@ pub fn add_slide(
             .ok_or_else(|| format!("playlist item {id} not found"))?;
         Some(existing.item_name.clone().unwrap_or_else(|| existing.display_name()))
     } else { None };
-    let bg = background_for_kind(&app, &kind_val);
     let slide = Slide {
         id: Uuid::new_v4().to_string(),
         item_id: Some(item_id.unwrap_or_else(|| Uuid::new_v4().to_string())),
@@ -1616,7 +1566,8 @@ pub fn add_slide(
         kind: kind_val,
         title: title_val,
         body: body.unwrap_or_default(),
-        background: bg,
+        background: Background::default(),
+        background_mode: BackgroundMode::Inherit,
         auto_advance_secs: None,
     };
     let slide_title = slide.title.clone();
@@ -1671,6 +1622,7 @@ pub fn update_slide(
                 return Err("background color must not be empty".to_string());
             }
             slide.background = background;
+            slide.background_mode = BackgroundMode::Custom;
         }
         if let Some(inner) = auto_advance_secs {
             match inner {
@@ -1706,6 +1658,65 @@ pub fn update_slide(
         }
     }
     Ok(snap)
+}
+
+fn validate_background(background: &Background) -> Result<(), String> {
+    if matches!(background, Background::Solid { color } if color.trim().is_empty()) {
+        return Err("background color must not be empty".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_item_background(app: AppHandle, item_id: String, background: Option<Background>) -> Result<ClientState, String> {
+    if let Some(background) = &background { validate_background(background)?; }
+    let setting = background.is_some();
+    mutate(&app, |project| set_item_background_project(project, &item_id, background))
+        .map(|snapshot| {
+            log(&app, Level::Info, &format!("playlist: {} item background for {item_id}", if setting { "set" } else { "cleared" }));
+            snapshot
+        })
+}
+
+#[tauri::command]
+pub fn set_kind_background(app: AppHandle, kind: SlideKind, background: Option<Background>) -> Result<ClientState, String> {
+    if let Some(background) = &background { validate_background(background)?; }
+    let state = app.state::<AppState>();
+    let mut settings = state.current_settings();
+    let look_id = {
+        let mut project = state.project.write().unwrap();
+        let id = set_kind_background_project(&mut project, &mut settings.default_looks, kind, background);
+        project.modified_at = now_iso();
+        id
+    };
+    state.apply_settings(settings.clone());
+    let _ = write_settings(&state.app_data_dir(), &settings);
+    state.request_save();
+    log(&app, Level::Info, &format!("default background: {kind:?} -> look {look_id}"));
+    let snapshot = snapshot(&app);
+    let _ = app.emit("state", &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub fn apply_background_to_all_items(app: AppHandle, kind: Option<SlideKind>, background: Background) -> Result<ClientState, String> {
+    validate_background(&background)?;
+    let mut affected = 0;
+    let snapshot = mutate(&app, |project| {
+        affected = apply_background_to_all_items_project(project, kind, background);
+        Ok(())
+    })?;
+    log(&app, Level::Info, &format!("playlist: set background on {affected} items (kind={kind:?})"));
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub fn clear_slide_background(app: AppHandle, slide_id: String) -> Result<ClientState, String> {
+    mutate(&app, |project| clear_slide_background_project(project, &slide_id))
+        .map(|snapshot| {
+            log(&app, Level::Info, &format!("playlist: cleared custom background for slide {slide_id}"));
+            snapshot
+        })
 }
 
 #[tauri::command]

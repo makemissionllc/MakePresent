@@ -1,6 +1,6 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import type { Look, Slide, TextStyle } from "../lib/types";
+  import type { Background, Look, Slide, TextStyle } from "../lib/types";
   import { DEFAULT_BODY_STYLE, DEFAULT_TITLE_STYLE } from "../lib/types";
   import { fitText } from "../lib/fitText";
   import { hasChords, stripChords, parseChordLine } from "../lib/chords";
@@ -9,6 +9,7 @@
 
   interface Props {
     slide: Slide;
+    effectiveBackground?: Background;
     look: Look;
     showText?: boolean;
     showBackground?: boolean;
@@ -27,7 +28,7 @@
     enableCamera?: boolean;
   }
 
-  let { slide, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, overlays = [], enableCamera = false }: Props = $props();
+  let { slide, effectiveBackground, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, overlays = [], enableCamera = false }: Props = $props();
 
   const visibleOverlays = $derived.by(() => {
     if (overlays.length > 0) return overlays.filter((item) => item.visible);
@@ -35,6 +36,7 @@
   });
 
   const effectiveShowBackground = $derived(showBackground && look.showBackground);
+  const background = $derived(effectiveBackground ?? slide.background);
   const effectiveShowText = $derived(showText);
   const shouldShowChords = $derived(isStage && hasChords(slide.body));
   const frameRatio = $derived.by(() => {
@@ -81,8 +83,8 @@
     return s.outlineWidth > 0 ? `${s.outlineWidth}px ${s.outlineColor}` : undefined;
   }
 
-  function solidColor(s: Slide): string {
-    return s.background.type === "solid" ? s.background.color : "#000000";
+  function solidColor(bg: Background): string {
+    return bg.type === "solid" ? bg.color : "#000000";
   }
 </script>
 
@@ -103,40 +105,40 @@
   style:--frame-ratio={frameRatio !== null ? `${frameRatio}` : undefined}
   style:--look-title-line-height={`${titleStyle.lineHeight}`}
   style:--look-body-line-height={`${bodyStyle.lineHeight}`}
-  style:background-color={effectiveShowBackground ? solidColor(slide) : "transparent"}
+  style:background-color={effectiveShowBackground ? solidColor(background) : "transparent"}
   style:color={look.textColor}
 >
   {#if effectiveShowBackground}
-    {#if slide.background.type === "image"}
+    {#if background.type === "image"}
       <img
         class="slide-background media-layer"
-        src={convertFileSrc(slide.background.path)}
+        src={convertFileSrc(background.path)}
         alt=""
         draggable="false"
         onerror={(e) => {
           (e.currentTarget as HTMLImageElement).style.display = "none";
         }}
       />
-    {:else if slide.background.type === "video"}
+    {:else if background.type === "video"}
       <video
         class="slide-background media-layer"
-        src={convertFileSrc(slide.background.path)}
+        src={convertFileSrc(background.path)}
         autoplay
         loop
         muted
         playsinline
         preload="auto"
       ></video>
-    {:else if slide.background.type === "live_camera"}
+    {:else if background.type === "live_camera"}
       {#if enableCamera}
         <CameraFeed
-          deviceId={slide.background.deviceId ?? null}
-          label={slide.background.label}
+          deviceId={background.deviceId ?? null}
+          label={background.label}
         />
       {:else}
-        <div class="camera-placeholder" title={slide.background.label || "Live camera"}>
+        <div class="camera-placeholder" title={background.label || "Live camera"}>
           <span aria-hidden="true">🎥</span>
-          <span>{slide.background.label || "Live camera"}</span>
+          <span>{background.label || "Live camera"}</span>
         </div>
       {/if}
     {/if}

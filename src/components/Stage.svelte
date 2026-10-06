@@ -106,7 +106,7 @@
   {/if}
   <section class="current">
     {#if current && look}
-      <SlideRender {look} slide={current} {showText} {showBackground} {aspectRatio} isStage={true} />
+      <SlideRender {look} slide={current} effectiveBackground={appState?.effectiveBackgrounds?.[current.id] ?? current.background} {showText} {showBackground} {aspectRatio} isStage={true} />
     {:else if current}
       <p class="placeholder">{current.body || current.title}</p>
     {:else}

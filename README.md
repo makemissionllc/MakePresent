@@ -168,6 +168,11 @@ and shows a recovery notice when the prior exit was unclean.
 - **Solid** colour (with a palette and custom colour picker).
 - **Image / Video** full-bleed backgrounds via native `<img>` / `<video>`
   (`object-fit: cover`, muted + looping for video).
+- **Inherited backgrounds:** slide-specific backgrounds win, followed by a shared
+  playlist-item background, then the live default Look for the slide's kind.
+  Text slides inherit by default; imported media slides keep their own background.
+  The Editor can set an item background, apply one to all items or a kind, or
+  switch an individual slide back to inheritance.
 - **Managed import:** picking a file copies it into `media/<hash>.<ext>`,
   dedupes identical content by content hash, and generates a thumbnail. The
   project never references the user's original file.
@@ -329,6 +334,12 @@ each get their own Look. Unmapped outputs fall back to the look named
 `Main` / `Stage` respectively (then the first); the NDI feed falls back to the
 first look.
 
+**Per-kind backgrounds:** slides in `Inherit` mode use their playlist item's
+background first, then the default Look assigned to their kind (Songs,
+Scripture, or Text), then Main. This background inheritance is resolved by Rust
+and updates live when the mapped Look changes; a slide's `Custom` background
+still takes precedence.
+
 **Storage:** Looks are stored on the **Project** (`project.looks`), so they save
 and load with autosave. New (and legacy) projects are seeded with default
 `Main` and `Stage` Looks; the new geometry/font fields carry serde defaults, so
@@ -400,7 +411,7 @@ src-tauri/                                 Rust backend
    ├─ lib.rs                               Lifecycle: setup, tray/standby, finalize, command registration
    ├─ state.rs                             AppState — the single source of truth
    ├─ project.rs                           Domain model, persistence, autosave worker
-   ├─ commands.rs                          67 Tauri IPC command handlers
+   ├─ commands.rs                          109 registered Tauri IPC commands
    ├─ windows.rs                           Output/Stage lifecycle + display picking + editor respawn
    ├─ media.rs                             Media import/cache + ffmpeg thumbnails
    ├─ broadcast.rs                         NDI sender (runtime-loaded SDK, own thread)
@@ -442,6 +453,14 @@ src-tauri/                                 Rust backend
 | `delete_look` | Delete a Look (re-assigns mapped outputs) |
 | `set_output_look` / `set_stage_look` | Map a Look id to an output/stage |
 | `set_ndi_look` | Map a Look id to the NDI feed |
+
+**Playlist backgrounds**
+| Command | Purpose |
+|---|---|
+| `set_item_background` | Set or remove an item's shared background |
+| `set_kind_background` | Set the background on the Look assigned to a slide kind |
+| `apply_background_to_all_items` | Apply a background to every item, optionally filtered by kind |
+| `clear_slide_background` | Return one slide to item/kind background inheritance |
 
 **Output / Stage / displays**
 | Command | Purpose |
@@ -1222,7 +1241,7 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 
 ## Changed (2026-09-02) — Slide kind + default Look per kind (Scripture/Song/Generic)
 
-*Tag slides with a kind at creation (Scripture via Add/Browse Scripture, Song via Library, Generic via + Add slide) and add a Default Look mapping per kind — Scripture/Song/Generic each optionally point to a Look, defaulting to Main if unset — reusing the existing Look system (background, typography, layout) rather than a separate mechanism. When a new slide of a given kind is created, if a default Look is configured, its background is copied to the new slide one-time at creation (not a live link), so editing one slide or changing the default later doesn't retroactively change existing slides. Operator can still override any slide's background manually.*
+*Tag slides with a kind at creation (Scripture via Add/Browse Scripture, Song via Library, Generic via + Add slide) and map each kind to a Default Look. Current Phase 8B behavior is live inheritance: a slide resolves its own Custom background first, then its playlist item's background, then the mapped kind Look and Main fallback. New text slides inherit; imported media slides keep their own background. Operators can return individual slides to inheritance.*
 
 - **Tag `src-tauri/src/project.rs:76` `SlideKind { Generic, Song, Scripture }` `#[serde(rename_all="lowercase")]` + `project.rs:90` `Slide { kind: SlideKind #[serde(default)] }` (`Generic` default for legacy) + `project.rs:210` `Look { background: Option<Background> #[serde(default)] }` (so a Look can carry a default background for its kind) + `project.rs:933` `DefaultLooks { scripture: Option<String>, song: Option<String>, generic: Option<String> }` `#[serde(default)]` + `project.rs:920` `Settings { default_looks: DefaultLooks }` + `project.rs:540` `ClientState { default_looks: DefaultLooks }` + `project.rs:324` `Project::new` `kind: Generic` + `project.rs:352` `from_preset` `kind: Generic`. Legacy `project.json` without `kind`/`background`/`default_looks` deserializes to `Generic`/`None`/`Default` via `#[serde(default)]`, no migration needed.
 
@@ -1232,11 +1251,11 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 
 - **Create paths `src/components/Editor.svelte:130` `slideDisplayName` unchanged (name→title), `Editor.svelte:243` `openDetail` etc unchanged, `Editor.svelte:383` `addSlide("New Slide","")` (Generic, default), `Editor.svelte:492` `selectScripture` `addSlide(ref, text, undefined, "scripture")` + `Editor.svelte:599` `insertBrowseVerse` `addSlide(ref, text, undefined, "scripture")` + `Editor.svelte:723` `library-verse` drag `addSlide(verse.title, verse.body, undefined, "song")` + `Editor.svelte:734` `scripture` drag `addSlide(ref, text, undefined, "scripture")` + `Editor.svelte:864` `handleExternalFiles` `addSlide("", "", base)` (Generic media, then `updateSlide` with `asset.background` — media's own background, not Look) + `Editor.svelte:2125` library verse click `addSlide(verse.title, verse.body, undefined, "song")` + `GlobalSearch.svelte:130` `insertScripture` `addSlide(m.reference, m.text, undefined, "scripture")` + `GlobalSearch.svelte:143` `insertMedia` `addSlide("", "", base)` (Generic). `add_song_to_playlist` `commands.rs:415` already `Song` kind, `media` drag `Generic`.
 
-- **Settings UI `src/components/SettingsPanel.svelte:130` `setDefaultLook(kind, id)` `api.setDefaultLook` + `SettingsPanel.svelte:1170` Looks tab `assign-block` new `Default Look for new slides` section: `Scripture — Add Scripture / Browse` `[dropdown Main (default) / Look list]` `value={appState?.defaultLooks?.scripture}` `onchange setDefaultLook("scripture", value)`, `Song — Library / Add song` `value={appState?.defaultLooks?.song}`, `Generic — + Add slide / Media` `value={appState?.defaultLooks?.generic}` (`Main (default)` = `None` → `Background::default()`). Hint: "When a new slide is created, its background is copied from the default Look for its kind (one-time, not a live link). Change the default later doesn't retroactively change existing slides."
+- **Settings UI `src/components/SettingsPanel.svelte`** keeps the per-kind Default Look dropdowns for Scripture/Song/Generic. The current hint explains that inheriting slides follow the item background first, then the default Look for their kind; slides with a custom background stay unchanged.
 
 - **Look background editing `src/components/LookEditorView.svelte:1` `PALETTE` + `convertFileSrc`/`open`/`isMedia` + `LookEditorView.svelte:180` `sampleSlide` `kind: "generic"` + `LookEditorView.svelte:254` `scheduleCommit` `background: updated.background ?? null` + `LookEditorView.svelte:283` `Default background for new slides using this Look` swatches `PALETTE` `selected={draft.background?.type==="solid" && color}` `setLookBackgroundColor` + `custom-color` `isMedia` preview + `media-add` `pickLookBackgroundMedia` `api.importMedia` → `setDraft("background", asset.background)` + `Clear` `clearLookBackground` + hint. `SettingsPanel.svelte:92` `scheduleCommit` `background` similarly.
 
-- **Verify:** Set `Settings → Looks → Default Look for new slides → Scripture` to a Look with e.g. solid `#1f3a2f` or an image background, then `Add Scripture → psalm 23` or `Browse → Genesis 1:1` → new slide `kind: "scripture"` `background` is that Look's `background` (one-time copy), renders with that background without manual selection; change default later doesn't affect that slide; `+ Add slide` (Generic) still uses Generic default or `Background::default()`; `Library → Add song` → Song slides `kind: "song"` use Song default. Override via `Background` swatches (`updateSlide` `Editor.svelte:1180` `setColor`/`addMedia` `Editor.svelte:864`) still works exactly as before (smarter default, not restriction). `npm run check` 0/0, `cargo check` 4 `dead_code`.
+- **Verify:** Assign a Scripture default Look with a background, then add or browse a verse: its new slide is `Inherit` and renders that Look background. Change the Look background and the inheriting slide updates live. Set a custom slide background and it stays in front of item/kind backgrounds. New Song and Generic text slides inherit; imported media slides stay Custom.
 
 ---
 
@@ -1337,3 +1356,22 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - Read-only Output HWND, title, visibility and display snapshots use the existing deferred main-thread pattern. Capture never creates, shows or moves Output. Hidden/minimized windows get specific Settings messages; recreation/display changes and capture errors recover automatically. Disable/quit cancels lookup waits and joins the WGC worker before stopping the sender.
 - Valid black is accepted (Clear output); capture errors enqueue nothing and retain the last image. Rust keeps hasRealFrames/lastFrameAt/isStale and adds a serde-defaulted status message. Logs include capture method, HWND/title, visible/minimized, first-frame dimensions and captured/dropped/error counts, with rejected_black=0. Output and Stage remain dumb renderers; no frame bytes use state events. Earlier historical notes about an unwired seam/black guard are superseded by this entry.
 - Verification: npm run check 0 errors/0 warnings; cargo check and cargo check --target x86_64-pc-windows-msvc pass with three existing dead-code warnings; cargo test 87 passed/1 hardware test ignored after adding a generated Common Controls v6 sidecar manifest to the Windows test executable; npm run build passes. Frontend commands required a sandbox-access rerun. No live Windows display capture, OBS, physical display switching, or Linux/macOS runtime test was performed. GPU-independent tests cover padded BGRA, conversion/downscale bounds, malformed frames, real-black/error-hold behavior, queue-full drops and status wording.
+
+## Changed (2026-10-06) — Phase 8B item and kind background inheritance
+
+- **Rust authority:** legacy slides default to `Custom`; new text slides inherit. `Project.item_backgrounds` is serde-defaulted and keyed by playlist item id. Rust resolves slide Custom → item background → assigned kind Look → Main/first Look → built-in default. `ClientState.effectiveBackgrounds` is derived for rendering, not persisted. Template save/load retains item backgrounds while assigning fresh item ids; deleting an item removes its background.
+- **Commands and Editor:** added `set_item_background`, `set_kind_background`, `apply_background_to_all_items`, and `clear_slide_background` (109 registered commands total). The grid has an item background popover with media/color choices and apply scope; media cards can set the selected item's background. Custom slide cards show a marker and can return to item inheritance. Settings describes live inheritance from the kind Look.
+- **Rendering and compatibility:** Output, Stage, previews, and the on-deck preloader render the backend-resolved background. Output and Stage remain render-only; no duplicate background state is persisted in ClientState. Existing projects/templates without the new fields keep their stored slide backgrounds unchanged.
+- **Verify:** `npm run check` 0 errors/0 warnings; `cargo check` and `cargo check --target x86_64-pc-windows-msvc` pass with three existing dead-code warnings; `cargo test` 93 passed and 1 NDI-runtime test ignored; `npm run build` passes. Rust unit tests cover precedence, legacy defaults, template roundtrip with fresh ids, delete cleanup, clear-to-inherit, kind Look creation, bulk kind filtering, and preserving the live slide. The native Editor/Output/Stage UI was not visually exercised; no Windows display or OBS was available.
+
+## Changed (2026-10-06) — Phase 8C background help and documentation
+
+- Updated the background feature and per-kind Look notes to explain live inheritance and added the four playlist-background IPC entries. The README command-registration count now matches `lib.rs`.
+- Help now explains slide Custom → item → kind Look precedence and how to share a dropped image/video across an item. The grid popover includes the quiet tip: “Drop an image on the Background chip to set it for the whole item.”
+- No Rust state, IPC behavior, renderer logic, or dependencies changed in this documentation/help phase.
+
+## Changed (2026-10-06) — Phase 8A Windows-safe drag and drop
+
+- Diagnosis: `tauri.conf.json` previously omitted `dragDropEnabled` (Tauri defaults it to `true`); `windows.rs` does not disable the native handler. Tauri's Windows WebView2 handler therefore owns desktop file drops and suppresses page HTML5 drag events. The Editor's prior internal slide/song/scripture/media drags relied on HTML5 `draggable`; native OS drops reached the Tauri listener, which ignored the reported position and appended media. This was confirmed from the local Tauri source/config and application handlers, not by an interactive Windows drag session.
+- The Editor now explicitly keeps native file-drop enabled and uses Tauri's coordinate-bearing window event, converting physical coordinates by `devicePixelRatio` before `elementFromPoint`. OS files can target a slide background, grid insertion gap, playlist/item, or media drop area; unsupported files continue through inline errors. Internal drags share `src/lib/pointerDrag.ts` (ghost, insertion target, edge auto-scroll, Escape cancellation) and use pointer events with Alt+Up/Down keyboard reorder and the existing click-to-add actions. No IPC or dependencies changed in this phase; there were 105 registered commands before Phase 8B added four background commands.
+- **Verify:** `npm run check` passes with 0 errors/0 warnings; `cargo check` passes with 3 existing dead-code warnings; `cargo test` passes 87 tests with 1 NDI-runtime test ignored; `npm run build` passes. Native Windows drag events and Linux/macOS drag parity could not be interactively tested here.

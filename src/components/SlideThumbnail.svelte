@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { Look, Overlay, Slide } from "../lib/types";
+  import type { Background, Look, Overlay, Slide } from "../lib/types";
   import SlideRender from "./SlideRender.svelte";
 
   interface Props {
     slide: Slide;
+    effectiveBackground?: Background;
     look: Look;
     showText?: boolean;
     showBackground?: boolean;
@@ -17,6 +18,7 @@
 
   let {
     slide,
+    effectiveBackground,
     look,
     showText = true,
     showBackground = true,
@@ -59,6 +61,7 @@
   >
     <SlideRender
       {slide}
+      {effectiveBackground}
       {look}
       {showText}
       {showBackground}

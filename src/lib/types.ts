@@ -49,6 +49,7 @@ export function isLiveCamera(bg: Background): bg is LiveCameraBackground {
 }
 
 export type SlideKind = "generic" | "song" | "scripture";
+export type BackgroundMode = "inherit" | "custom";
 
 export interface Slide {
   id: string;
@@ -62,6 +63,8 @@ export interface Slide {
   title: string;
   body: string;
   background: Background;
+  /** Old records omit this and remain Custom so their appearance is preserved. */
+  backgroundMode?: BackgroundMode;
   autoAdvanceSecs: number | null;
 }
 
@@ -155,6 +158,7 @@ export interface Project {
   id: string;
   name: string;
   slides: Slide[];
+  itemBackgrounds?: Record<string, Background>;
   looks: Look[];
   live: string | null;
   showText: boolean;
@@ -248,6 +252,8 @@ export interface DefaultLooks {
 export interface ClientState {
   project: Project;
   items: PlaylistItem[];
+  /** Rust-computed output background by slide id; never persisted. */
+  effectiveBackgrounds?: Record<string, Background>;
   notice: Notice | null;
   output: OutputView;
   stage: StageView;
@@ -409,10 +415,14 @@ export interface LyricsRecord {
 }
 
 export interface TemplateItem {
+  itemId?: string | null;
+  itemName?: string | null;
+  kind?: SlideKind;
   name?: string | null;
   title: string;
   body: string;
   background: Background;
+  backgroundMode?: BackgroundMode;
   libraryId: string | null;
   librarySlideId: string | null;
   autoAdvanceSecs: number | null;
@@ -423,6 +433,7 @@ export interface PlaylistTemplate {
   name: string;
   createdAt: string;
   items: TemplateItem[];
+  itemBackgrounds?: Record<string, Background>;
 }
 
 export interface TemplateStore {

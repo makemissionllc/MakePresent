@@ -1315,7 +1315,7 @@
 
                   <div class="assign-block">
                     <span class="assign-title">Default Look for new slides</span>
-                    <p class="hint" style="margin:0 0 8px">When a new slide is created, its background is copied from the default Look for its kind (one-time, not a live link). Change the default later doesn't retroactively change existing slides.</p>
+                    <p class="hint" style="margin:0 0 8px">Slides set to Inherit follow their item background first, then the default Look for their kind. Change a default Look to update every inheriting slide of that kind; slides with their own background stay unchanged.</p>
                     <label>
                       Scripture — Add Scripture / Browse
                       <select

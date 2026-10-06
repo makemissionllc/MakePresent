@@ -4,11 +4,12 @@
   import { crossfade, slide as slideTransition } from "svelte/transition";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { api, subscribeAck, subscribeCountdown, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
   import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, CountdownView, DisplayInfo, Library, LibrarySong, LyricsHit, MediaAsset, Overlay, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide, PlaylistItem } from "../lib/types";
   import { isMedia, isLiveCamera } from "../lib/types";
   import { addCachedMediaSlide } from "../lib/mediaSlide";
+  import { beginPointerDrag, cancelPointerDrag, type PointerDragPoint } from "../lib/pointerDrag";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
   import SlideThumbnail from "./SlideThumbnail.svelte";
@@ -107,6 +108,11 @@
   let mediaThumbFailures = $state<Set<string>>(new Set());
   let mediaSearchTimer: ReturnType<typeof setTimeout> | null = null;
   let mediaSearchSeq = 0;
+  type BackgroundApplyScope = "item" | "songs" | "scripture" | "all";
+  let backgroundPopoverOpen = $state(false);
+  let backgroundApplyScope = $state<BackgroundApplyScope>("item");
+  let backgroundBusy = $state(false);
+  let backgroundError = $state<string | null>(null);
 
   async function loadMedia(query = mediaQuery): Promise<void> {
     const seq = ++mediaSearchSeq;
@@ -165,16 +171,6 @@
     }
   }
 
-  function onMediaAssetDragStart(event: DragEvent, asset: MediaAsset): void {
-    isDragging = true;
-    dragType = "cached-media";
-    dragPayload = { type: "cached-media", hash: asset.hash };
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = "copy";
-      event.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
-    }
-  }
-
   function onMediaThumbError(hash: string): void {
     mediaThumbFailures = new Set([...mediaThumbFailures, hash]);
   }
@@ -210,6 +206,10 @@
   let isDragging = $state(false);
   let dragType = $state<string | null>(null);
   let dragPayload = $state<any>(null);
+  let pointerDropTarget = $state<{ kind: "slide" | "item" | "grid" | "playlist" | "external" | "library" | "background-chip" | "other"; index?: number; id?: string } | null>(null);
+  let nativeDropTarget = $state<string | null>(null);
+  let nativeDropMedia = false;
+  let nativeDropSongs = false;
 
   // External OS file drag-and-drop — images/videos create new media slides
   let externalDragActive = $state(false);
@@ -418,6 +418,7 @@
   // Phase 3.5 field. Keep the editor from crashing and explain the mismatch.
   const items = $derived(Array.isArray(appState?.items) ? appState.items : []);
   const selectedItem = $derived(items.find((item) => item.id === selectedItemId) ?? items[0] ?? null);
+  const selectedItemBackground = $derived(selectedItem ? project?.itemBackgrounds?.[selectedItem.id] ?? null : null);
   const selectedItemSlides = $derived(selectedItem ? selectedItem.slideIds.map((id) => project?.slides.find((s) => s.id === id)).filter((s): s is Slide => !!s) : []);
   const gridSlides = $derived(gridScope === "all" ? (project?.slides ?? []) : selectedItemSlides);
   const ITEM_STATE_ERROR = "Playlist item data is missing from the backend. Restart MakrStudio with the updated app build.";
@@ -447,6 +448,7 @@
       project?.slides[0] ??
       null,
   );
+  const selectedEffectiveBackground = $derived(selected ? appState?.effectiveBackgrounds?.[selected.id] ?? selected.background : null);
   const selectedPreviewSlide = $derived(
     selected
       ? {
@@ -887,54 +889,187 @@
     void run(() => api.addSlide(ref, v.text, undefined, "scripture"));
   }
 
-  // Drag-and-drop — native HTML5, no library
-  function onPlaylistDragStart(e: DragEvent, slide: Slide, index: number): void {
-    draggedSlideId = slide.id;
-    dragType = "playlist-reorder";
-    isDragging = true;
-    dragPayload = { type: "playlist-reorder", slideId: slide.id, fromIndex: index };
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
-      // Use transparent drag image for cleaner indicator
+  function locateDropTarget(target: Element | null, point: PointerDragPoint): NonNullable<typeof pointerDropTarget> | null {
+    const slide = target?.closest<HTMLElement>("[data-drop-slide-index]");
+    if (slide) {
+      const index = Number(slide.dataset.dropSlideIndex);
+      const rect = slide.getBoundingClientRect();
+      return { kind: "slide", index: index + (point.y >= rect.top + rect.height / 2 ? 1 : 0), id: slide.dataset.dropSlideId };
     }
-    // Add dragging class via data attribute
-    (e.currentTarget as HTMLElement).classList.add("dragging");
+    const item = target?.closest<HTMLElement>("[data-drop-item-index]");
+    if (item) {
+      const index = Number(item.dataset.dropItemIndex);
+      const rect = item.getBoundingClientRect();
+      return { kind: "item", index: index + (point.y >= rect.top + rect.height / 2 ? 1 : 0), id: item.dataset.dropItemId };
+    }
+    if (target?.closest(".external-drop-zone")) return { kind: "external", index: items.length };
+    if (target?.closest(".library-drop-zone")) return { kind: "library" };
+    if (target?.closest(".item-background-chip, .item-background-drop")) return { kind: "background-chip" };
+    const grid = target?.closest<HTMLElement>(".slide-grid, .grid-empty");
+    if (grid && project) {
+      const cells = Array.from(grid.querySelectorAll<HTMLElement>("[data-drop-slide-index]"));
+      if (cells.length === 0) return { kind: "slide", index: project.slides.length };
+      let nearest: HTMLElement | null = null;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      for (const cell of cells) {
+        const rect = cell.getBoundingClientRect();
+        const dx = Math.max(rect.left - point.x, 0, point.x - rect.right);
+        const dy = Math.max(rect.top - point.y, 0, point.y - rect.bottom);
+        const distance = dx * dx + dy * dy;
+        if (distance < nearestDistance) { nearest = cell; nearestDistance = distance; }
+      }
+      if (nearest) {
+        const rect = nearest.getBoundingClientRect();
+        const horizontal = point.x < rect.left || point.x > rect.right;
+        const before = horizontal ? point.x < rect.left + rect.width / 2 : point.y < rect.top + rect.height / 2;
+        const index = Number(nearest.dataset.dropSlideIndex);
+        return { kind: "slide", index: index + (before ? 0 : 1) };
+      }
+    }
+    if (target?.closest(".slide-list")) return { kind: "playlist", index: items.length };
+    return null;
   }
 
-  function onPlaylistDragOver(e: DragEvent, index: number): void {
-    // External OS files take precedence — show copy cursor even though isDragging is false
-    if (isExternalFileDrag(e)) {
-      handleExternalDragOver(e, index);
+  async function applyBackgroundToCurrentScope(background: Background): Promise<void> {
+    if (!selectedItem) { backgroundError = "Select a playlist item first."; return; }
+    backgroundBusy = true;
+    backgroundError = null;
+    try {
+      if (backgroundApplyScope === "item") appState = await api.setItemBackground(selectedItem.id, background);
+      else if (backgroundApplyScope === "songs") appState = await api.applyBackgroundToAllItems("song", background);
+      else if (backgroundApplyScope === "scripture") appState = await api.applyBackgroundToAllItems("scripture", background);
+      else appState = await api.applyBackgroundToAllItems(null, background);
+    } catch (error) {
+      backgroundError = `Could not set background: ${String(error)}`;
+    } finally { backgroundBusy = false; }
+  }
+
+  async function removeItemBackground(): Promise<void> {
+    if (!selectedItem) return;
+    backgroundBusy = true;
+    backgroundError = null;
+    try { appState = await api.setItemBackground(selectedItem.id, null); }
+    catch (error) { backgroundError = `Could not remove item background: ${String(error)}`; }
+    finally { backgroundBusy = false; }
+  }
+
+  async function handleItemBackgroundFiles(files: FileList): Promise<void> {
+    for (const file of Array.from(files) as (File & { path?: string })[]) {
+      const extension = getFileExt(file.name);
+      if (!ALLOWED_EXTS.has(extension)) {
+        backgroundError = `Unsupported file type: ${file.name}. Choose an image or video.`;
+        continue;
+      }
+      if (!file.path) {
+        backgroundError = `${file.name} has no accessible file path. Use the Media tab to import it first.`;
+        continue;
+      }
+      try {
+        const asset = await api.importMedia(file.path);
+        await applyBackgroundToCurrentScope(asset.background);
+      } catch (error) { backgroundError = `Could not import ${file.name}: ${String(error)}`; }
+    }
+  }
+
+  async function useMediaAsItemBackground(asset: MediaAsset): Promise<void> {
+    if (!selectedItem) { mediaError = "Select a playlist item before using media as a background."; return; }
+    mediaError = null;
+    try { appState = await api.setItemBackground(selectedItem.id, asset.background); }
+    catch (error) { mediaError = `Could not set item background: ${String(error)}`; }
+  }
+
+  async function useItemBackground(slide: Slide): Promise<void> {
+    try { appState = await api.clearSlideBackground(slide.id); }
+    catch (error) { errorMsg = `Could not use the inherited background: ${String(error)}`; }
+  }
+
+  function openBackgroundPopover(): void {
+    backgroundPopoverOpen = !backgroundPopoverOpen;
+    backgroundError = null;
+    if (backgroundPopoverOpen && mediaResults.length === 0) void loadMedia("");
+  }
+
+  function pointerDragMove(payload: any, point: PointerDragPoint, target: Element | null): void {
+    const located = locateDropTarget(target, point);
+    pointerDropTarget = located;
+    isDragging = true;
+    dragPayload = payload;
+    dragType = payload.type;
+    if (payload.type === "item-reorder") {
+      draggedItemId = payload.itemId;
+      itemDropIndex = located?.kind === "item" ? located.index ?? null : located?.kind === "playlist" ? items.length : null;
+    } else if (payload.type === "playlist-reorder") {
+      draggedSlideId = payload.slideId;
+      if (located?.kind === "item") {
+        const nextItem = items[located.index ?? items.length];
+        dragOverIndex = nextItem ? project?.slides.findIndex((slide) => slide.id === nextItem.slideIds[0]) ?? null : project?.slides.length ?? null;
+      } else dragOverIndex = located && ["slide", "grid", "playlist", "external"].includes(located.kind) ? located.index ?? null : null;
+    }
+  }
+
+  function pointerDragCancel(): void {
+    pointerDropTarget = null;
+    draggedItemId = null;
+    itemDropIndex = null;
+    dragOverIndex = null;
+    isDragging = false;
+    draggedSlideId = null;
+    dragType = null;
+    dragPayload = null;
+  }
+
+  function pointerDragDrop(payload: any, point: PointerDragPoint, target: Element | null): void {
+    const located = locateDropTarget(target, point);
+    pointerDropTarget = null;
+    if (!located) { pointerDragCancel(); return; }
+    if (payload.type === "item-reorder") {
+      if (located.kind === "item" || located.kind === "playlist") void dropPlaylistItem(payload.itemId, Math.min(located.index ?? items.length, items.length - 1));
+      else pointerDragCancel();
       return;
     }
-    e.preventDefault();
-    if (!isDragging) return;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    if (rect.height === 0) return;
-    const mid = rect.top + rect.height / 2;
-    const overIndex = e.clientY < mid ? index : index + 1;
-    dragOverIndex = overIndex;
-    if (e.dataTransfer) e.dataTransfer.dropEffect = dragType === "playlist-reorder" ? "move" : "copy";
-  }
-
-  function onPlaylistDragLeave(e: DragEvent): void {
-    // Only clear if leaving the list container, not a child
-    const related = e.relatedTarget as HTMLElement | null;
-    if (!related || !(e.currentTarget as HTMLElement).contains(related)) {
-      // Keep indicator if still over playlist, otherwise clear on drop
+    if (payload.type === "cached-media" && located.kind === "slide" && located.id) {
+      const asset = mediaResults.find((entry) => entry.hash === payload.hash);
+      if (asset) void api.updateSlide(located.id, { background: asset.background }).then((s) => (appState = s)).catch((e: unknown) => (errorMsg = String(e)));
+      else errorMsg = "That media item is no longer available. Reopen the Media tab and try again.";
+      pointerDragCancel();
+      return;
     }
+    if (located.kind === "background-chip") {
+      const asset = payload.type === "cached-media" ? mediaResults.find((entry) => entry.hash === payload.hash) : null;
+      if (asset) void applyBackgroundToCurrentScope(asset.background);
+      else backgroundError = "Only images and videos can be set as a background.";
+      pointerDragCancel();
+      return;
+    }
+    let slidePosition = located.kind === "slide" ? located.index : undefined;
+    let itemPosition = located.kind === "item" || located.kind === "playlist" || located.kind === "external" ? located.index : undefined;
+    if (payload.type === "playlist-reorder" && (located.kind === "item" || located.kind === "playlist" || located.kind === "external")) {
+      const nextItem = items[located.index ?? items.length];
+      slidePosition = nextItem ? project?.slides.findIndex((slide) => slide.id === nextItem.slideIds[0]) ?? 0 : project?.slides.length ?? 0;
+    }
+    if (itemPosition === undefined) itemPosition = itemIndexForSlidePosition(slidePosition ?? project?.slides.length ?? 0);
+    onPlaylistDrop(null, slidePosition, itemPosition, payload);
   }
 
-  function onPlaylistDrop(e: DragEvent, dropIndex?: number, dropItemIndex?: number): void {
-    e.preventDefault();
-    e.stopPropagation();
+  function startPointerDrag(event: PointerEvent, payload: any): void {
+    beginPointerDrag(event, payload, {
+      onMove: pointerDragMove,
+      onDrop: pointerDragDrop,
+      onCancel: pointerDragCancel,
+    });
+  }
+
+  // Internal drags use pointer events so Tauri's native OS file-drop lane remains enabled.
+
+  function onPlaylistDrop(e: DragEvent | null, dropIndex?: number, dropItemIndex?: number, pointerPayload?: any): void {
+    e?.preventDefault();
+    e?.stopPropagation();
     // External OS files — use the existing media import pipeline (hash+copy+thumb)
     // and create a new slide with that file as the background, same result as
     // the “Add media” button. Must not silently fail on unsupported types.
-    if ((e.dataTransfer?.files?.length ?? 0) > 0) {
+    if ((e?.dataTransfer?.files?.length ?? 0) > 0) {
       const target = dropItemIndex ?? itemIndexForSlidePosition(dropIndex ?? dragOverIndex ?? project?.slides.length ?? 0);
-      void handleExternalFiles(e.dataTransfer!.files, target);
+      void handleExternalFiles(e!.dataTransfer!.files, target);
       dragOverIndex = null;
       isDragging = false;
       externalDragActive = false;
@@ -950,9 +1085,9 @@
     const len = project.slides.length;
     targetIdx = Math.max(0, Math.min(targetIdx, len));
     const targetItemIdx = dropItemIndex ?? itemIndexForSlidePosition(targetIdx);
-    const raw = e.dataTransfer?.getData("text/plain");
+    const raw = e?.dataTransfer?.getData("text/plain");
     let payload: any = null;
-    try { payload = raw ? JSON.parse(raw) : dragPayload; } catch { payload = dragPayload; }
+    try { payload = pointerPayload ?? (raw ? JSON.parse(raw) : dragPayload); } catch { payload = pointerPayload ?? dragPayload; }
 
     if (!payload || !payload.type) {
       if (!payload) errorMsg = "Drop failed: unknown payload";
@@ -1043,45 +1178,6 @@
     draggedSlideId = null;
     dragType = null;
     dragPayload = null;
-  }
-
-  function onPlaylistDragEnd(e: DragEvent): void {
-    (e.currentTarget as HTMLElement).classList.remove("dragging");
-    dragOverIndex = null;
-    isDragging = false;
-    draggedSlideId = null;
-    dragType = null;
-    dragPayload = null;
-  }
-
-  function onLibrarySongDragStart(e: DragEvent, song: LibrarySong): void {
-    isDragging = true;
-    dragType = "library-song";
-    dragPayload = { type: "library-song", songId: song.id };
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = "copy";
-      e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
-    }
-  }
-
-  function onLibraryVerseDragStart(e: DragEvent, song: LibrarySong, verse: { id: string }): void {
-    isDragging = true;
-    dragType = "library-verse";
-    dragPayload = { type: "library-verse", songId: song.id, slideId: verse.id };
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = "copy";
-      e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
-    }
-  }
-
-  function onScriptureDragStart(e: DragEvent, ref: string, text: string): void {
-    isDragging = true;
-    dragType = "scripture";
-    dragPayload = { type: "scripture", reference: ref, text };
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = "copy";
-      e.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
-    }
   }
 
   // — External OS file drag-and-drop helpers (image/video → new slide with media background) —
@@ -2004,14 +2100,18 @@
     let unAck: () => void = () => {};
     let unCountdown: () => void = () => {};
     let unFileDrop: (() => void) | null = null;
-    let unFileDrop2: (() => void) | null = null;
     let cancelled = false;
 
-    // Tauri OS file-drop fallback — some platforms/window managers deliver
-    // desktop drops via `tauri://drag-drop` rather than HTML5 DataTransfer.files.
-    // This ensures the same media pipeline (hash+copy+thumb → new slide) runs,
-    // and also handles song-file drops (.pro/.cho/.usr) onto the Library.
-    async function handleTauriPaths(paths: string[]): Promise<void> {
+    // Native Tauri drag events preserve physical pointer coordinates. Map them
+    // back to CSS pixels before hit testing so OS drops can target exact rows.
+    function nativeDropHit(position: { x: number; y: number }): NonNullable<typeof pointerDropTarget> | null {
+      const ratio = window.devicePixelRatio || 1;
+      const x = position.x / ratio;
+      const y = position.y / ratio;
+      return locateDropTarget(document.elementFromPoint(x, y), { x, y });
+    }
+
+    async function handleTauriPaths(paths: string[], hit: NonNullable<typeof pointerDropTarget> | null): Promise<void> {
       if (!Array.isArray(paths) || paths.length === 0) return;
       const songPaths: string[] = [];
       const mediaPaths: string[] = [];
@@ -2032,8 +2132,28 @@
         await handleLibraryFiles(songPaths as any);
       }
       if (mediaPaths.length > 0) {
-        const target = itemIndexForSlidePosition(dragOverIndex ?? project?.slides.length ?? 0);
-        await handleExternalFiles(mediaPaths as any, target);
+        if (hit?.kind === "slide" && hit.id) {
+          for (const path of mediaPaths) {
+            try {
+              const asset = await api.importMedia(path);
+              appState = await api.updateSlide(hit.id, { background: asset.background });
+            } catch (error) { errorMsg = `Could not use ${path.split(/[\\/]/).pop()}: ${String(error)}`; }
+          }
+        } else if (hit?.kind === "background-chip") {
+          for (const path of mediaPaths) {
+            try {
+              const asset = await api.importMedia(path);
+              await applyBackgroundToCurrentScope(asset.background);
+            } catch (error) { backgroundError = `Could not use ${path.split(/[\\/]/).pop()}: ${String(error)}`; }
+          }
+        } else if (hit && ["slide", "grid", "playlist", "item", "external"].includes(hit.kind)) {
+          const target = hit.kind === "item" || hit.kind === "playlist" ? hit.index ?? items.length : itemIndexForSlidePosition(hit.index ?? project?.slides.length ?? 0);
+          await handleExternalFiles(mediaPaths as any, target);
+        } else {
+          const msg = "Drop images or videos on a slide, the playlist, or the media drop area.";
+          errorMsg = msg;
+          externalDragError = msg;
+        }
       }
       dragOverIndex = null;
       externalDragActive = false;
@@ -2041,18 +2161,42 @@
     }
     void (async () => {
       try {
-        unFileDrop = await listen("tauri://drag-drop", (event: any) => {
-          const raw = event.payload as any;
-          const paths: string[] = Array.isArray(raw) ? raw : (raw?.paths ?? []);
-          void handleTauriPaths(paths);
+        const unlisten = await getCurrentWindow().onDragDropEvent((event) => {
+          if (cancelled) return;
+          const payload = event.payload as any;
+          if (payload.type === "leave") {
+            nativeDropTarget = null;
+            nativeDropMedia = false;
+            nativeDropSongs = false;
+            externalDragActive = false;
+            return;
+          }
+          const paths: string[] = Array.isArray(payload.paths) ? payload.paths : [];
+          const hit = payload.position ? nativeDropHit(payload.position) : null;
+          const hitType = hit?.kind === "library" ? nativeDropSongs : nativeDropMedia;
+          nativeDropTarget = hitType ? hit?.kind === "slide" ? hit.id ? `slide:${hit.id}` : `gap:${hit.index ?? 0}` : hit?.kind === "item" ? hit.id ? `item:${hit.id}` : `item-gap:${hit.index ?? 0}` : hit?.kind === "background-chip" ? "background-chip" : hit ? `${hit.kind}:${hit.index ?? ""}` : null : null;
+          if (hit?.kind === "slide" && !hit.id) dragOverIndex = hit.index ?? null;
+          if (hit?.kind === "item") itemDropIndex = hit.index ?? null;
+          const isDrop = payload.type === "drop";
+          if (payload.type === "enter") {
+            nativeDropMedia = paths.some((path) => ALLOWED_EXTS.has(getFileExt(path.split(/[\\/]/).pop() ?? path)));
+            nativeDropSongs = paths.some((path) => SONG_EXTS.has(getFileExt(path.split(/[\\/]/).pop() ?? path)));
+          }
+          externalDragActive = !isDrop && nativeDropMedia;
+          libraryDragActive = !isDrop && nativeDropSongs;
+          if (isDrop) {
+            void handleTauriPaths(paths, hit);
+            nativeDropTarget = null;
+            nativeDropMedia = false;
+            nativeDropSongs = false;
+            itemDropIndex = null;
+            dragOverIndex = null;
+          }
         });
-        unFileDrop2 = await listen("tauri://file-drop", (event: any) => {
-          const raw = event.payload as any;
-          const paths: string[] = Array.isArray(raw) ? raw : (raw?.paths ?? []);
-          void handleTauriPaths(paths);
-        });
+        if (cancelled) unlisten();
+        else unFileDrop = unlisten;
       } catch {
-        // listen not available in browser preview — HTML5 path still works
+        // Tauri window events are unavailable in browser preview; HTML path remains available there.
       }
     })();
 
@@ -2135,7 +2279,7 @@
       unAck();
       window.clearInterval(ackClock);
       if (unFileDrop) unFileDrop();
-      if (unFileDrop2) unFileDrop2();
+      cancelPointerDrag();
       window.removeEventListener("keydown", handleGlobalKeydown);
       if (scriptureTimer) clearTimeout(scriptureTimer);
       if (nameTimer) clearTimeout(nameTimer);
@@ -2222,19 +2366,11 @@
           class="slide-list"
           class:drag-active={isDragging || externalDragActive}
           class:external-drag={externalDragActive}
+          class:native-file-drop-active={nativeDropTarget?.startsWith("playlist:")}
           ondragover={(e) => {
-            if (isExternalFileDrag(e)) {
-              handleExternalDragOver(e);
-            } else if (draggedItemId) {
-              e.preventDefault();
-              const r=(e.currentTarget as HTMLElement).getBoundingClientRect();
-              itemDropIndex = e.clientY > r.bottom - 12 ? items.length : itemDropIndex;
-            } else {
-              e.preventDefault();
-              if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0;
-            }
+            if (isExternalFileDrag(e)) handleExternalDragOver(e);
           }}
-          ondrop={(e) => { if (draggedItemId) { e.preventDefault(); e.stopPropagation(); void dropPlaylistItem(draggedItemId, itemDropIndex ?? items.length-1); } else onPlaylistDrop(e); }}
+          ondrop={(e) => { if ((e.dataTransfer?.files?.length ?? 0) > 0) onPlaylistDrop(e); }}
           ondragleave={(e) => {
             const rt = e.relatedTarget as HTMLElement | null;
             if (!rt || !(e.currentTarget as HTMLElement).contains(rt)) {
@@ -2248,13 +2384,14 @@
               <div class="drop-indicator" aria-hidden="true"></div>
             {/if}
             <li
-              draggable="true"
+              data-drop-item-index={i}
+              data-drop-item-id={item.id}
               class:dragging={draggedItemId === item.id}
               class:drag-over={itemDropIndex === i}
-              ondragstart={(e) => { draggedItemId = item.id; e.dataTransfer?.setData("text/plain", JSON.stringify({type:"item-reorder", itemId:item.id})); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }}
-              ondragover={(e) => { e.preventDefault(); const r=(e.currentTarget as HTMLElement).getBoundingClientRect(); itemDropIndex=e.clientY < r.top+r.height/2 ? i : i+1; }}
-              ondragend={() => { draggedItemId=null; itemDropIndex=null; }}
-              ondrop={(e) => { const p=JSON.parse(e.dataTransfer?.getData("text/plain") || "{}"); if (p.type === "item-reorder") { e.preventDefault(); e.stopPropagation(); void dropPlaylistItem(p.itemId, Math.min(itemDropIndex ?? i, items.length-1)); } else { e.stopPropagation(); const at=itemDropIndex ?? i; onPlaylistDrop(e, undefined, at); } }}
+              class:pointer-drop-target={pointerDropTarget?.kind === "item" && pointerDropTarget.id === item.id}
+              class:native-file-drop-target={nativeDropTarget === `item:${item.id}`}
+              ondragover={(e) => { if (isExternalFileDrag(e)) { e.preventDefault(); const rect = (e.currentTarget as HTMLElement).getBoundingClientRect(); itemDropIndex = e.clientY < rect.top + rect.height / 2 ? i : i + 1; } }}
+              ondrop={(e) => { if ((e.dataTransfer?.files?.length ?? 0) > 0) { e.preventDefault(); e.stopPropagation(); void handleExternalFiles(e.dataTransfer!.files, itemDropIndex ?? i); itemDropIndex = null; } }}
             >
               <button
                 class:active={selectedItemId === item.id}
@@ -2262,6 +2399,12 @@
                 style={`--section-color: ${item.kind === "song" ? "var(--section-chorus)" : item.kind === "scripture" ? "var(--section-verse)" : "var(--section-neutral)"}`}
                 onclick={() => selectItem(item)}
                 ondblclick={() => { const first = project?.slides.find(s => s.id === item.slideIds[0]); if (first) goLive(first); }}
+                onpointerdown={(e) => startPointerDrag(e, { type: "item-reorder", itemId: item.id })}
+                onkeydown={(e) => {
+                  if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+                    e.preventDefault(); void dropPlaylistItem(item.id, Math.max(0, Math.min(items.length - 1, i + (e.key === "ArrowUp" ? -1 : 1))));
+                  }
+                }}
                 draggable="false"
               >
                 <span class="playlist-index">{String(i + 1).padStart(2, "0")}</span>
@@ -2296,6 +2439,7 @@
           role="region"
           aria-label="Drop media files here"
           class:drag-active={externalDragActive}
+          class:native-file-drop-target={nativeDropTarget?.startsWith("external:")}
           ondragover={(e) => {
             if (isExternalFileDrag(e)) {
               e.preventDefault();
@@ -2403,12 +2547,21 @@
           </label>
           <div class="field">
             <span class="field-label">Background</span>
+            <button
+              class="inherited-background-option"
+              class:active={selected.backgroundMode === "inherit"}
+              aria-pressed={selected.backgroundMode === "inherit"}
+              onclick={() => void useItemBackground(selected)}
+            >
+              <span>Item background (inherited)</span>
+              <small>{selectedItemBackground ? selectedItem?.name ?? "Playlist item" : "Item override or default Look"}</small>
+            </button>
             <div class="swatches">
               {#each PALETTE as color}
                 <button
                   class="swatch"
                   style:background-color={color}
-                  class:selected={selected.background.type === "solid" &&
+                  class:selected={selected.backgroundMode !== "inherit" && selected.background.type === "solid" &&
                     selected.background.color.toLowerCase() === color}
                   onclick={() => setColor(selected, color)}
                   title={color}
@@ -2417,24 +2570,24 @@
               <label class="custom-color">
                 <input
                   type="color"
-                  value={selected.background.type === "solid"
-                    ? selected.background.color
+                  value={selectedEffectiveBackground?.type === "solid"
+                    ? selectedEffectiveBackground.color
                     : "#000000"}
                   oninput={(e) => setColor(selected, (e.target as HTMLInputElement).value)}
                 />
                 <span>Custom</span>
               </label>
-              {#if isMedia(selected.background)}
+              {#if selectedEffectiveBackground && isMedia(selectedEffectiveBackground)}
                 <span class="media-swatch-wrap">
                   <button
                     class="swatch media selected"
                     style:background-color="#000"
-                    title={selected.background.type === "video"
-                      ? `Video background${selected.background.durationMs != null ? ` \u00b7 ${Math.round(selected.background.durationMs / 1000)}s` : ""}`
+                    title={selectedEffectiveBackground.type === "video"
+                      ? `Video background${selectedEffectiveBackground.durationMs != null ? ` \u00b7 ${Math.round(selectedEffectiveBackground.durationMs / 1000)}s` : ""}`
                       : "Image background"}
                   >
                     <img
-                      src={fileUrl(selected.background.thumb)}
+                      src={fileUrl(selectedEffectiveBackground.thumb)}
                       alt=""
                       draggable="false"
                       onerror={(e) => {
@@ -2451,14 +2604,14 @@
                   </button>
                 </span>
               {/if}
-              {#if isLiveCamera(selected.background)}
+              {#if selectedEffectiveBackground && isLiveCamera(selectedEffectiveBackground)}
                 <span class="media-swatch-wrap">
                   <span
                     class="swatch media selected camera-badge"
                     style:background-color="#000"
-                    title={`Live camera: ${selected.background.label || "camera"} — pick 🎥 below to change`}
+                    title={`Live camera: ${selectedEffectiveBackground.label || "camera"} — pick 🎥 below to change`}
                   ><span aria-hidden="true">🎥</span></span>
-                  <span class="camera-name">{selected.background.label || "Live camera"}</span>
+                  <span class="camera-name">{selectedEffectiveBackground.label || "Live camera"}</span>
                   <button
                     class="media-remove"
                     title="Remove camera background"
@@ -2549,6 +2702,7 @@
             {#if selectedPreviewSlide && outputPreviewLook}
               <SlideThumbnail
                 slide={selectedPreviewSlide}
+                effectiveBackground={appState?.effectiveBackgrounds?.[selectedPreviewSlide.id] ?? selectedPreviewSlide.background}
                 look={outputPreviewLook}
                 showText={true}
                 showBackground={true}
@@ -2574,6 +2728,93 @@
             <input type="range" min="0" max="2" step="1" value={thumbnailSizeIndex} oninput={onThumbnailSizeInput} aria-label="Thumbnail size: small, medium, or large" />
             <output>{thumbnailSize}</output>
           </label>
+          <div class="item-background-control">
+            <button
+              class="item-background-chip"
+              class:active={backgroundPopoverOpen}
+              class:native-file-drop-target={nativeDropTarget === "background-chip"}
+              onclick={openBackgroundPopover}
+              aria-haspopup="dialog"
+              aria-expanded={backgroundPopoverOpen}
+              disabled={!selectedItem}
+              title={selectedItemBackground ? "Change this item's shared background" : "Set a background for this playlist item"}
+            >
+              {#if selectedItemBackground && isMedia(selectedItemBackground)}
+                <img src={fileUrl(selectedItemBackground.thumb)} alt="" />
+              {:else if selectedItemBackground?.type === "solid"}
+                <span class="item-background-chip-color" style:background-color={selectedItemBackground.color}></span>
+              {:else if selectedItemBackground?.type === "live_camera"}
+                <span class="item-background-chip-camera" aria-hidden="true">🎥</span>
+              {:else}
+                <span class="item-background-chip-default">Default</span>
+              {/if}
+              <span>Background</span>
+            </button>
+            {#if backgroundPopoverOpen}
+              <dialog open class="item-background-popover" aria-label="Playlist item background">
+                <div class="item-background-popover-head">
+                  <strong>{selectedItem?.name ?? "Item background"}</strong>
+                  <button class="ghost" onclick={() => (backgroundPopoverOpen = false)} aria-label="Close item background">×</button>
+                </div>
+                <p class="item-background-hint">Drop an image on the Background chip to set it for the whole item.</p>
+                <div
+                  class="item-background-drop"
+                  class:native-file-drop-target={nativeDropTarget === "background-chip"}
+                  role="region"
+                  aria-label="Drop an image or video for this item background"
+                  ondragover={(e) => { if (isExternalFileDrag(e)) e.preventDefault(); }}
+                  ondrop={(e) => { if ((e.dataTransfer?.files?.length ?? 0) > 0) { e.preventDefault(); e.stopPropagation(); void handleItemBackgroundFiles(e.dataTransfer!.files); } }}
+                >Drop an image or video</div>
+                <div class="item-background-swatches" aria-label="Solid background colors">
+                  {#each PALETTE as color}
+                    <button
+                      class="swatch"
+                      style:background-color={color}
+                      class:selected={selectedItemBackground?.type === "solid" && selectedItemBackground.color.toLowerCase() === color}
+                      title={`Use ${color}`}
+                      aria-label={`Use ${color} background`}
+                      disabled={backgroundBusy}
+                      onclick={() => void applyBackgroundToCurrentScope({ type: "solid", color })}
+                    ></button>
+                  {/each}
+                  <label class="custom-color" title="Choose another color">
+                    <input type="color" value={selectedItemBackground?.type === "solid" ? selectedItemBackground.color : "#000000"} oninput={(e) => void applyBackgroundToCurrentScope({ type: "solid", color: (e.currentTarget as HTMLInputElement).value })} />
+                    <span>Custom</span>
+                  </label>
+                </div>
+                <div class="item-background-media">
+                  <strong>Imported media</strong>
+                  {#if mediaLoading}
+                    <span class="field-hint">Loading…</span>
+                  {:else if mediaResults.length === 0}
+                    <span class="field-hint">No imported images or videos yet.</span>
+                  {:else}
+                    <div class="item-background-media-grid">
+                      {#each visibleMediaResults as asset (asset.hash)}
+                        <button class="item-background-media-choice" disabled={backgroundBusy} title={`Use ${asset.fileName}`} onclick={() => void applyBackgroundToCurrentScope(asset.background)}>
+                          {#if isMedia(asset.background)}<img src={fileUrl(asset.background.thumb)} alt="" />{/if}
+                          <span>{asset.fileName}</span>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+                <label class="item-background-scope">
+                  Apply to
+                  <select bind:value={backgroundApplyScope} disabled={backgroundBusy}>
+                    <option value="item">This item</option>
+                    <option value="songs">All songs</option>
+                    <option value="scripture">All scripture</option>
+                    <option value="all">Everything in this service</option>
+                  </select>
+                </label>
+                <div class="item-background-actions">
+                  <button class="ghost" disabled={!selectedItemBackground || backgroundBusy} onclick={() => void removeItemBackground()}>Remove</button>
+                </div>
+                {#if backgroundError}<p class="inline-error" role="alert">{backgroundError}</p>{/if}
+              </dialog>
+            {/if}
+          </div>
           <button class="add-slide-button" onclick={() => addSlide(true)}><span aria-hidden="true">＋</span> Add slide</button>
           {#if thumbnailPreferenceError}<span class="grid-size-error" role="alert">{thumbnailPreferenceError}</span>{/if}
         </div>
@@ -2585,16 +2826,13 @@
             class:thumb-small={thumbnailSize === "small"}
             class:thumb-medium={thumbnailSize === "medium"}
             class:thumb-large={thumbnailSize === "large"}
+            class:native-file-drop-active={nativeDropTarget?.startsWith("grid:")}
             role="region"
             aria-label="Slides grid"
             ondragover={(e) => {
               if (isExternalFileDrag(e)) handleExternalDragOver(e);
-              else {
-                e.preventDefault();
-                if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0;
-              }
             }}
-            ondrop={(e) => onPlaylistDrop(e)}
+            ondrop={(e) => { if ((e.dataTransfer?.files?.length ?? 0) > 0) onPlaylistDrop(e); }}
             ondragleave={(e) => {
               const rt = e.relatedTarget as HTMLElement | null;
               if (!rt || !(e.currentTarget as HTMLElement).contains(rt)) {
@@ -2604,27 +2842,41 @@
             }}
           >
             {#each gridSlides as slide, i (slide.id)}
-              {#if dragOverIndex === i}
+              {@const slideProjectIndex = project?.slides.findIndex((s) => s.id === slide.id) ?? i}
+              {#if dragOverIndex === slideProjectIndex || nativeDropTarget === `gap:${slideProjectIndex}`}
                 <div class="grid-drop-indicator" aria-hidden="true"></div>
               {/if}
               <div
                 class="grid-cell"
+                data-drop-slide-index={project?.slides.findIndex((s) => s.id === slide.id) ?? i}
+                data-drop-slide-id={slide.id}
                 style={`--item-index: ${Math.min(i, 8)}; --section-color: ${sectionColor(slide.title)}`}
                 class:selected={selectedId === slide.id}
                 class:live={project?.live === slide.id}
-                draggable="true"
+                class:pointer-drop-target={pointerDropTarget?.kind === "slide" && pointerDropTarget.id === slide.id}
+                class:native-file-drop-target={nativeDropTarget === `slide:${slide.id}`}
                 role="group"
                 aria-label={slideDisplayName(slide)}
-                ondragstart={(e) => onPlaylistDragStart(e, slide, i)}
-                ondragover={(e) => onPlaylistDragOver(e, i)}
-                ondragend={onPlaylistDragEnd}
-                ondrop={(e) => onPlaylistDrop(e, i)}
               >
-                <button class="grid-thumb" onclick={() => openDetail(slide)} aria-label={`Edit ${slideDisplayName(slide)}`}>
+                <button
+                  class="grid-thumb"
+                  onclick={() => openDetail(slide)}
+                  onpointerdown={(e) => startPointerDrag(e, { type: "playlist-reorder", slideId: slide.id, fromIndex: project?.slides.findIndex((s) => s.id === slide.id) ?? i })}
+                  onkeydown={(e) => {
+                    if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown") && project) {
+                      e.preventDefault();
+                      const from = project.slides.findIndex((s) => s.id === slide.id);
+                      const to = Math.max(0, Math.min(project.slides.length - 1, from + (e.key === "ArrowUp" ? -1 : 1)));
+                      if (from >= 0 && to !== from) { const ids = project.slides.map((s) => s.id); const [moved] = ids.splice(from, 1); if (moved) { ids.splice(to, 0, moved); void api.reorderSlides(ids).then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err))); } }
+                    }
+                  }}
+                  aria-label={`Edit ${slideDisplayName(slide)}; Alt plus Up or Down moves this slide`}
+                >
                   <div class="grid-thumb-inner" in:receivePreview|global={{ key: slide.id }} out:sendPreview|global={{ key: slide.id }}>
                     {#if outputPreviewLook}
                       <SlideThumbnail
                         slide={slide}
+                        effectiveBackground={appState?.effectiveBackgrounds?.[slide.id] ?? slide.background}
                         look={outputPreviewLook}
                         showText={true}
                         showBackground={true}
@@ -2635,18 +2887,24 @@
                       <div class="grid-thumb-fallback">{slide.title || "Untitled"}</div>
                     {/if}
                   </div>
-                  {#if project?.live === slide.id}
+                {#if project?.live === slide.id}
                     <span class="grid-live-badge">LIVE</span>
+                  {/if}
+                  {#if slide.backgroundMode !== "inherit"}
+                    <span class="grid-custom-background-badge" title="This slide has its own background">CUSTOM BG</span>
                   {/if}
                 </button>
                 <div class="grid-label" title={slideDisplayName(slide)}><span class="grid-number">{gridScope === "item" ? i + 1 : slideNumberWithinItem(slide)}</span><span class="grid-name">{slideDisplayName(slide)}</span></div>
                 <div class="grid-actions">
                   <button class="ghost grid-go-live" onclick={() => goLive(slide)} title="Go live">Go Live</button>
+                  {#if slide.backgroundMode !== "inherit"}
+                    <button class="ghost grid-inherit-background" onclick={() => void useItemBackground(slide)} title="Use this item's background">Use item background</button>
+                  {/if}
                   <button class="delete grid-delete" title="Delete slide" onclick={(e) => { e.stopPropagation(); deleteSlide(slide); }}>×</button>
                 </div>
               </div>
             {/each}
-            {#if dragOverIndex === (project?.slides.length ?? 0)}
+            {#if dragOverIndex === (project?.slides.length ?? -1) || nativeDropTarget === `gap:${project?.slides.length ?? -2}`}
               <div class="grid-drop-indicator" aria-hidden="true"></div>
             {/if}
           </div>
@@ -2714,6 +2972,7 @@
             {#if outputPreviewSlide && outputPreviewLook}
               <SlideThumbnail
                 slide={outputPreviewSlide}
+                effectiveBackground={appState?.effectiveBackgrounds?.[outputPreviewSlide.id] ?? outputPreviewSlide.background}
                 look={outputPreviewLook}
                 showText={project?.showText ?? true}
                 showBackground={project?.showBackground ?? true}
@@ -2840,6 +3099,7 @@
           {#if stagePreviewSlide && stagePreviewLook}
             <SlideThumbnail
               slide={stagePreviewSlide}
+              effectiveBackground={appState?.effectiveBackgrounds?.[stagePreviewSlide.id] ?? stagePreviewSlide.background}
               look={stagePreviewLook}
               showText={project?.showText ?? true}
               showBackground={project?.showBackground ?? true}
@@ -3042,8 +3302,7 @@
                     </button>
                     <button
                       class="song-entry"
-                      draggable="true"
-                      ondragstart={(e) => onLibrarySongDragStart(e, song)}
+                      onpointerdown={(e) => startPointerDrag(e, { type: "library-song", songId: song.id })}
                       onclick={() => addToPlaylist(song)}
                       aria-label={`Add ${song.title || "Untitled song"} to the playlist; drag to place it`}
                     >
@@ -3098,8 +3357,7 @@
                     <li class="library-verse-row" transition:slideTransition={{ duration: librarySearch.trim() || prefersReducedMotion() ? 0 : 180, easing: cubicOut, axis: "y" }}>
                       <button
                         class="library-verse"
-                        draggable="true"
-                        ondragstart={(e) => onLibraryVerseDragStart(e, song, verse)}
+                        onpointerdown={(e) => startPointerDrag(e, { type: "library-verse", songId: song.id, slideId: verse.id })}
                         onclick={() => void api.addSlide(verse.title, verse.body, undefined, "song").then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)))}
                         aria-label={`Add ${verse.title || "Untitled verse"} as a slide; drag to place it`}
                       >
@@ -3156,6 +3414,7 @@
                 role="region"
                 aria-label="Drop song files here"
                 class:drag-active={libraryDragActive}
+                class:native-file-drop-target={nativeDropTarget === "library:"}
                 ondragover={(e) => handleLibraryDragOver(e)}
                 ondragleave={(e) => handleLibraryDragLeave(e)}
                 ondrop={(e) => {
@@ -3206,8 +3465,7 @@
                           <button
                             class:active={i === scriptureIdx}
                             class="scripture-entry"
-                            draggable="true"
-                            ondragstart={(e) => onScriptureDragStart(e, match.reference, match.text)}
+                            onpointerdown={(e) => startPointerDrag(e, { type: "scripture", reference: match.reference, text: match.text })}
                             onmousedown={(e) => {
                               e.preventDefault();
                               selectScripture(match);
@@ -3304,8 +3562,7 @@
                         <li>
                           <button
                             class="browse-verse"
-                            draggable="true"
-                            ondragstart={(e) => onScriptureDragStart(e, `${selectedBook} ${selectedChapter}:${v.verse}`, v.text)}
+                            onpointerdown={(e) => startPointerDrag(e, { type: "scripture", reference: `${selectedBook} ${selectedChapter}:${v.verse}`, text: v.text })}
                             onclick={() => insertBrowseVerse(v)}
                           >
                             <span class="verse-num">{v.verse}</span>
@@ -3343,29 +3600,30 @@
             {:else}
               <ul class="media-grid">
                 {#each visibleMediaResults as asset (asset.hash)}
-                  <li><button
-                    class="media-card"
-                    class:dragging={dragType === "cached-media" && dragPayload?.hash === asset.hash}
-                    draggable={mediaAdding === null}
-                    ondragstart={(event) => onMediaAssetDragStart(event, asset)}
-                    ondragend={onPlaylistDragEnd}
-                    onclick={() => void addMediaFromBar(asset)}
-                    disabled={mediaAdding !== null}
-                    aria-label={`Add ${asset.fileName} as a slide, or drag to place it in the Playlist`}
-                  >
-                    <span class="media-card-preview" aria-hidden="true">
-                      {#if isMedia(asset.background) && !mediaThumbFailures.has(asset.hash)}
-                        <img src={fileUrl(asset.background.thumb)} alt="" draggable="false" onerror={() => onMediaThumbError(asset.hash)} />
-                      {:else}
-                        <span class="media-card-no-preview">Preview unavailable</span>
-                      {/if}
-                      <span class="media-card-type">{asset.kind === "video" ? "Video" : "Image"}</span>
-                    </span>
-                    <span class="media-card-footer">
-                      <strong class="media-card-name" title={asset.fileName}>{asset.fileName}</strong>
-                      <span class="media-card-action">{mediaAdding === asset.hash ? "Adding…" : "Add slide →"}</span>
-                    </span>
-                  </button></li>
+                  <li class="media-card-item">
+                    <button
+                      class="media-card"
+                      class:dragging={dragType === "cached-media" && dragPayload?.hash === asset.hash}
+                      onpointerdown={(event) => mediaAdding === null && startPointerDrag(event, { type: "cached-media", hash: asset.hash })}
+                      onclick={() => void addMediaFromBar(asset)}
+                      disabled={mediaAdding !== null}
+                      aria-label={`Add ${asset.fileName} as a slide, or drag to place it in the Playlist`}
+                    >
+                      <span class="media-card-preview" aria-hidden="true">
+                        {#if isMedia(asset.background) && !mediaThumbFailures.has(asset.hash)}
+                          <img src={fileUrl(asset.background.thumb)} alt="" draggable="false" onerror={() => onMediaThumbError(asset.hash)} />
+                        {:else}
+                          <span class="media-card-no-preview">Preview unavailable</span>
+                        {/if}
+                        <span class="media-card-type">{asset.kind === "video" ? "Video" : "Image"}</span>
+                      </span>
+                      <span class="media-card-footer">
+                        <strong class="media-card-name" title={asset.fileName}>{asset.fileName}</strong>
+                        <span class="media-card-action">{mediaAdding === asset.hash ? "Adding…" : "Add slide →"}</span>
+                      </span>
+                    </button>
+                    <button class="ghost media-card-background" disabled={!selectedItem} onclick={() => void useMediaAsItemBackground(asset)} title={selectedItem ? `Use as background for ${selectedItem.name}` : "Select a playlist item first"}>Use as background</button>
+                  </li>
                 {/each}
               </ul>
             {/if}
@@ -4494,6 +4752,30 @@
     background: var(--bg);
     z-index: 1;
   }
+  .item-background-control { position: relative; flex: 0 0 auto; }
+  .item-background-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 5px 10px 5px 6px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); color: var(--text); font-size: 11px; font-weight: 650; cursor: pointer; }
+  .item-background-chip:hover, .item-background-chip.active { border-color: var(--accent); }
+  .item-background-chip > img, .item-background-chip-color, .item-background-chip-camera, .item-background-chip-default { display: grid; place-items: center; width: 23px; height: 23px; border: 1px solid var(--border); border-radius: 5px; object-fit: cover; }
+  .item-background-chip-default { color: var(--text-dim); font-size: 8px; }
+  .item-background-popover { position: absolute; inset: auto 0 auto auto; top: calc(100% + 8px); z-index: 15; display: grid; gap: 12px; width: min(360px, calc(100vw - 32px)); max-height: min(70vh, 520px); margin: 0; padding: 14px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel); color: var(--text); box-shadow: var(--shadow-soft); }
+  .item-background-popover-head, .item-background-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .item-background-popover-head strong, .item-background-media > strong { color: var(--text); font-size: 12px; }
+  .item-background-hint { margin: -6px 0 0; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
+  .item-background-drop { padding: 12px; border: 1px dashed var(--border); border-radius: var(--radius-md); color: var(--text-dim); font-size: 11px; text-align: center; }
+  .item-background-drop.native-file-drop-target { border-color: var(--accent); background: var(--semantic-live-bg); }
+  .item-background-swatches { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+  .item-background-swatches .swatch { width: 26px; height: 26px; border-radius: 6px; }
+  .item-background-media { display: grid; gap: 7px; }
+  .item-background-media-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; max-height: 148px; overflow: auto; }
+  .item-background-media-choice { display: grid; gap: 4px; min-width: 0; padding: 5px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-2); color: var(--text); text-align: left; font-size: 9px; cursor: pointer; }
+  .item-background-media-choice:hover { border-color: var(--accent); }
+  .item-background-media-choice img { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 3px; object-fit: cover; }
+  .item-background-media-choice span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item-background-scope { display: grid; gap: 5px; color: var(--text-dim); font-size: 10px; }
+  .item-background-scope select { width: 100%; padding: 7px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel-2); color: var(--text); }
+  .inherited-background-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; margin: 6px 0 8px; padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); color: var(--text); text-align: left; cursor: pointer; }
+  .inherited-background-option.active { border-color: var(--accent); background: var(--semantic-live-bg); }
+  .inherited-background-option small { color: var(--text-dim); font-size: 10px; }
   .slide-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -4538,6 +4820,21 @@
     background: #202627;
     border-color: #46514e;
   }
+
+  .grid-cell.pointer-drop-target,
+  .grid-cell.native-file-drop-target,
+  .slide-list li.native-file-drop-target,
+  .slide-list li.pointer-drop-target {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    background: rgba(79, 140, 255, 0.12);
+  }
+  .slide-grid.native-file-drop-active,
+  .slide-list.native-file-drop-active {
+    outline: 1.5px dashed var(--accent);
+    outline-offset: 2px;
+  }
+  :global(.pointer-dragging) { opacity: 0.55; }
   .grid-thumb {
     position: relative;
     aspect-ratio: 16 / 9;
@@ -5035,16 +5332,24 @@
     from { opacity: 0.6; }
     to { opacity: 1; }
   }
-  .song-entry[draggable="true"],
-  .scripture-entry[draggable="true"],
-  .browse-verse[draggable="true"],
-  .library-verse[draggable="true"] {
+  .song-entry,
+  .scripture-entry,
+  .browse-verse,
+  .library-verse,
+  .media-card,
+  .grid-cell,
+  .slide-list li {
     cursor: grab;
   }
-  .song-entry[draggable="true"]:active,
-  .scripture-entry[draggable="true"]:active,
-  .browse-verse[draggable="true"]:active,
-  .library-verse[draggable="true"]:active {
+  .grid-custom-background-badge { position: absolute; top: 7px; left: 7px; z-index: 2; padding: 4px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--text); font-size: 9px; font-weight: 750; letter-spacing: .04em; }
+  .grid-inherit-background { flex: 0 0 auto; padding: 4px 7px; font-size: 10px; white-space: nowrap; }
+  .song-entry:active,
+  .scripture-entry:active,
+  .browse-verse:active,
+  .library-verse:active,
+  .media-card:active,
+  .grid-cell:active,
+  .slide-list li:active {
     cursor: grabbing;
   }
 
@@ -5935,6 +6240,8 @@
   .media-filter button.active { border-color: var(--semantic-live-border); background: var(--semantic-live-bg); color: var(--text); }
   .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap: var(--space-3); margin: 0; padding: 0 0 var(--space-3); list-style: none; }
   .media-grid li { min-width: 0; }
+  .media-card-item { display: flex; flex-direction: column; gap: 6px; }
+  .media-card-background { align-self: flex-start; padding: 5px 8px; font-size: 10px; }
   .media-card { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel-2); color: var(--text); text-align: left; cursor: grab; }
   .media-card:hover { border-color: var(--accent); box-shadow: var(--shadow-soft); }
   .media-card:active { cursor: grabbing; }

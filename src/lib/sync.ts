@@ -8,6 +8,7 @@ import type {
   BibleInfo,
   ChapterVerse,
   ClientState,
+  CountdownView,
   DisplayInfo,
   Background,
   ExportReport,
@@ -34,6 +35,11 @@ import type {
 
 export function subscribeState(cb: (state: ClientState) => void): Promise<UnlistenFn> {
   return listen<ClientState>("state", (event) => cb(event.payload));
+}
+
+/** One-second countdown updates stay off the full `state` broadcast. */
+export function subscribeCountdown(cb: (countdown: CountdownView) => void): Promise<UnlistenFn> {
+  return listen<CountdownView>("countdown-tick", (event) => cb(event.payload));
 }
 
 export function subscribeLibrary(cb: (library: Library) => void): Promise<UnlistenFn> {
@@ -118,6 +124,14 @@ export function emitOutroDone(): void {
 export const api = {
   getState: () => invoke<ClientState>("get_state"),
 
+  getCountdown: () => invoke<CountdownView>("get_countdown"),
+  startCountdown: (minutes: number) => invoke<CountdownView>("start_countdown", { minutes }),
+  startCountdownToTime: (time: string) => invoke<CountdownView>("start_countdown_to_time", { time }),
+  pauseCountdown: () => invoke<CountdownView>("pause_countdown"),
+  resetCountdown: () => invoke<CountdownView>("reset_countdown"),
+  setCountdownOutputVisible: (visible: boolean) =>
+    invoke<CountdownView>("set_countdown_output_visible", { visible }),
+
   listPresets: () => invoke<import("./types").ServicePreset[]>("list_presets"),
   newProjectFromPreset: (presetId: string, title: string, aspect?: string, theme?: string, transition?: string) =>
     invoke<ClientState>("new_project_from_preset", { presetId, title, aspect, theme, transition }),
@@ -137,8 +151,8 @@ export const api = {
 
   newProject: () => invoke<ClientState>("new_project"),
 
-  addSlide: (title?: string, body?: string, name?: string, kind?: string) =>
-    invoke<ClientState>("add_slide", { title, body, name, kind }),
+  addSlide: (title?: string, body?: string, name?: string, kind?: string, itemId?: string) =>
+    invoke<ClientState>("add_slide", { title, body, name, kind, itemId }),
 
   updateSlide: (
     slideId: string,
@@ -272,6 +286,15 @@ export const api = {
 
   reorderSlides: (orderedIds: string[]) =>
     invoke<ClientState>("reorder_slides", { orderedIds }),
+
+  reorderItem: (itemId: string, newIndex: number) =>
+    invoke<ClientState>("reorder_item", { itemId, newIndex }),
+
+  deleteItem: (itemId: string) =>
+    invoke<ClientState>("delete_item", { itemId }),
+
+  renameItem: (itemId: string, name: string) =>
+    invoke<ClientState>("rename_item", { itemId, name }),
 
   listMidiDevices: () => invoke<MidiDeviceInfo[]>("list_midi_devices"),
 

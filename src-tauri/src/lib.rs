@@ -672,6 +672,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
+            commands::get_countdown,
+            commands::start_countdown,
+            commands::start_countdown_to_time,
+            commands::pause_countdown,
+            commands::reset_countdown,
+            commands::set_countdown_output_visible,
             commands::list_presets,
             commands::new_project_from_preset,
             commands::get_library,
@@ -708,6 +714,9 @@ pub fn run() {
             commands::delete_slide,
             commands::reorder_slide,
             commands::reorder_slides,
+            commands::reorder_item,
+            commands::delete_item,
+            commands::rename_item,
             commands::list_displays,
             commands::set_output_display,
             commands::toggle_output_fullscreen,

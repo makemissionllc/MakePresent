@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { api, emitOutroDone, emitRenderAck, subscribeExitOutro, subscribeState } from "../lib/sync";
-  import type { ClientState, Look, Slide } from "../lib/types";
+  import { api, emitOutroDone, emitRenderAck, subscribeCountdown, subscribeExitOutro, subscribeState } from "../lib/sync";
+  import type { ClientState, CountdownView, Look, Slide } from "../lib/types";
   import SlideRender from "./SlideRender.svelte";
 
   const FADE_MS = 400;
@@ -21,6 +21,7 @@
   // True while a crossfade is active — drives GPU layer hints.
   let crossfading = $state(false);
   let appState = $state<ClientState | null>(null);
+  let countdown = $state<CountdownView>({ active: false, running: false, remainingSeconds: 0, outputVisible: false, mode: null, targetTime: null });
   let timer: number | undefined;
   // Exit/outro animation (real Quit only): full-bleed video URL once the
   // backend emits `exit-outro`. Null = normal rendering. The backend's hard
@@ -28,6 +29,13 @@
   // the ack heartbeat below keeps firing while it plays, so the outro is
   // never misread as a frozen Output.
   let outroUrl = $state<string | null>(null);
+
+  function formatCountdown(seconds: number): string {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
 
   function playOutro(path: string): void {
     try {
@@ -124,6 +132,7 @@
 
   onMount(() => {
     let un: () => void = () => {};
+    let unCountdown: () => void = () => {};
     let unOutro: () => void = () => {};
     let ackTimer: number | undefined;
     // One-way ack: confirm each applied state + a slow heartbeat so a
@@ -135,6 +144,7 @@
         appState = s;
         ack();
       });
+      unCountdown = await subscribeCountdown((value) => (countdown = value));
       unOutro = await subscribeExitOutro((path) => playOutro(path));
       try {
         appState = await api.getState();
@@ -142,10 +152,16 @@
       } catch (e) {
         console.error("Failed to fetch initial appState", e);
       }
+      try {
+        countdown = await api.getCountdown();
+      } catch (e) {
+        console.error("Failed to fetch initial countdown", e);
+      }
     })();
     ackTimer = window.setInterval(ack, ACK_MS);
     return () => {
       un();
+      unCountdown();
       unOutro();
       window.clearTimeout(timer);
       if (ackTimer !== undefined) window.clearInterval(ackTimer);
@@ -213,6 +229,13 @@
     </div>
   {/if}
 
+  {#if countdown.active && countdown.outputVisible}
+    <div class="countdown-overlay" aria-label={`Service countdown ${formatCountdown(countdown.remainingSeconds)}`}>
+      <span>{countdown.mode === "clock" && countdown.targetTime ? `UNTIL ${countdown.targetTime}` : "COUNTDOWN"}</span>
+      <strong>{formatCountdown(countdown.remainingSeconds)}</strong>
+    </div>
+  {/if}
+
   {#if onDeck && onDeck.background.type === "video"}
     <video
       class="preloader"
@@ -273,6 +296,28 @@
     isolation: isolate;
     contain: layout style;
   }
+
+  .countdown-overlay {
+    position: absolute;
+    right: clamp(18px, 3vw, 56px);
+    bottom: clamp(18px, 3vh, 48px);
+    z-index: 3;
+    display: grid;
+    gap: 0.3em;
+    min-width: 150px;
+    padding: clamp(10px, 1.2vw, 22px) clamp(14px, 1.6vw, 28px);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 12px;
+    background: rgba(15, 18, 20, 0.76);
+    color: #fff;
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    pointer-events: none;
+    backdrop-filter: blur(8px);
+  }
+  .countdown-overlay span { color: rgba(255, 255, 255, 0.78); font: 700 clamp(9px, 1vmin, 14px)/1.2 var(--font-body); letter-spacing: 0.14em; }
+  .countdown-overlay strong { font-size: clamp(1.8rem, 4.5vmin, 4rem); line-height: 1; }
 
   .frame,
   .offline {

@@ -11,6 +11,99 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
+
+/// The timer view is sent only through the lightweight `countdown-tick` event,
+/// never through the full project `state` broadcast.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CountdownView {
+    pub active: bool,
+    pub running: bool,
+    pub remaining_seconds: u64,
+    pub output_visible: bool,
+    pub mode: Option<String>,
+    pub target_time: Option<String>,
+}
+
+/// Runtime-only timer data. `Instant` is monotonic and this structure is never
+/// serialized or included in a project/settings file.
+#[derive(Debug, Default)]
+pub struct CountdownState {
+    pub active: bool,
+    pub configured: Duration,
+    pub remaining: Duration,
+    pub deadline: Option<Instant>,
+    pub output_visible: bool,
+    pub mode: Option<String>,
+    pub target_time: Option<String>,
+}
+
+impl CountdownState {
+    pub fn view_at(&self, now: Instant) -> CountdownView {
+        let remaining = self
+            .deadline
+            .map(|deadline| deadline.saturating_duration_since(now))
+            .unwrap_or(self.remaining);
+        CountdownView {
+            active: self.active,
+            running: self.deadline.is_some(),
+            remaining_seconds: remaining
+                .as_secs()
+                .saturating_add(u64::from(remaining.subsec_nanos() > 0)),
+            output_visible: self.output_visible,
+            mode: self.mode.clone(),
+            target_time: self.target_time.clone(),
+        }
+    }
+
+    pub fn start_duration(&mut self, duration: Duration, now: Instant) {
+        self.active = true;
+        self.configured = duration;
+        self.remaining = duration;
+        self.deadline = Some(now + duration);
+        self.mode = Some("duration".to_string());
+        self.target_time = None;
+    }
+
+    pub fn start_to_time(&mut self, duration: Duration, time: String, now: Instant) {
+        self.active = true;
+        self.configured = duration;
+        self.remaining = duration;
+        self.deadline = Some(now + duration);
+        self.mode = Some("clock".to_string());
+        self.target_time = Some(time);
+    }
+
+    pub fn pause_at(&mut self, now: Instant) {
+        if let Some(deadline) = self.deadline.take() {
+            self.remaining = deadline.saturating_duration_since(now);
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.deadline = None;
+        if self.mode.as_deref() == Some("clock") {
+            self.active = false;
+            self.remaining = Duration::ZERO;
+            self.configured = Duration::ZERO;
+            self.mode = None;
+            self.target_time = None;
+        } else if self.configured > Duration::ZERO {
+            self.active = true;
+            self.remaining = self.configured;
+        } else {
+            self.active = false;
+            self.remaining = Duration::ZERO;
+            self.mode = None;
+            self.target_time = None;
+        }
+    }
+
+    pub fn view(&self) -> CountdownView {
+        self.view_at(Instant::now())
+    }
+}
 
 /// The single source of truth for the whole application, managed by Tauri.
 pub struct AppState {
@@ -41,6 +134,10 @@ pub struct AppState {
     /// slide changes (or is cleared) the generation is bumped so any previously
     /// spawned timer thread can detect it has been cancelled.
     pub auto_advance_gen: AtomicU64,
+    /// Runtime-only service countdown, intentionally not persisted.
+    pub countdown: Mutex<CountdownState>,
+    /// Cancels the pulse thread when the countdown is paused, reset, or restarted.
+    pub countdown_gen: AtomicU64,
     /// Targeted stage-only message (nursery alerts, countdowns, operator notes).
     /// Separate from `Project.live` — never affects Output. `None` = no banner.
     pub stage_message: RwLock<Option<String>>,
@@ -77,6 +174,8 @@ impl Default for AppState {
             osc: OscListener::default(),
             network: NetworkServer::default(),
             auto_advance_gen: AtomicU64::new(0),
+            countdown: Mutex::new(CountdownState::default()),
+            countdown_gen: AtomicU64::new(0),
             stage_message: RwLock::new(None),
             stage_message_gen: AtomicU64::new(0),
             overlay: RwLock::new(None),
@@ -119,6 +218,14 @@ impl AppState {
 
     pub fn current_auto_advance_gen(&self) -> u64 {
         self.auto_advance_gen.load(Ordering::SeqCst)
+    }
+
+    pub fn bump_countdown(&self) -> u64 {
+        self.countdown_gen.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    pub fn current_countdown_gen(&self) -> u64 {
+        self.countdown_gen.load(Ordering::SeqCst)
     }
 
     pub fn bump_stage_message(&self) -> u64 {
@@ -164,5 +271,38 @@ mod tests {
         assert!(u.output.is_some());
         assert!(u.stage.is_some());
         assert_eq!(u.stage.as_ref().unwrap().live_id, None);
+    }
+
+    #[test]
+    fn countdown_pause_and_reset_preserve_duration() {
+        let now = Instant::now();
+        let mut countdown = CountdownState::default();
+        countdown.start_duration(Duration::from_secs(120), now);
+        assert!(countdown.view_at(now).running);
+        assert_eq!(countdown.view_at(now).remaining_seconds, 120);
+
+        countdown.pause_at(now + Duration::from_secs(31));
+        let paused = countdown.view_at(now + Duration::from_secs(31));
+        assert!(!paused.running);
+        assert_eq!(paused.remaining_seconds, 89);
+
+        countdown.reset();
+        let reset = countdown.view_at(now + Duration::from_secs(31));
+        assert!(reset.active);
+        assert!(!reset.running);
+        assert_eq!(reset.remaining_seconds, 120);
+    }
+
+    #[test]
+    fn clock_countdown_reset_clears_clock_target() {
+        let now = Instant::now();
+        let mut countdown = CountdownState::default();
+        countdown.start_to_time(Duration::from_secs(300), "18:00".into(), now);
+        assert_eq!(countdown.view_at(now).target_time.as_deref(), Some("18:00"));
+        countdown.reset();
+        let reset = countdown.view_at(now);
+        assert!(!reset.active);
+        assert_eq!(reset.mode, None);
+        assert_eq!(reset.remaining_seconds, 0);
     }
 }

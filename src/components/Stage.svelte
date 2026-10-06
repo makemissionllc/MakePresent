@@ -1,14 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
-  import { api, emitOutroDone, emitRenderAck, subscribeExitOutro, subscribeState } from "../lib/sync";
-  import type { ClientState, Look } from "../lib/types";
+  import { api, emitOutroDone, emitRenderAck, subscribeCountdown, subscribeExitOutro, subscribeState } from "../lib/sync";
+  import type { ClientState, CountdownView, Look } from "../lib/types";
   import { fitText } from "../lib/fitText";
   import SlideRender from "./SlideRender.svelte";
   import { stripChords } from "../lib/chords";
 
   let appState = $state<ClientState | null>(null);
   let currentTime = $state("--:--:--");
+  let countdown = $state<CountdownView>({ active: false, running: false, remainingSeconds: 0, outputVisible: false, mode: null, targetTime: null });
   // Exit/outro animation (real Quit only): same contract as Output — full
   // bleed here covers the current/next/clock layout for the stage team.
   let outroUrl = $state<string | null>(null);
@@ -26,6 +27,13 @@
       Stage renderer is alive and applied state, so the Editor can warn on a
       silent freeze instead of only noticing at the screen. */
   const ACK_MS = 5000;
+
+  function formatCountdown(seconds: number): string {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
 
   const current = $derived(appState?.current ?? null);
   const next = $derived(appState?.next ?? null);
@@ -47,6 +55,7 @@
 
   onMount(() => {
     let un: () => void = () => {};
+    let unCountdown: () => void = () => {};
     let unOutro: () => void = () => {};
     let clock: number | undefined;
     let ackTimer: number | undefined;
@@ -61,12 +70,18 @@
         appState = s;
         ack();
       });
+      unCountdown = await subscribeCountdown((timer) => (countdown = timer));
       unOutro = await subscribeExitOutro((path) => playOutro(path));
       try {
         appState = await api.getState();
         ack();
       } catch (e) {
         console.error("Failed to fetch initial appState", e);
+      }
+      try {
+        countdown = await api.getCountdown();
+      } catch (e) {
+        console.error("Failed to fetch initial countdown", e);
       }
     })();
     tick();
@@ -75,6 +90,7 @@
 
     return () => {
       un();
+      unCountdown();
       unOutro();
       if (clock !== undefined) window.clearInterval(clock);
       if (ackTimer !== undefined) window.clearInterval(ackTimer);
@@ -109,6 +125,13 @@
         <p class="placeholder">Nothing queued</p>
       {/if}
     </div>
+    {#if countdown.active}
+      <div class="service-countdown" aria-label={`Service countdown ${formatCountdown(countdown.remainingSeconds)}`}>
+        <span>{countdown.mode === "clock" && countdown.targetTime ? `UNTIL ${countdown.targetTime}` : "COUNTDOWN"}</span>
+        <strong>{formatCountdown(countdown.remainingSeconds)}</strong>
+        {#if !countdown.running}<small>{countdown.remainingSeconds === 0 ? "Time reached" : "Paused"}</small>{/if}
+      </div>
+    {/if}
     <div class="clock">{currentTime}</div>
   </aside>
 
@@ -241,6 +264,20 @@
     text-align: left;
     color: #ffffff;
   }
+
+  .service-countdown {
+    display: grid;
+    gap: 0.4vh;
+    padding: 1.2vh 1.2vw;
+    border: 1px solid rgba(129, 170, 149, 0.35);
+    border-radius: 10px;
+    background: rgba(129, 170, 149, 0.1);
+    color: #e8edeb;
+    font-variant-numeric: tabular-nums;
+  }
+  .service-countdown span { color: #9aa6a2; font-size: clamp(9px, 1.1vmin, 13px); font-weight: 700; letter-spacing: 0.14em; }
+  .service-countdown strong { font-family: var(--font-display); font-size: clamp(1.6rem, 4.2vmin, 3.2rem); line-height: 1.1; }
+  .service-countdown small { color: #9aa6a2; font-size: clamp(10px, 1.2vmin, 14px); }
 
   .placeholder {
     color: #555a68;

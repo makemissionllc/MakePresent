@@ -1004,3 +1004,21 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Browse:** `src/components/Editor.svelte` renders cached image/video thumbnails in a responsive Media grid, with All/Images/Videos filters, text search through existing `list_media`/`search_media`, and visible missing-preview and operation-error states.
 - **Place:** Card click appends; HTML drag to Playlist/grid uses `src/lib/mediaSlide.ts` to call the existing `add_slide` name-only → `update_slide` background pipeline and `reorder_slides` for placement. Backend state remains authoritative; no schema or dependency changes.
 - **Verify:** `npm run check` 0/0; `cargo check` succeeds with three pre-existing dead-code warnings; `cargo test` 68 passed, 2 hardware tests ignored; `npm run build` succeeds. Native thumbnail rendering and drag/drop were not visually verified in this environment.
+
+---
+
+## Changed (2026-10-06) — Phase 4 service countdown
+
+- **Backend `src-tauri/src/state.rs` / `commands.rs`:** runtime-only countdown data is owned by `AppState`, with monotonic duration timing, pause/reset, and a local wall-clock target. A generation token cancels stale pulse threads. Updates use the small `countdown-tick` event once per second; project snapshots and saved files are untouched.
+- **UI `src/components/Editor.svelte`, `Stage.svelte`, `Output.svelte`:** the Output panel exposes minute Start/Pause/Reset controls and an optional clock-time target. Stage shows an active timer; Output shows it only after the operator checks Show on Output. `src/lib/sync.ts` and `src/lib/types.ts` define the dedicated event and invoke contract.
+- **Tests/verify:** tests cover duration limits, next local clock occurrence, pause/resume state, and reset behavior. `npm run check` 0/0; `cargo check` succeeds with three pre-existing dead-code warnings; `cargo test` 72 passed, 2 hardware tests ignored; `npm run build` succeeds. Native Stage/Output rendering could not be visually verified here.
+
+---
+
+## Changed (2026-10-06) — Phase 3.5 playlist items
+
+- **Data contract:** `Slide.item_id` and `TemplateItem.item_id` are serde-defaulted. `item_name` is also defaulted so an item can be renamed without overwriting each slide's own label. `ClientState.items` is derived in Rust from flat `Project.slides`; there is no second playlist store or large state event. Startup assigns in-memory ids to legacy records, grouping only consecutive slides with the same `library_id`; no file is rewritten solely on load. Existing project, template, and library records still deserialize.
+- **Creation/templates:** each `add_song_to_playlist` call uses one fresh item id for its song slides, so repeated additions remain separate. Existing `add_slide` creates its own item by default and can append to the selected item for grid additions. Template saves retain grouping and names; loads create fresh item ids while preserving groups.
+- **Commands/live flow:** `reorder_item`, `delete_item`, and `rename_item` are registered and wrapped in `src/lib/sync.ts`. Reorder keeps all item slides contiguous and does not change live. Deleting an item removes all members, clears live when necessary, and cancels its auto-advance. Next/previous, `make_live`, triggers, Stage next, Output, and NDI continue over the unchanged flat sequence.
+- **Editor:** Playlist rows show kind, name, slide count, and live state; selecting a row changes only the grid, double-click takes its first slide live, and live updates follow the live item's row. The grid defaults to This item, supports All slides, numbers within item groups, and adds a slide to the selected item. Item dragging reorders whole groups; content drops land between items. Rename/delete controls are on each row. Existing section colors, thumbnail size, Songs/Scripture/Media bar, Ctrl+K, Output controls, and under-700px layout remain.
+- **Tests/verification:** Rust unit tests cover legacy grouping, distinct song additions, contiguous reordering/live preservation, live-item deletion, template grouping with fresh ids, and old records without ids. `npm run check` 0 errors/0 warnings; `cargo check` succeeds with two pre-existing dead-code warnings; `cargo test` 75 passed, 2 hardware-dependent tests ignored; `npm run build` succeeds. Native UI, drag/drop, and projection behavior were not visually verified in this headless run.

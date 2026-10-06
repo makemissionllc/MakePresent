@@ -52,6 +52,8 @@ export type SlideKind = "generic" | "song" | "scripture";
 
 export interface Slide {
   id: string;
+  itemId?: string | null;
+  itemName?: string | null;
   libraryId: string | null;
   librarySlideId: string | null;
   /** Display name for grid/playlist labels — distinct from on-screen `title`. None = follow title. */
@@ -244,6 +246,7 @@ export interface DefaultLooks {
 
 export interface ClientState {
   project: Project;
+  items: PlaylistItem[];
   notice: Notice | null;
   output: OutputView;
   stage: StageView;
@@ -270,6 +273,23 @@ export interface ClientState {
   stageMessage: string | null;
   overlay: Overlay | null;
   audio: AudioStateView;
+}
+
+/** Lightweight backend timer event; this is deliberately separate from ClientState. */
+export interface CountdownView {
+  active: boolean;
+  running: boolean;
+  remainingSeconds: number;
+  outputVisible: boolean;
+  mode: "duration" | "clock" | null;
+  targetTime: string | null;
+}
+
+export interface PlaylistItem {
+  id: string;
+  name: string;
+  kind: SlideKind;
+  slideIds: string[];
 }
 
 export interface StageNetworkInfo {

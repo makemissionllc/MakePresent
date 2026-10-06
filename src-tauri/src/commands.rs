@@ -1,13 +1,15 @@
 use crate::logging::{Level, LogEntry};
 use crate::project::{
-    is_first_run, now_iso, Background, BroadcastView, ClientState, Library, LibrarySlide,
+    derive_items, is_first_run, now_iso, remove_playlist_item, reorder_item_slides,
+    slides_from_template, Background, BroadcastView, ClientState, Library, LibrarySlide,
     BoxGeometry, LibrarySong, Look, OutputView, Overlay, PlaylistTemplate, Positioning, Project,
     Settings, Slide, SlideKind, StageView, TemplateItem, TextPosition, Transition, write_settings,
 };
 use crate::scripture::ScriptureMatch;
-use crate::state::AppState;
+use crate::state::{AppState, CountdownView};
 use crate::triggers::TriggerAction;
 use crate::windows::{self, DisplayInfo};
+use chrono::{Local, NaiveTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -40,8 +42,10 @@ fn snapshot(app: &AppHandle) -> ClientState {
         (cloned, current, next, on_deck, looks)
     };
 
+    let items = derive_items(&project_snapshot, &state.library.read().unwrap());
     let snap = ClientState {
         project: project_snapshot,
+        items,
         notice: state.notice.read().unwrap().clone(),
         output: OutputView {
             visible: windows::output_visible(app),
@@ -95,6 +99,133 @@ fn snapshot(app: &AppHandle) -> ClientState {
 
 fn log(app: &AppHandle, level: Level, message: &str) {
     app.state::<AppState>().logger.log(level, message);
+}
+
+fn emit_countdown(app: &AppHandle) -> CountdownView {
+    let state = app.state::<AppState>();
+    let countdown = state.countdown.lock().unwrap();
+    let view = countdown.view();
+    if let Err(err) = app.emit("countdown-tick", &view) {
+        log(app, Level::Warn, &format!("countdown: event delivery failed: {err}"));
+    }
+    drop(countdown);
+    view
+}
+
+fn schedule_countdown(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let gen = state.bump_countdown();
+    let app_clone = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        let state = app_clone.state::<AppState>();
+        if state.current_countdown_gen() != gen {
+            return;
+        }
+        let mut countdown = state.countdown.lock().unwrap();
+        if countdown
+            .deadline
+            .is_some_and(|deadline| deadline <= std::time::Instant::now())
+        {
+            countdown.remaining = Duration::ZERO;
+            countdown.deadline = None;
+        }
+        let view = countdown.view();
+        if let Err(err) = app_clone.emit("countdown-tick", &view) {
+            log(&app_clone, Level::Warn, &format!("countdown: event delivery failed: {err}"));
+        }
+        drop(countdown);
+        if !view.running {
+            return;
+        }
+    });
+}
+
+fn duration_for_minutes(minutes: u32) -> Result<Duration, String> {
+    if !(1..=1440).contains(&minutes) {
+        return Err("Countdown must be between 1 minute and 24 hours.".into());
+    }
+    Ok(Duration::from_secs(u64::from(minutes) * 60))
+}
+
+fn duration_until_local_time(
+    time: NaiveTime,
+    now: chrono::DateTime<Local>,
+) -> Result<Duration, String> {
+    let mut date = now.date_naive();
+    let mut target = Local.from_local_datetime(&date.and_time(time)).earliest();
+    if target.map_or(true, |target| target <= now) {
+        date = date
+            .checked_add_days(chrono::Days::new(1))
+            .ok_or_else(|| "Could not calculate the next clock time.".to_string())?;
+        target = Local.from_local_datetime(&date.and_time(time)).earliest();
+    }
+    let target = target.ok_or_else(|| "That clock time does not exist on the local clock.".to_string())?;
+    let duration = target
+        .signed_duration_since(now)
+        .to_std()
+        .map_err(|_| "Could not calculate time until the target.".to_string())?;
+    if duration.is_zero() || duration > Duration::from_secs(24 * 60 * 60) {
+        return Err("Choose a clock time within the next 24 hours.".into());
+    }
+    Ok(duration)
+}
+
+#[tauri::command]
+pub fn get_countdown(app: AppHandle) -> CountdownView {
+    app.state::<AppState>().countdown.lock().unwrap().view()
+}
+
+#[tauri::command]
+pub fn start_countdown(app: AppHandle, minutes: u32) -> Result<CountdownView, String> {
+    let duration = duration_for_minutes(minutes)?;
+    app.state::<AppState>().countdown.lock().unwrap()
+        .start_duration(duration, std::time::Instant::now());
+    schedule_countdown(&app);
+    let view = emit_countdown(&app);
+    log(&app, Level::Info, &format!("countdown: started for {minutes} minutes"));
+    Ok(view)
+}
+
+#[tauri::command]
+pub fn start_countdown_to_time(app: AppHandle, time: String) -> Result<CountdownView, String> {
+    let time = NaiveTime::parse_from_str(&time, "%H:%M")
+        .map_err(|_| "Enter a valid clock time in hours and minutes.".to_string())?;
+    let duration = duration_until_local_time(time, Local::now())?;
+    let time_label = time.format("%H:%M").to_string();
+    app.state::<AppState>().countdown.lock().unwrap()
+        .start_to_time(duration, time_label.clone(), std::time::Instant::now());
+    schedule_countdown(&app);
+    let view = emit_countdown(&app);
+    log(&app, Level::Info, &format!("countdown: started to local time {time_label}"));
+    Ok(view)
+}
+
+#[tauri::command]
+pub fn pause_countdown(app: AppHandle) -> CountdownView {
+    app.state::<AppState>().countdown.lock().unwrap()
+        .pause_at(std::time::Instant::now());
+    app.state::<AppState>().bump_countdown();
+    let view = emit_countdown(&app);
+    log(&app, Level::Info, "countdown: paused");
+    view
+}
+
+#[tauri::command]
+pub fn reset_countdown(app: AppHandle) -> CountdownView {
+    app.state::<AppState>().countdown.lock().unwrap().reset();
+    app.state::<AppState>().bump_countdown();
+    let view = emit_countdown(&app);
+    log(&app, Level::Info, "countdown: reset");
+    view
+}
+
+#[tauri::command]
+pub fn set_countdown_output_visible(app: AppHandle, visible: bool) -> CountdownView {
+    app.state::<AppState>().countdown.lock().unwrap().output_visible = visible;
+    let view = emit_countdown(&app);
+    log(&app, Level::Info, &format!("countdown: Output display {}", if visible { "enabled" } else { "disabled" }));
+    view
 }
 
 /// Snapshot the current state and broadcast it to every window.
@@ -433,6 +564,7 @@ pub fn add_song_to_playlist(app: AppHandle, song_id: String) -> Result<ClientSta
         .collect();
 
     mutate(&app, |project| {
+        let item_id = Uuid::new_v4().to_string();
         for slide in &flattened {
             // One-time copy of default Look background for Song kind, if configured; otherwise use song's own background
             let bg = {
@@ -455,6 +587,8 @@ pub fn add_song_to_playlist(app: AppHandle, song_id: String) -> Result<ClientSta
             .unwrap_or_else(|| song.default_background.clone());
             project.slides.push(Slide {
                 id: Uuid::new_v4().to_string(),
+                item_id: Some(item_id.clone()),
+                item_name: Some(song.title.clone()),
                 library_id: Some(song.id.clone()),
                 library_slide_id: Some(slide.id.clone()),
                 name: Some(slide.title.clone()),
@@ -1258,6 +1392,8 @@ pub fn save_template(app: AppHandle, name: String) -> Result<Vec<PlaylistTemplat
             .slides
             .iter()
             .map(|s| TemplateItem {
+                item_id: s.item_id.clone(),
+                item_name: s.item_name.clone(),
                 name: s.name.clone(),
                 kind: s.kind,
                 title: s.title.clone(),
@@ -1278,6 +1414,8 @@ pub fn save_template(app: AppHandle, name: String) -> Result<Vec<PlaylistTemplat
             .slides
             .iter()
             .map(|s| TemplateItem {
+                item_id: s.item_id.clone(),
+                item_name: s.item_name.clone(),
                 name: s.name.clone(),
                 kind: s.kind,
                 title: s.title.clone(),
@@ -1313,21 +1451,7 @@ pub fn load_template(app: AppHandle, template_id: String) -> Result<ClientState,
         .find(|t| t.id == template_id)
         .cloned()
         .ok_or_else(|| format!("template {template_id} not found"))?;
-    let new_slides: Vec<Slide> = tmpl
-        .items
-        .iter()
-        .map(|it| Slide {
-            id: Uuid::new_v4().to_string(),
-            library_id: it.library_id.clone(),
-            library_slide_id: it.library_slide_id.clone(),
-            name: it.name.clone().or_else(|| Some(it.title.clone())),
-            kind: it.kind,
-            title: it.title.clone(),
-            body: it.body.clone(),
-            background: it.background.clone(),
-            auto_advance_secs: it.auto_advance_secs,
-        })
-        .collect();
+    let new_slides = slides_from_template(&tmpl.items);
     let count = new_slides.len();
     let name = tmpl.name.clone();
     // Loading a template clears the live slide, so cancel any auto-advance.
@@ -1385,13 +1509,23 @@ pub fn add_slide(
     body: Option<String>,
     name: Option<String>,
     kind: Option<SlideKind>,
+    item_id: Option<String>,
 ) -> Result<ClientState, String> {
     let kind_val = kind.unwrap_or(SlideKind::Generic);
     let title_val = title.unwrap_or_else(|| "New Slide".to_string());
     let name_val = name.or_else(|| Some(title_val.clone()));
+    let inherited_item_name = if let Some(id) = item_id.as_deref() {
+        let state = app.state::<AppState>();
+        let project = state.project.read().unwrap();
+        let existing = project.slides.iter().find(|s| s.item_id.as_deref() == Some(id))
+            .ok_or_else(|| format!("playlist item {id} not found"))?;
+        Some(existing.item_name.clone().unwrap_or_else(|| existing.display_name()))
+    } else { None };
     let bg = background_for_kind(&app, &kind_val);
     let slide = Slide {
         id: Uuid::new_v4().to_string(),
+        item_id: Some(item_id.unwrap_or_else(|| Uuid::new_v4().to_string())),
+        item_name: inherited_item_name.or_else(|| name_val.clone()).or_else(|| Some(title_val.clone())),
         library_id: None,
         library_slide_id: None,
         name: name_val,
@@ -1567,6 +1701,42 @@ pub fn reorder_slides(app: AppHandle, ordered_ids: Vec<String>) -> Result<Client
     .map(|s| {
         log(&app, Level::Info, "playlist: reordered slides");
         s
+    })
+}
+
+#[tauri::command]
+pub fn reorder_item(app: AppHandle, item_id: String, new_index: usize) -> Result<ClientState, String> {
+    mutate(&app, |project| {
+        project.slides = reorder_item_slides(std::mem::take(&mut project.slides), &item_id, new_index)?;
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn delete_item(app: AppHandle, item_id: String) -> Result<ClientState, String> {
+    let live_is_item = {
+        let state = app.state::<AppState>();
+        let project = state.project.read().unwrap();
+        let live = project.live.as_deref();
+        project.slides.iter().any(|s| s.item_id.as_deref() == Some(&item_id) && live == Some(s.id.as_str()))
+    };
+    let snap = mutate(&app, |project| { remove_playlist_item(project, &item_id)?; Ok(()) })?;
+    if live_is_item { cancel_auto_advance(&app); }
+    Ok(snap)
+}
+
+#[tauri::command]
+pub fn rename_item(app: AppHandle, item_id: String, name: String) -> Result<ClientState, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() { return Err("playlist item name must not be empty".to_string()); }
+    if name.len() > 120 { return Err("playlist item name must be 120 characters or fewer".to_string()); }
+    mutate(&app, |project| {
+        let mut found = false;
+        for slide in &mut project.slides {
+            if slide.item_id.as_deref() == Some(&item_id) { slide.item_name = Some(name.clone()); found = true; }
+        }
+        if !found { return Err(format!("playlist item {item_id} not found")); }
+        Ok(())
     })
 }
 
@@ -3175,6 +3345,27 @@ pub fn set_stage_network_pin(app: AppHandle, pin: String) -> Result<ClientState,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn countdown_duration_enforces_minutes_range() {
+        assert_eq!(duration_for_minutes(10).unwrap(), Duration::from_secs(600));
+        assert!(duration_for_minutes(0).is_err());
+        assert!(duration_for_minutes(1441).is_err());
+    }
+
+    #[test]
+    fn clock_countdown_chooses_next_local_occurrence() {
+        let now = Local::now();
+        let future_time = (now + chrono::Duration::minutes(10)).time();
+        let until_future = duration_until_local_time(future_time, now).unwrap();
+        assert!(until_future >= Duration::from_secs(8 * 60));
+        assert!(until_future <= Duration::from_secs(11 * 60));
+
+        let past_time = (now - chrono::Duration::minutes(2)).time();
+        let until_next_day = duration_until_local_time(past_time, now).unwrap();
+        assert!(until_next_day > Duration::from_secs(20 * 60 * 60));
+        assert!(until_next_day <= Duration::from_secs(24 * 60 * 60));
+    }
 
     fn settings() -> Settings {
         Settings {

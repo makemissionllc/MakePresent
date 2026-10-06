@@ -85,6 +85,12 @@ pub enum SlideKind {
 #[serde(rename_all = "camelCase")]
 pub struct Slide {
     pub id: String,
+    /// Rust-owned playlist grouping identity. Missing on legacy projects.
+    #[serde(default)]
+    pub item_id: Option<String>,
+    /// Shared item label so renaming does not overwrite slide labels.
+    #[serde(default)]
+    pub item_name: Option<String>,
     /// When this playlist slide was added from the library, the source song id.
     #[serde(default)]
     pub library_id: Option<String>,
@@ -445,6 +451,8 @@ impl Project {
             name: name.to_string(),
             slides: vec![Slide {
                 id: Uuid::new_v4().to_string(),
+                item_id: Some(Uuid::new_v4().to_string()),
+                item_name: Some("Welcome to MakrStudio".to_string()),
                 library_id: None,
                 library_slide_id: None,
                 name: Some("Welcome to MakrStudio".to_string()),
@@ -482,6 +490,8 @@ impl Project {
                 .iter()
                 .map(|it| Slide {
                     id: Uuid::new_v4().to_string(),
+                    item_id: Some(Uuid::new_v4().to_string()),
+                    item_name: Some(it.title.clone()),
                     library_id: None,
                     library_slide_id: None,
                     name: Some(it.title.clone()),
@@ -642,6 +652,8 @@ pub struct BroadcastView {
 #[serde(rename_all = "camelCase")]
 pub struct ClientState {
     pub project: Project,
+    /// Derived from the flat slide order; this is not separately persisted.
+    pub items: Vec<PlaylistItem>,
     pub notice: Option<Notice>,
     pub output: OutputView,
     pub stage: StageView,
@@ -691,6 +703,107 @@ pub struct ClientState {
     pub overlay: Option<Overlay>,
     /// Single-track backing audio state (rodio on cpal) — ONE track at a time, not tied to slides.
     pub audio: AudioStateView,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistItem {
+    pub id: String,
+    pub name: String,
+    pub kind: SlideKind,
+    pub slide_ids: Vec<String>,
+}
+
+pub fn ensure_item_ids(slides: &mut [Slide]) {
+    let mut previous_library: Option<String> = None;
+    let mut previous_id: Option<String> = None;
+    for slide in slides {
+        if slide.item_id.is_some() {
+            previous_library = slide.library_id.clone();
+            previous_id = slide.item_id.clone();
+            continue;
+        }
+        if let Some(library_id) = slide.library_id.as_ref() {
+            if previous_library.as_ref() == Some(library_id) {
+                slide.item_id = previous_id.clone();
+            } else {
+                slide.item_id = Some(Uuid::new_v4().to_string());
+            }
+            previous_library = Some(library_id.clone());
+        } else {
+            slide.item_id = Some(Uuid::new_v4().to_string());
+            previous_library = None;
+        }
+        previous_id = slide.item_id.clone();
+    }
+}
+
+pub fn derive_items(project: &Project, library: &Library) -> Vec<PlaylistItem> {
+    let mut items: Vec<PlaylistItem> = Vec::new();
+    for slide in &project.slides {
+        let id = slide.item_id.clone().unwrap_or_else(|| slide.id.clone());
+        if let Some(item) = items.last_mut().filter(|item| item.id == id) {
+            item.slide_ids.push(slide.id.clone());
+            continue;
+        }
+        let name = slide.item_name.clone().or_else(|| slide.library_id.as_ref()
+            .and_then(|song_id| library.songs.iter().find(|song| &song.id == song_id))
+            .map(|song| song.title.clone())).unwrap_or_else(|| slide.display_name());
+        items.push(PlaylistItem { id, name, kind: slide.kind, slide_ids: vec![slide.id.clone()] });
+    }
+    items
+}
+
+pub fn reorder_item_slides(slides: Vec<Slide>, item_id: &str, new_index: usize) -> Result<Vec<Slide>, String> {
+    let mut groups: Vec<(String, Vec<Slide>)> = Vec::new();
+    for slide in slides {
+        let id = slide.item_id.clone().unwrap_or_else(|| slide.id.clone());
+        if let Some((_, members)) = groups.last_mut().filter(|(last, _)| last == &id) {
+            members.push(slide);
+        } else { groups.push((id, vec![slide])); }
+    }
+    let old = groups.iter().position(|(id, _)| id == item_id)
+        .ok_or_else(|| format!("playlist item {item_id} not found"))?;
+    let item = groups.remove(old);
+    groups.insert(new_index.min(groups.len()), item);
+    Ok(groups.into_iter().flat_map(|(_, members)| members).collect())
+}
+
+pub fn remove_playlist_item(project: &mut Project, item_id: &str) -> Result<bool, String> {
+    if !project.slides.iter().any(|s| s.item_id.as_deref() == Some(item_id)) {
+        return Err(format!("playlist item {item_id} not found"));
+    }
+    let removed: std::collections::HashSet<String> = project.slides.iter()
+        .filter(|s| s.item_id.as_deref() == Some(item_id)).map(|s| s.id.clone()).collect();
+    let removed_live = project.live.as_ref().is_some_and(|id| removed.contains(id));
+    project.slides.retain(|s| !removed.contains(&s.id));
+    if removed_live { project.live = None; }
+    if project.selected.as_ref().is_some_and(|id| removed.contains(id)) {
+        project.selected = project.slides.first().map(|s| s.id.clone());
+    }
+    Ok(removed_live)
+}
+
+pub fn slides_from_template(items: &[TemplateItem]) -> Vec<Slide> {
+    let mut groups = HashMap::<String, String>::new();
+    let mut previous_legacy: Option<(String, String)> = None;
+    items.iter().map(|it| {
+        let item_id = if let Some(old) = &it.item_id {
+            previous_legacy = None;
+            groups.entry(old.clone()).or_insert_with(|| Uuid::new_v4().to_string()).clone()
+        } else if let Some(lib) = &it.library_id {
+            if let Some((prev_lib, id)) = &previous_legacy {
+                if prev_lib == lib { id.clone() } else {
+                    let id = Uuid::new_v4().to_string(); previous_legacy = Some((lib.clone(), id.clone())); id
+                }
+            } else { let id = Uuid::new_v4().to_string(); previous_legacy = Some((lib.clone(), id.clone())); id }
+        } else { previous_legacy = None; Uuid::new_v4().to_string() };
+        Slide { id: Uuid::new_v4().to_string(), item_id: Some(item_id), item_name: it.item_name.clone(),
+            library_id: it.library_id.clone(), library_slide_id: it.library_slide_id.clone(),
+            name: it.name.clone().or_else(|| Some(it.title.clone())), kind: it.kind,
+            title: it.title.clone(), body: it.body.clone(), background: it.background.clone(),
+            auto_advance_secs: it.auto_advance_secs }
+    }).collect()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -953,6 +1066,10 @@ impl Default for Library {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateItem {
+    #[serde(default)]
+    pub item_id: Option<String>,
+    #[serde(default)]
+    pub item_name: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
@@ -1320,6 +1437,97 @@ fn seed_library() -> Library {
 mod tests {
     use super::*;
 
+    fn test_slide(id: &str, item_id: Option<&str>, library_id: Option<&str>) -> Slide {
+        Slide {
+            id: id.to_string(),
+            item_id: item_id.map(str::to_string),
+            item_name: None,
+            library_id: library_id.map(str::to_string),
+            library_slide_id: None,
+            name: Some(id.to_string()),
+            kind: if library_id.is_some() { SlideKind::Song } else { SlideKind::Generic },
+            title: id.to_string(),
+            body: String::new(),
+            background: Background::Solid { color: "#000000".into() },
+            auto_advance_secs: None,
+        }
+    }
+
+    #[test]
+    fn legacy_project_groups_consecutive_song_slides_in_memory() {
+        let mut project = Project::test();
+        project.slides = vec![
+            test_slide("a1", None, Some("song-a")),
+            test_slide("a2", None, Some("song-a")),
+            test_slide("b1", None, Some("song-b")),
+            test_slide("custom", None, None),
+        ];
+        let mut json = serde_json::to_value(&project).unwrap();
+        for slide in json["slides"].as_array_mut().unwrap() {
+            slide.as_object_mut().unwrap().remove("itemId");
+            slide.as_object_mut().unwrap().remove("itemName");
+        }
+        let mut loaded: Project = serde_json::from_value(json).unwrap();
+        ensure_item_ids(&mut loaded.slides);
+        let ids: Vec<_> = loaded.slides.iter().map(|slide| slide.item_id.clone().unwrap()).collect();
+        assert_eq!(ids[0], ids[1]);
+        assert_ne!(ids[1], ids[2]);
+        assert_ne!(ids[2], ids[3]);
+        let library = Library::default();
+        let items = derive_items(&loaded, &library);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].slide_ids, vec!["a1", "a2"]);
+    }
+
+    #[test]
+    fn item_identity_keeps_repeated_songs_separate_and_reorder_contiguous() {
+        let slides = vec![
+            test_slide("a1", Some("first-song"), Some("song")),
+            test_slide("a2", Some("first-song"), Some("song")),
+            test_slide("b1", Some("middle"), None),
+            test_slide("a3", Some("second-song"), Some("song")),
+            test_slide("a4", Some("second-song"), Some("song")),
+        ];
+        let reordered = reorder_item_slides(slides, "second-song", 0).unwrap();
+        let ids: Vec<_> = reordered.iter().map(|slide| slide.id.as_str()).collect();
+        assert_eq!(ids, vec!["a3", "a4", "a1", "a2", "b1"]);
+        assert_eq!(reordered[0].item_id, reordered[1].item_id);
+    }
+
+    #[test]
+    fn deleting_live_item_clears_live_slide() {
+        let mut project = Project::test();
+        project.slides = vec![test_slide("one", Some("item"), None), test_slide("two", Some("item"), None)];
+        project.live = Some("two".into());
+        assert!(remove_playlist_item(&mut project, "item").unwrap());
+        assert!(project.live.is_none());
+        assert!(project.slides.is_empty());
+    }
+
+    #[test]
+    fn template_load_assigns_fresh_ids_and_preserves_grouping() {
+        let mut project = Project::test();
+        project.slides = vec![test_slide("one", Some("song-item"), Some("song")), test_slide("two", Some("song-item"), Some("song")), test_slide("custom", Some("custom-item"), None)];
+        let template_items: Vec<TemplateItem> = project.slides.iter().map(|slide| TemplateItem {
+            item_id: slide.item_id.clone(), item_name: Some("Saved item".into()),
+            name: slide.name.clone(), kind: slide.kind, title: slide.title.clone(), body: slide.body.clone(),
+            background: slide.background.clone(), library_id: slide.library_id.clone(),
+            library_slide_id: slide.library_slide_id.clone(), auto_advance_secs: slide.auto_advance_secs,
+        }).collect();
+        let loaded = slides_from_template(&template_items);
+        assert_eq!(loaded[0].item_id, loaded[1].item_id);
+        assert_ne!(loaded[1].item_id, loaded[2].item_id);
+        assert_ne!(loaded[0].item_id, project.slides[0].item_id);
+    }
+
+    #[test]
+    fn old_template_item_without_item_fields_still_loads() {
+        let old = r##"{"title":"Legacy","body":"Text","background":{"type":"solid","color":"#000000"}}"##;
+        let item: TemplateItem = serde_json::from_str(old).unwrap();
+        assert!(item.item_id.is_none());
+        assert!(item.item_name.is_none());
+    }
+
     #[test]
     fn preset_creation_preserves_slide_kinds_and_layout_choices() {
         let preset = default_presets()
@@ -1514,6 +1722,7 @@ pub fn recover_or_seed(data_dir: &Path) -> (Project, Option<Notice>) {
         Project::test()
     });
     project.ensure_default_looks();
+    ensure_item_ids(&mut project.slides);
 
     let recovered = recovering || loaded_from_snapshot;
     let notice = if recovered {

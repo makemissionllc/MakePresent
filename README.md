@@ -1289,3 +1289,20 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **Media tab:** `src/components/Editor.svelte` shows imported images and videos in a responsive thumbnail grid with All/Images/Videos filters. Cards use existing `list_media`/`search_media` results, show an explicit fallback when a thumbnail cannot load, and keep search/load/add failures visible inline.
 - **Add or place:** Clicking a card appends a media slide; dragging it to a Playlist or grid position places it there. `src/lib/mediaSlide.ts` reuses the name-only `add_slide`, `update_slide` background, and existing `reorder_slides` commands. No Rust schema, renderer logic, or dependencies changed.
 - **Verify:** `npm run check` 0 errors/0 warnings; `cargo check` passes with three pre-existing dead-code warnings; `cargo test` 68 passed, 2 hardware tests ignored; `npm run build` passes. Native thumbnail display and drag/drop behavior could not be visually verified here.
+
+---
+
+## Changed (2026-10-06) — Phase 4 service countdown
+
+- **Runtime timer:** `src-tauri/src/state.rs` stores the countdown in `AppState` only; `src-tauri/src/commands.rs` drives duration and local clock-time countdowns and sends one-second `countdown-tick` events. Timer updates do not enter the full `state` broadcast or any saved file.
+- **Views and controls:** `src/components/Editor.svelte` adds minutes, Start/Pause/Reset, an optional clock-time target, and a Show on Output toggle. `src/components/Stage.svelte` displays an active timer automatically; `src/components/Output.svelte` displays it only when enabled. Event wiring and command types are in `src/lib/sync.ts` and `src/lib/types.ts`.
+- **Verify:** `npm run check` 0 errors/0 warnings; `cargo check` succeeds with three pre-existing dead-code warnings; `cargo test` 72 passed, 2 hardware tests ignored; `npm run build` succeeds. Native multi-window timer rendering was not visually verified here.
+
+---
+
+## Changed (2026-10-06) — Phase 3.5 playlist items
+
+- **Backend:** `Slide.item_id` and `TemplateItem.item_id` (plus serde-defaulted `item_name` for item renames) preserve grouping. Rust derives `ClientState.items` from flat `Project.slides`; legacy consecutive slides from one library song group in memory, while every other legacy slide is its own item. New songs get one fresh id per addition; manual, scripture, and media slides each get a fresh id. Template loads generate fresh ids while keeping groups intact.
+- **Commands and live flow:** `reorder_item`, `delete_item`, and `rename_item` use the existing mutation/snapshot path. Reordering keeps an item's slides contiguous; deleting a live item clears live and cancels its auto-advance. Flat next/previous, `make_live`, triggers, Stage next, Output, and NDI remain unchanged.
+- **Editor:** Playlist rows show kind, name, slide count, and live state; selecting a row changes only the grid, while double-click takes its first slide live. Rows can be reordered, renamed, and deleted. The grid defaults to the selected item, offers This item/All slides, restarts numbering inside items, and adds slides to the selected item. Playlist drops place new items at item boundaries. Existing source bar, section colors, thumbnail size, search, Output controls, and responsive layout remain.
+- **Verify:** `npm run check` 0 errors/0 warnings; `cargo check` succeeds with two existing dead-code warnings; `cargo test` 75 passed, 2 hardware-dependent tests ignored; `npm run build` succeeds. Native UI interactions and projection behavior were not visually verified here.

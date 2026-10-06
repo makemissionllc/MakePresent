@@ -5,8 +5,8 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
-  import { api, subscribeAck, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, LyricsHit, MediaAsset, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide } from "../lib/types";
+  import { api, subscribeAck, subscribeCountdown, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
+  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, CountdownView, DisplayInfo, Library, LibrarySong, LyricsHit, MediaAsset, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide, PlaylistItem } from "../lib/types";
   import { isMedia, isLiveCamera } from "../lib/types";
   import { addCachedMediaSlide } from "../lib/mediaSlide";
   import SettingsPanel from "./SettingsPanel.svelte";
@@ -63,9 +63,20 @@
 
   let appState = $state<ClientState | null>(null);
   let selectedId = $state<string | null>(null);
+  let selectedItemId = $state<string | null>(null);
+  let observedLiveId: string | null | undefined = undefined;
+  let gridScope = $state<"item" | "all">("item");
+  let renamingItemId = $state<string | null>(null);
+  let renameDraft = $state("");
+  let draggedItemId = $state<string | null>(null);
+  let itemDropIndex = $state<number | null>(null);
   let displays = $state<DisplayInfo[] | null>(null);
   let savedLabel = $state<string>("Not saved");
   let errorMsg = $state<string | null>(null);
+  let countdown = $state<CountdownView>({ active: false, running: false, remainingSeconds: 0, outputVisible: false, mode: null, targetTime: null });
+  let countdownMinutes = $state("10");
+  let countdownTargetTime = $state("09:00");
+  let countdownError = $state<string | null>(null);
   let noticeDismissed = $state(false);
   let library = $state<Library | null>(null);
   let librarySearch = $state("");
@@ -393,6 +404,30 @@
   let centralView = $state<"slides" | "looks">("slides");
 
   const project = $derived(appState?.project ?? null);
+  // Older/stale native backends may still return a ClientState without the
+  // Phase 3.5 field. Keep the editor from crashing and explain the mismatch.
+  const items = $derived(Array.isArray(appState?.items) ? appState.items : []);
+  const selectedItem = $derived(items.find((item) => item.id === selectedItemId) ?? items[0] ?? null);
+  const selectedItemSlides = $derived(selectedItem ? selectedItem.slideIds.map((id) => project?.slides.find((s) => s.id === id)).filter((s): s is Slide => !!s) : []);
+  const gridSlides = $derived(gridScope === "all" ? (project?.slides ?? []) : selectedItemSlides);
+  const ITEM_STATE_ERROR = "Playlist item data is missing from the backend. Restart MakrStudio with the updated app build.";
+  $effect(() => {
+    if (appState && !Array.isArray(appState.items)) {
+      errorMsg = ITEM_STATE_ERROR;
+    } else if (errorMsg === ITEM_STATE_ERROR) {
+      errorMsg = null;
+    }
+  });
+  function itemIndexForSlidePosition(position: number): number {
+    let cursor = 0;
+    for (let i = 0; i < items.length; i++) {
+      const next = cursor + items[i].slideIds.length;
+      if (position <= cursor) return i;
+      if (position < next) return i + 1;
+      cursor = next;
+    }
+    return items.length;
+  }
   const notice = $derived(
     appState?.notice && !noticeDismissed ? appState.notice : null,
   );
@@ -440,6 +475,49 @@
     : -1);
   const canGoPrevious = $derived(liveSlideIndex > 0);
   const canGoNext = $derived(liveSlideIndex >= 0 && liveSlideIndex < (project?.slides.length ?? 0) - 1);
+
+  function formatCountdown(seconds: number): string {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  async function startServiceCountdown(): Promise<void> {
+    countdownError = null;
+    const minutes = Number(countdownMinutes);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+      countdownError = "Enter a duration from 1 to 1,440 minutes.";
+      return;
+    }
+    try { countdown = await api.startCountdown(minutes); }
+    catch (e) { countdownError = `Could not start countdown: ${String(e)}`; }
+  }
+
+  async function startClockCountdown(): Promise<void> {
+    countdownError = null;
+    try { countdown = await api.startCountdownToTime(countdownTargetTime); }
+    catch (e) { countdownError = `Could not start clock countdown: ${String(e)}`; }
+  }
+
+  async function pauseServiceCountdown(): Promise<void> {
+    countdownError = null;
+    try { countdown = await api.pauseCountdown(); }
+    catch (e) { countdownError = `Could not pause countdown: ${String(e)}`; }
+  }
+
+  async function resetServiceCountdown(): Promise<void> {
+    countdownError = null;
+    try { countdown = await api.resetCountdown(); }
+    catch (e) { countdownError = `Could not reset countdown: ${String(e)}`; }
+  }
+
+  async function setOutputCountdownVisible(event: Event): Promise<void> {
+    countdownError = null;
+    const visible = (event.currentTarget as HTMLInputElement).checked;
+    try { countdown = await api.setCountdownOutputVisible(visible); }
+    catch (e) { countdownError = `Could not change Output countdown visibility: ${String(e)}`; }
+  }
 
   // Stage preview (consistent treatment, straightforward)
   const stagePreviewSlide = $derived.by(() => {
@@ -489,9 +567,54 @@
     try {
       errorMsg = null;
       appState = await fn();
+      followLiveItem(appState);
     } catch (e) {
       errorMsg = String(e);
     }
+  }
+
+  function followLiveItem(state: ClientState | null): void {
+    const liveId = state?.project.live;
+    if (observedLiveId === undefined) { observedLiveId = liveId ?? null; return; }
+    if (liveId === observedLiveId) return;
+    observedLiveId = liveId ?? null;
+    if (!liveId) return;
+    const live = state.project.slides.find((s) => s.id === liveId);
+    if (live?.itemId) selectedItemId = live.itemId;
+  }
+
+  function selectItem(item: PlaylistItem): void {
+    selectedItemId = item.id;
+    selectedId = item.slideIds[0] ?? null;
+  }
+
+  function slideNumberWithinItem(slide: Slide): number {
+    const item = items.find((entry) => entry.slideIds.includes(slide.id));
+    return (item?.slideIds.indexOf(slide.id) ?? 0) + 1;
+  }
+
+  async function dropPlaylistItem(itemId: string, index: number): Promise<void> {
+    const oldIndex = items.findIndex((item) => item.id === itemId);
+    const targetIndex = oldIndex >= 0 && index > oldIndex ? index - 1 : index;
+    try { appState = await api.reorderItem(itemId, targetIndex); }
+    catch (e) { errorMsg = String(e); }
+    draggedItemId = null;
+    itemDropIndex = null;
+  }
+
+  async function renameItem(item: PlaylistItem): Promise<void> {
+    try {
+      appState = await api.renameItem(item.id, renameDraft);
+      renamingItemId = null;
+    } catch (e) { errorMsg = String(e); }
+  }
+
+  async function deleteItem(item: PlaylistItem): Promise<void> {
+    try {
+      appState = await api.deleteItem(item.id);
+      if (selectedItemId === item.id) selectedItemId = items[0]?.id ?? null;
+      if (appState.project.live) followLiveItem(appState);
+    } catch (e) { errorMsg = String(e); }
   }
 
   function goLive(slide: Slide): void {
@@ -532,16 +655,16 @@
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
-  async function addSlide(): Promise<void> {
+  async function addSlide(toSelectedItem = false, newPlaylistItem = false): Promise<void> {
     try {
       errorMsg = null;
       welcomeDismissed = true;
-      const s = await api.addSlide("New Slide", "");
+      const s = await api.addSlide("New Slide", "", undefined, undefined, toSelectedItem && !newPlaylistItem ? selectedItem?.id : undefined);
       appState = s;
       const created = s.project.slides.at(-1);
       if (created) {
         selectedId = created.id;
-        appState = await api.setLiveSlide(created.id);
+        selectedItemId = created.itemId ?? selectedItemId;
       }
     } catch (e) {
       errorMsg = String(e);
@@ -793,14 +916,14 @@
     }
   }
 
-  function onPlaylistDrop(e: DragEvent, dropIndex?: number): void {
+  function onPlaylistDrop(e: DragEvent, dropIndex?: number, dropItemIndex?: number): void {
     e.preventDefault();
     e.stopPropagation();
     // External OS files — use the existing media import pipeline (hash+copy+thumb)
     // and create a new slide with that file as the background, same result as
     // the “Add media” button. Must not silently fail on unsupported types.
     if ((e.dataTransfer?.files?.length ?? 0) > 0) {
-      const target = dropIndex ?? dragOverIndex ?? project?.slides.length ?? 0;
+      const target = dropItemIndex ?? itemIndexForSlidePosition(dropIndex ?? dragOverIndex ?? project?.slides.length ?? 0);
       void handleExternalFiles(e.dataTransfer!.files, target);
       dragOverIndex = null;
       isDragging = false;
@@ -816,6 +939,7 @@
     let targetIdx = dropIndex ?? dragOverIndex ?? project.slides.length;
     const len = project.slides.length;
     targetIdx = Math.max(0, Math.min(targetIdx, len));
+    const targetItemIdx = dropItemIndex ?? itemIndexForSlidePosition(targetIdx);
     const raw = e.dataTransfer?.getData("text/plain");
     let payload: any = null;
     try { payload = raw ? JSON.parse(raw) : dragPayload; } catch { payload = dragPayload; }
@@ -832,13 +956,21 @@
 
     if (payload.type === "playlist-reorder" && payload.slideId) {
       const fromIdx = project.slides.findIndex((s) => s.id === payload.slideId);
-      if (fromIdx !== -1 && fromIdx !== targetIdx && targetIdx !== fromIdx + 1) {
+      const draggedSlide = project.slides[fromIdx];
+      if (fromIdx !== -1 && draggedSlide) {
+        const group = items.find((item) => item.id === draggedSlide.itemId);
+        const groupIndexes = group?.slideIds.map((id) => project.slides.findIndex((s) => s.id === id)).filter((idx) => idx >= 0) ?? [fromIdx];
+        const start = Math.min(...groupIndexes);
+        const end = Math.max(...groupIndexes) + 1;
+        const safeTarget = Math.max(start, Math.min(targetIdx, end));
+        if (fromIdx !== safeTarget && safeTarget !== fromIdx + 1) {
         const ids = project.slides.map((s) => s.id);
         const [moved] = ids.splice(fromIdx, 1);
         if (moved === undefined) return;
-        const insertAt = targetIdx > fromIdx ? targetIdx - 1 : targetIdx;
+        const insertAt = safeTarget > fromIdx ? safeTarget - 1 : safeTarget;
         ids.splice(insertAt, 0, moved);
         void api.reorderSlides(ids).then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
+        }
       }
     } else if (payload.type === "library-song" && payload.songId) {
       void (async () => {
@@ -846,17 +978,7 @@
           const beforeLen = project.slides.length;
           const s = await api.addSongToPlaylist(payload.songId);
           appState = s;
-          if (targetIdx < beforeLen) {
-            const addedCount = s.project.slides.length - beforeLen;
-            if (addedCount <= 0) return;
-            const ids = s.project.slides.map((x) => x.id);
-            const newIds = ids.slice(-addedCount);
-            if (newIds.length === 0) return;
-            const remaining = ids.slice(0, -addedCount);
-            remaining.splice(targetIdx, 0, ...newIds);
-            const s2 = await api.reorderSlides(remaining);
-            appState = s2;
-          }
+          if (s.project.slides.length > beforeLen) { const id=s.project.slides.at(-1)?.itemId; if (id) appState=await api.reorderItem(id,targetItemIdx); }
         } catch (err: unknown) { errorMsg = String(err); }
       })();
     } else if (payload.type === "library-verse" && payload.songId && payload.slideId) {
@@ -877,14 +999,7 @@
         try {
           const s = await api.addSlide(verse.title, verse.body, undefined, "song");
           appState = s;
-          if (targetIdx < (s.project.slides.length - 1)) {
-            const ids = s.project.slides.map((x) => x.id);
-            const moved = ids.pop();
-            if (!moved) return;
-            ids.splice(targetIdx, 0, moved);
-            const s2 = await api.reorderSlides(ids);
-            appState = s2;
-          }
+          const id=s.project.slides.at(-1)?.itemId; if (id) appState=await api.reorderItem(id,targetItemIdx);
         } catch (err: unknown) { errorMsg = String(err); }
       })();
     } else if (payload.type === "scripture" && payload.reference && payload.text !== undefined) {
@@ -893,13 +1008,7 @@
           const s = await api.addSlide(payload.reference, payload.text, undefined, "scripture");
           appState = s;
           const newId = s.project.slides.at(-1)?.id;
-          if (newId && targetIdx < s.project.slides.length - 1) {
-            const ids = s.project.slides.map((x) => x.id);
-            ids.splice(ids.indexOf(newId), 1);
-            ids.splice(targetIdx, 0, newId);
-            const s2 = await api.reorderSlides(ids);
-            appState = s2;
-          }
+          const itemId=s.project.slides.find(x=>x.id===newId)?.itemId; if (itemId) appState=await api.reorderItem(itemId,targetItemIdx);
         } catch (err: unknown) { errorMsg = String(err); }
       })();
     } else if (payload.type === "cached-media" && payload.hash) {
@@ -909,7 +1018,7 @@
       } else {
         mediaAdding = asset.hash;
         mediaError = null;
-        void addCachedMediaSlide(asset, dragOverIndex ?? targetIdx)
+        void addCachedMediaSlide(asset, targetItemIdx)
           .then((state) => (appState = state))
           .catch((err: unknown) => {
             mediaError = `Could not add ${asset.fileName}: ${String(err)}`;
@@ -1023,8 +1132,7 @@
       errorMsg = "View not loaded yet";
       return;
     }
-    const len = project.slides.length;
-    let insertIdx = Math.max(0, Math.min(targetIdx, len));
+    let insertItemIdx = Math.max(0, Math.min(targetIdx, items.length));
     importingMedia = true;
     try {
       for (const p of paths) {
@@ -1039,17 +1147,9 @@
             background: asset.background,
           });
           appState = updated;
-          // Move to insertion point if not already at end
-          if (insertIdx < (appState?.project.slides.length ?? 1) - 1) {
-            const ids = appState!.project.slides.map((x) => x.id);
-            const moved = ids.pop();
-            if (moved) {
-              ids.splice(insertIdx, 0, moved);
-              const reordered = await api.reorderSlides(ids);
-              appState = reordered;
-            }
-          }
-          insertIdx++;
+          const itemId = appState?.project.slides.find((x) => x.id === newId)?.itemId;
+          if (!itemId) throw new Error("Could not identify the new media Playlist item.");
+          appState = await api.reorderItem(itemId, insertItemIdx++);
           errorMsg = null;
           use("dragdrop");
         } catch (err) {
@@ -1847,6 +1947,9 @@
   }
 
   onMount(() => {
+    const nextHour = new Date();
+    nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+    countdownTargetTime = `${String(nextHour.getHours()).padStart(2, "0")}:${String(nextHour.getMinutes()).padStart(2, "0")}`;
     try {
       const saved = window.localStorage.getItem("makrstudio.grid-thumbnail-size");
       if (saved && THUMBNAIL_SIZES.includes(saved as ThumbnailSize)) thumbnailSize = saved as ThumbnailSize;
@@ -1857,6 +1960,7 @@
     let unAuto: () => void = () => {};
     let unLib: () => void = () => {};
     let unAck: () => void = () => {};
+    let unCountdown: () => void = () => {};
     let unFileDrop: (() => void) | null = null;
     let unFileDrop2: (() => void) | null = null;
     let cancelled = false;
@@ -1886,7 +1990,7 @@
         await handleLibraryFiles(songPaths as any);
       }
       if (mediaPaths.length > 0) {
-        const target = dragOverIndex ?? project?.slides.length ?? 0;
+        const target = itemIndexForSlidePosition(dragOverIndex ?? project?.slides.length ?? 0);
         await handleExternalFiles(mediaPaths as any, target);
       }
       dragOverIndex = null;
@@ -1912,10 +2016,20 @@
 
     void (async () => {
       const sub = await subscribeState((s) => {
-        if (!cancelled) appState = s;
+        if (!cancelled) { appState = s; followLiveItem(s); }
       });
       if (cancelled) { sub(); return; }
       unSub = sub;
+      try {
+        const timerSub = await subscribeCountdown((timer) => {
+          if (!cancelled) countdown = timer;
+        });
+        if (cancelled) { timerSub(); return; }
+        unCountdown = timerSub;
+        countdown = await api.getCountdown();
+      } catch (e) {
+        if (!cancelled) countdownError = `Could not load countdown: ${String(e)}`;
+      }
       const autoSub = await subscribeAutosave((e) => {
         if (cancelled) return;
         savedLabel =
@@ -1942,6 +2056,9 @@
         if (!cancelled) {
           appState = s;
           selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
+          observedLiveId = s.project.live;
+          const stateItems = Array.isArray(s.items) ? s.items : [];
+          selectedItemId = stateItems.find((item) => item.slideIds.includes(selectedId ?? ""))?.id ?? stateItems[0]?.id ?? null;
           void api.listPresets().then((items) => {
             if (!cancelled) servicePresets = items;
           }).catch((e: unknown) => {
@@ -1970,6 +2087,7 @@
     return () => {
       cancelled = true;
       unSub();
+      unCountdown();
       unAuto();
       unLib();
       unAck();
@@ -2057,7 +2175,7 @@
         {/if}
 
       <div class="sidebar-section playlist-section" class:has-content={(project?.slides.length ?? 0) > 0} class:tour-highlight={showTour && tourStep === 0}>
-        <div class="section-title playlist-title"><span class="section-icon">☷</span><span>Playlist</span><span class="section-count">{project?.slides.length ?? 0}</span></div>
+        <div class="section-title playlist-title"><span class="section-icon">☷</span><span>Playlist</span><span class="section-count">{items.length}</span></div>
         <ul
           class="slide-list"
           class:drag-active={isDragging || externalDragActive}
@@ -2065,12 +2183,16 @@
           ondragover={(e) => {
             if (isExternalFileDrag(e)) {
               handleExternalDragOver(e);
+            } else if (draggedItemId) {
+              e.preventDefault();
+              const r=(e.currentTarget as HTMLElement).getBoundingClientRect();
+              itemDropIndex = e.clientY > r.bottom - 12 ? items.length : itemDropIndex;
             } else {
               e.preventDefault();
               if (dragOverIndex === null) dragOverIndex = project?.slides.length ?? 0;
             }
           }}
-          ondrop={(e) => onPlaylistDrop(e)}
+          ondrop={(e) => { if (draggedItemId) { e.preventDefault(); e.stopPropagation(); void dropPlaylistItem(draggedItemId, itemDropIndex ?? items.length-1); } else onPlaylistDrop(e); }}
           ondragleave={(e) => {
             const rt = e.relatedTarget as HTMLElement | null;
             if (!rt || !(e.currentTarget as HTMLElement).contains(rt)) {
@@ -2079,61 +2201,45 @@
             }
           }}
         >
-          {#each project?.slides ?? [] as slide, i (slide.id)}
-            {#if dragOverIndex === i}
+          {#each items as item, i (item.id)}
+            {#if itemDropIndex === i}
               <div class="drop-indicator" aria-hidden="true"></div>
             {/if}
             <li
               draggable="true"
-              class:dragging={draggedSlideId === slide.id}
-              class:drag-over={dragOverIndex === i}
-              ondragstart={(e) => onPlaylistDragStart(e, slide, i)}
-              ondragover={(e) => onPlaylistDragOver(e, i)}
-              ondragend={onPlaylistDragEnd}
-              ondrop={(e) => onPlaylistDrop(e, i)}
+              class:dragging={draggedItemId === item.id}
+              class:drag-over={itemDropIndex === i}
+              ondragstart={(e) => { draggedItemId = item.id; e.dataTransfer?.setData("text/plain", JSON.stringify({type:"item-reorder", itemId:item.id})); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }}
+              ondragover={(e) => { e.preventDefault(); const r=(e.currentTarget as HTMLElement).getBoundingClientRect(); itemDropIndex=e.clientY < r.top+r.height/2 ? i : i+1; }}
+              ondragend={() => { draggedItemId=null; itemDropIndex=null; }}
+              ondrop={(e) => { const p=JSON.parse(e.dataTransfer?.getData("text/plain") || "{}"); if (p.type === "item-reorder") { e.preventDefault(); e.stopPropagation(); void dropPlaylistItem(p.itemId, Math.min(itemDropIndex ?? i, items.length-1)); } else { e.stopPropagation(); const at=itemDropIndex ?? i; onPlaylistDrop(e, undefined, at); } }}
             >
               <button
-                class:active={project?.live === slide.id}
+                class:active={selectedItemId === item.id}
                 class="slide-entry"
-                style={`--section-color: ${sectionColor(slide.title)}`}
-                onclick={() => goLive(slide)}
+                style={`--section-color: ${item.kind === "song" ? "var(--section-chorus)" : item.kind === "scripture" ? "var(--section-verse)" : "var(--section-neutral)"}`}
+                onclick={() => selectItem(item)}
+                ondblclick={() => { const first = project?.slides.find(s => s.id === item.slideIds[0]); if (first) goLive(first); }}
                 draggable="false"
               >
                 <span class="playlist-index">{String(i + 1).padStart(2, "0")}</span>
-                <span
-                  class="swatch"
-                  class:camera={isLiveCamera(slide.background)}
-                  style:background-color={slide.background.type === "solid"
-                    ? slide.background.color
-                    : "#000"}
-                  style:background-image={isMedia(slide.background)
-                    ? `url('${fileUrl(slide.background.thumb)}')`
-                    : "none"}
-                  style:background-size="cover"
-                  style:background-position="center"
-                  title={isLiveCamera(slide.background) ? `Live camera: ${slide.background.label || "camera"}` : undefined}
-                >{#if isLiveCamera(slide.background)}<span aria-hidden="true">🎥</span>{/if}</span>
-                <span class="slide-label">{slideDisplayName(slide)}</span>
-                {#if slide.autoAdvanceSecs != null}<span class="auto-badge" title="Auto-advance after {slide.autoAdvanceSecs}s">↻ {slide.autoAdvanceSecs}s</span>{/if}
-                {#if project?.live === slide.id}<span class="live-dot"></span>{/if}
+                <span class="item-kind-icon" aria-hidden="true">{item.kind === "song" ? "♫" : item.kind === "scripture" ? "✝" : "▧"}</span>
+                <span class="slide-label">{item.name}</span><small>{item.slideIds.length}</small>
+                {#if item.slideIds.includes(project?.live ?? "")}<span class="live-dot"></span>{/if}
               </button>
-              <button
-                class="delete"
-                title="Delete slide"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  deleteSlide(slide);
-                }}
-              >
-                &times;
-              </button>
+              {#if renamingItemId === item.id}
+                <form class="item-rename" onsubmit={(e) => { e.preventDefault(); void renameItem(item); }}><input bind:value={renameDraft} aria-label="Item name" /><button class="ghost" type="submit">Save</button></form>
+              {:else}
+                <button class="delete" title="Rename item" aria-label="Rename item" onclick={() => { renamingItemId=item.id; renameDraft=item.name; }}>✎</button>
+                <button class="delete" title="Delete item" aria-label="Delete item" onclick={() => void deleteItem(item)}>×</button>
+              {/if}
             </li>
           {/each}
-          {#if dragOverIndex === (project?.slides.length ?? 0)}
+          {#if itemDropIndex === items.length}
             <div class="drop-indicator" aria-hidden="true"></div>
           {/if}
         </ul>
-        <button class="add" onclick={() => addSlide()}>+ Add slide</button>
+        <button class="add" onclick={() => addSlide(false, true)}>+ Add slide</button>
         {#if showHint(onboarding, "dragdrop")}
           <p class="hint-line">Drag songs, verses, or images here — or click to add. Drag slides to reorder.<button class="hint-x" title="Dismiss" aria-label="Dismiss drag-and-drop hint" onclick={() => dismiss("dragdrop")}>×</button></p>
         {/if}
@@ -2418,17 +2524,18 @@
         </div>
       {:else}
         <div class="grid-toolbar">
-          <div class="grid-toolbar-label"><span class="grid-toolbar-mark">01</span><span><strong>Arrange slides</strong><small>Drag thumbnails to set the running order</small></span></div>
+          <div class="grid-toolbar-label"><span class="grid-toolbar-mark">01</span><span><strong>{gridScope === "all" ? "All slides" : selectedItem?.name ?? "Playlist"}</strong><small>{gridSlides.length} slides</small></span></div>
+          <div class="grid-scope-toggle"><button class:active={gridScope === "item"} onclick={() => gridScope="item"}>This item</button><button class:active={gridScope === "all"} onclick={() => gridScope="all"}>All slides</button></div>
           <span class="spacer"></span>
           <label class="grid-size-control">
             <span>Thumbnail size</span>
             <input type="range" min="0" max="2" step="1" value={thumbnailSizeIndex} oninput={onThumbnailSizeInput} aria-label="Thumbnail size: small, medium, or large" />
             <output>{thumbnailSize}</output>
           </label>
-          <button class="add-slide-button" onclick={() => addSlide()}><span aria-hidden="true">＋</span> Add slide</button>
+          <button class="add-slide-button" onclick={() => addSlide(true)}><span aria-hidden="true">＋</span> Add slide</button>
           {#if thumbnailPreferenceError}<span class="grid-size-error" role="alert">{thumbnailPreferenceError}</span>{/if}
         </div>
-        {#if (project?.slides.length ?? 0) === 0}
+        {#if gridSlides.length === 0}
           <div class="empty grid-empty">No slides yet. Add one to get started — it will appear here as a thumbnail.</div>
         {:else}
           <div
@@ -2454,7 +2561,7 @@
               }
             }}
           >
-            {#each project?.slides ?? [] as slide, i (slide.id)}
+            {#each gridSlides as slide, i (slide.id)}
               {#if dragOverIndex === i}
                 <div class="grid-drop-indicator" aria-hidden="true"></div>
               {/if}
@@ -2490,7 +2597,7 @@
                     <span class="grid-live-badge">LIVE</span>
                   {/if}
                 </button>
-                <div class="grid-label" title={slideDisplayName(slide)}><span class="grid-number">{i + 1}</span><span class="grid-name">{slideDisplayName(slide)}</span></div>
+                <div class="grid-label" title={slideDisplayName(slide)}><span class="grid-number">{gridScope === "item" ? i + 1 : slideNumberWithinItem(slide)}</span><span class="grid-name">{slideDisplayName(slide)}</span></div>
                 <div class="grid-actions">
                   <button class="ghost grid-go-live" onclick={() => goLive(slide)} title="Go live">Go Live</button>
                   <button class="delete grid-delete" title="Delete slide" onclick={(e) => { e.stopPropagation(); deleteSlide(slide); }}>×</button>
@@ -2582,6 +2689,37 @@
             <button class="ghost" onclick={() => stepLive("next")} disabled={!canGoNext} title="Next live slide">Next →</button>
           </div>
         </div>
+
+        <section class="countdown-controls" aria-label="Service countdown">
+          <div class="countdown-heading">
+            <div>
+              <strong>Service countdown</strong>
+              <span>{#if countdown.active}{countdown.mode === "clock" && countdown.targetTime ? `Until ${countdown.targetTime}` : countdown.running ? "Running" : countdown.remainingSeconds === 0 ? "Time reached" : "Paused"} · {formatCountdown(countdown.remainingSeconds)}{:else}Ready when you are{/if}</span>
+            </div>
+            <label class="countdown-output-toggle">
+              <input type="checkbox" checked={countdown.outputVisible} onchange={setOutputCountdownVisible} />
+              Show on Output
+            </label>
+          </div>
+          <div class="countdown-actions">
+            <label class="countdown-minutes">Minutes
+              <input type="number" min="1" max="1440" step="1" value={countdownMinutes} oninput={(event) => (countdownMinutes = (event.currentTarget as HTMLInputElement).value)} />
+            </label>
+            <button class="ghost" onclick={() => void startServiceCountdown()}>Start</button>
+            <button class="ghost" onclick={() => void pauseServiceCountdown()} disabled={!countdown.running}>Pause</button>
+            <button class="ghost" onclick={() => void resetServiceCountdown()} disabled={!countdown.active}>Reset</button>
+          </div>
+          <details class="clock-countdown">
+            <summary>Countdown to a clock time</summary>
+            <div class="clock-countdown-row">
+              <label>Service starts at
+                <input type="time" value={countdownTargetTime} oninput={(event) => (countdownTargetTime = (event.currentTarget as HTMLInputElement).value)} />
+              </label>
+              <button class="ghost" onclick={() => void startClockCountdown()}>Start countdown</button>
+            </div>
+          </details>
+          {#if countdownError}<p class="countdown-error" role="alert">{countdownError}</p>{/if}
+        </section>
 
         {#if appState?.output.visible}
           {@const outAge = ackAgeMs(ack?.output?.at)}
@@ -3621,6 +3759,30 @@
     color: var(--semantic-error);
     border-color: var(--semantic-error-border);
   }
+
+  .countdown-controls {
+    display: grid;
+    gap: var(--space-3);
+    margin: var(--space-2) 0 var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--panel-2);
+  }
+  .countdown-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+  .countdown-heading > div { display: grid; gap: var(--space-1); }
+  .countdown-heading strong { color: var(--text); font-size: 12px; }
+  .countdown-heading span { color: var(--text-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .countdown-output-toggle { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-dim); font-size: 11px; cursor: pointer; }
+  .countdown-actions { display: flex; align-items: end; flex-wrap: wrap; gap: var(--space-2); }
+  .countdown-minutes, .clock-countdown-row label { display: grid; gap: var(--space-1); color: var(--text-dim); font-size: 10px; }
+  .countdown-minutes input { width: 90px; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); color: var(--text); }
+  .countdown-actions button, .clock-countdown-row button { min-height: 33px; padding: 6px 11px; font-size: 11px; }
+  .clock-countdown { border-top: 1px solid var(--border); padding-top: var(--space-2); color: var(--text-dim); font-size: 11px; }
+  .clock-countdown summary { width: fit-content; cursor: pointer; }
+  .clock-countdown-row { display: flex; align-items: end; flex-wrap: wrap; gap: var(--space-2); padding-top: var(--space-2); }
+  .clock-countdown-row input { min-height: 33px; padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); color: var(--text); }
+  .countdown-error { margin: 0; color: var(--semantic-error); font-size: 11px; }
 
   /* Render-ack heartbeat indicator — quiet when healthy, loud only on stale.
      Shown only while the corresponding window exists. */
@@ -4787,16 +4949,10 @@
     letter-spacing: 0.02em;
   }
 
-  .auto-badge {
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--accent);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 1px 6px;
-    margin-left: 6px;
-    background: var(--panel-2);
-  }
+  .item-kind-icon { flex: none; width: 20px; text-align: center; color: var(--section-color); font-weight: 800; }
+  .slide-entry small { flex: none; color: var(--text-dim); font-size: 10px; }
+  .item-rename { display: flex; gap: 4px; padding: 3px; }
+  .item-rename input { width: 92px; min-width: 0; }
 
   .external-drop-zone {
     margin-top: 10px;
@@ -5268,7 +5424,9 @@
   .sidebar-section .search { margin: 0; }
   .slide-list, .song-list { gap: 6px; }
   .slide-entry { min-width: 0; min-height: 42px; padding: 8px; gap: 8px; }
-  .slide-entry .swatch { width: 27px; height: 18px; border-radius: 4px; }
+  .grid-scope-toggle { display: flex; border: 1px solid var(--border); border-radius: 7px; padding: 2px; gap: 2px; }
+  .grid-scope-toggle button { border: 0; border-radius: 5px; padding: 5px 8px; background: transparent; color: var(--text-dim); font-size: 11px; }
+  .grid-scope-toggle button.active { background: var(--panel-2); color: var(--text); }
   .playlist-index { flex: none; color: var(--text-dim); font: 700 10px var(--font-mono); }
   .slide-label { min-width: 0; font-size: 12px; }
   .song-list li { min-width: 0; }

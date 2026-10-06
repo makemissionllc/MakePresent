@@ -24,7 +24,7 @@ fees, no vendor-controlled roadmaps, and no service data leaving the building.
 - [Per-Output "Looks"](#per-output-looks)
 - [Technology Stack](#technology-stack)
 - [Project Structure](#project-structure)
-- [IPC Commands](#ipc-commands-38)
+- [IPC Commands](#ipc-commands)
 - [Getting Started (Development)](#getting-started-development)
 - [Testing & Verification](#testing--verification)
 - [CI / CD](#ci--cd)
@@ -321,6 +321,9 @@ A **Look** contains:
   `0` = off). The Title style also covers the scripture reference line —
   scripture slides render the reference as the title, so there is no third
   element.
+  Canvas editing also stores serde-defaulted element `color`, `bold`, `italic`,
+  `allCaps`, `shrinkToFit`, and `minSize` values; legacy values preserve the
+  earlier renderer defaults.
 - `positioning` — `auto` (text flows naturally, filled to the frame) or
   `absolute` (FreeShow-style template editor: each text role lives in an
   explicit draggable box)
@@ -339,6 +342,12 @@ background first, then the default Look assigned to their kind (Songs,
 Scripture, or Text), then Main. This background inheritance is resolved by Rust
 and updates live when the mapped Look changes; a slide's `Custom` background
 still takes precedence.
+
+**Per-kind Output Looks:** Output Auto resolves an item's explicit Look, then
+its kind Look, then the mapped Output Look. Stage continues to use its own
+mapping. The Looks workspace uses a rendered canvas and sample switcher, plus a
+gallery with import/export; portable Look files identify background media by
+hash so another computer can report missing media instead of using stale paths.
 
 **Storage:** Looks are stored on the **Project** (`project.looks`), so they save
 and load with autosave. New (and legacy) projects are seeded with default
@@ -449,9 +458,12 @@ src-tauri/                                 Rust backend
 **Looks**
 | Command | Purpose |
 |---|---|
-| `upsert_look` | Create or update a Look |
-| `delete_look` | Delete a Look (re-assigns mapped outputs) |
+| `upsert_look` | Create, update, or reset a Look's editable fields |
+| `delete_look` | Delete a Look and reassign mappings to the chosen replacement |
 | `set_output_look` / `set_stage_look` | Map a Look id to an output/stage |
+| `set_default_look` | Set the Output Look for Songs, Scripture, or Text |
+| `set_item_look` | Set or clear a playlist item's Output Look override |
+| `resolve_look_background` | Resolve an imported Look's background asset by managed-media hash |
 | `set_ndi_look` | Map a Look id to the NDI feed |
 
 **Playlist backgrounds**
@@ -1375,3 +1387,27 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - Diagnosis: `tauri.conf.json` previously omitted `dragDropEnabled` (Tauri defaults it to `true`); `windows.rs` does not disable the native handler. Tauri's Windows WebView2 handler therefore owns desktop file drops and suppresses page HTML5 drag events. The Editor's prior internal slide/song/scripture/media drags relied on HTML5 `draggable`; native OS drops reached the Tauri listener, which ignored the reported position and appended media. This was confirmed from the local Tauri source/config and application handlers, not by an interactive Windows drag session.
 - The Editor now explicitly keeps native file-drop enabled and uses Tauri's coordinate-bearing window event, converting physical coordinates by `devicePixelRatio` before `elementFromPoint`. OS files can target a slide background, grid insertion gap, playlist/item, or media drop area; unsupported files continue through inline errors. Internal drags share `src/lib/pointerDrag.ts` (ghost, insertion target, edge auto-scroll, Escape cancellation) and use pointer events with Alt+Up/Down keyboard reorder and the existing click-to-add actions. No IPC or dependencies changed in this phase; there were 105 registered commands before Phase 8B added four background commands.
 - **Verify:** `npm run check` passes with 0 errors/0 warnings; `cargo check` passes with 3 existing dead-code warnings; `cargo test` passes 87 tests with 1 NDI-runtime test ignored; `npm run build` passes. Native Windows drag events and Linux/macOS drag parity could not be interactively tested here.
+
+## Changed (2026-10-06) — Phase 9A/9B canvas Look editor and per-kind Looks
+
+- The Look workspace uses a rendered sample canvas with four sample slides, safe-margin and guide toggles, direct Title/Body selection, drag/resize handles, snapping, arrow-key nudging, undo/redo, and revert. The inspector changes with the canvas selection; typography now includes per-element color, bold, italic, uppercase, and shrink-to-fit minimum sizes. The WebView font picker shows bundled and safe system families and explains its font-list limit.
+- Added rendered Look gallery thumbnails, duplicate/rename/delete with replacement choice, JSON import/export, and managed-media hash resolution with a clear missing-media error. Dropping media on the canvas sets the active Look background.
+- Rust resolves Output Looks in item override → kind mapping → Output mapping order and sends only one resolved Look id per item. Output follows it; Stage retains its own mapping. Legacy Looks default to the previous styling, and unassigned kinds keep the Output mapping.
+- IPC list updated; `lib.rs` now registers 111 commands. Phase 9C extra elements remain deferred until 9A/9B are accepted.
+- Verification: `npm run check` reports 0 errors/0 warnings; `cargo check` passes with two existing dead-code warnings; `cargo test` passes (98 passed, 2 hardware/display tests ignored); `npm run build` and `git diff --check` pass. No physical display output, native OS drag/drop, or hardware test was available.
+
+
+## Changed (2026-10-06) — Looks tab regression recovery
+
+- **Confirmed cause:** fresh and populated project browser fixtures reproduced a Svelte `DataCloneError` from cloning reactive Look proxies. This interrupted draft initialization before the sample canvas and inspector rendered. Gallery thumbnails also had absolute viewports inside unpositioned wrappers, covering the whole tab with black; Main and Stage were present.
+- **Fix and safeguards:** Look copies use `$state.snapshot`; gallery thumbnails have positioned wrappers. Invalid selection falls back to the Output mapping, Main, then the first Look. Rust restores Main/Stage when Looks are empty during file loading, project replacement and settings application. Canvas and inspector have separate Svelte boundaries with a plain error, Reset this Look (existing `upsert_look`), and the gallery available to choose another Look. Missing media uses a blue preview fallback; thumbnail scale stays finite and positive. Canvas arrow nudges no longer also advance the live slide. No IPC commands or persisted fields were added.
+- **Layout:** a 16:9 canvas with a minimum height and a layout based on the center column width replaces the viewport-height constraint. The tab scrolls as a whole; opening it restores the header to view and the header stays visible while scrolling. Browser checks passed at 1280×800, 960×600, 1920×1080 and 1160×800, including scrolling to the inspector, mapped/stale Look selection, sample changes, keyboard undo, broken-Look reset, and missing-media fallback.
+- **Tests and limits:** Rust tests cover new-project and preset constructors, missing/empty Looks through session/autosave/snapshot load paths without rewriting source files, and settings application with empty Looks. `npm run check` reports 0 errors/0 warnings; `cargo check` passes with two existing dead-code warnings; `cargo test` passes (100 passed, 2 ignored); `npm run build` and `git diff --check` pass. No frontend test runner is configured, so the frontend was checked in a browser using isolated Tauri IPC fixtures. Native Linux WebKit behavior, native drag/drop, projection displays and hardware were not verified. Phase 9C remains deferred.
+
+
+## Changed (2026-10-06) — Part A Look text alignment
+
+- **Confirmed cause:** the inspector sends `titleStyle.align` / `bodyStyle.align` through the existing debounced `upsert_look`; Rust stores the same lowercase alignment values. The shared text fitter cleared inline bounding-box widths, leaving short titles shrink-wrapped, so Center/Right had no space to move. Its action also retained the initial positioning options after a Look changed.
+- **Fix:** the pure `lookElementCss` helper supplies shared alignment, geometry and flex rules to Title, Body and Stage chord lines in `SlideRender`. Look box sizes use CSS variables that survive fitting; absolute fitting restores the current box before measuring, and action updates use current options. Auto layouts retain centered legacy sizing while Left/Right anchor short text correctly. No persisted fields, IPC commands or dependencies changed; the IPC list is unchanged.
+- **Checks:** browser fixtures verified Left/Center/Right for Title and Body in auto and absolute layouts, song titles, wrapped scripture references/verses, grid thumbnails and Output/Stage previews, actual Output/Stage components, positioning changes and reload. Rust tests exercise the same Look patch/persist/load paths for all alignment values in both modes and verify legacy missing-align fields retain centered styles without rewriting the file. No frontend unit-test runner is configured.
+- **Results and limits:** `npm run check` reports 0 errors/0 warnings; `cargo check` passes with two existing dead-code warnings; `cargo test` passes (102 passed, 2 display/hardware tests ignored); `npm run build` passes. Native live Output/Stage windows, physical displays, native app restart and NDI hardware were not verified. Browser component reload and real Rust file reload were checked. Part B and Phase 9C were not started.

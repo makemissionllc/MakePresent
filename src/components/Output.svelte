@@ -61,6 +61,9 @@
   const look = $derived.by<Look | null>(() => {
     const looks = appState?.looks ?? [];
     if (looks.length === 0) return null;
+    const resolvedId = live?.itemId ? appState?.effectiveItemLookIds?.[live.itemId] : null;
+    const resolved = resolvedId ? looks.find((l) => l.id === resolvedId) : null;
+    if (resolved) return resolved;
     const mapped = looks.find((l) => l.id === appState?.outputLookId);
     if (mapped) return mapped;
     return looks.find((l) => l.name === "Main") ?? looks[0]!;

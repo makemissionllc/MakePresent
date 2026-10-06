@@ -84,6 +84,12 @@ export type HAlign = "left" | "center" | "right";
  */
 export interface TextStyle {
   align: HAlign;
+  bold: boolean;
+  color: string | null;
+  italic: boolean;
+  allCaps: boolean;
+  shrinkToFit: boolean;
+  minSize: number | null;
   lineHeight: number;
   shadowBlur: number;
   shadowX: number;
@@ -100,6 +106,12 @@ export type TextStylePatch = Partial<TextStyle>;
 /** Title-role defaults — reproduce the historic title rendering. */
 export const DEFAULT_TITLE_STYLE: TextStyle = {
   align: "center",
+  bold: false,
+  color: null,
+  italic: false,
+  allCaps: false,
+  shrinkToFit: true,
+  minSize: 24,
   lineHeight: 1.1,
   shadowBlur: 24,
   shadowX: 0,
@@ -113,6 +125,12 @@ export const DEFAULT_TITLE_STYLE: TextStyle = {
 /** Body-role defaults — reproduce the historic body rendering. */
 export const DEFAULT_BODY_STYLE: TextStyle = {
   align: "center",
+  bold: false,
+  color: null,
+  italic: false,
+  allCaps: false,
+  shrinkToFit: true,
+  minSize: 16,
   lineHeight: 1.4,
   shadowBlur: 20,
   shadowX: 0,
@@ -159,6 +177,7 @@ export interface Project {
   name: string;
   slides: Slide[];
   itemBackgrounds?: Record<string, Background>;
+  itemLooks?: Record<string, string>;
   looks: Look[];
   live: string | null;
   showText: boolean;
@@ -254,6 +273,7 @@ export interface ClientState {
   items: PlaylistItem[];
   /** Rust-computed output background by slide id; never persisted. */
   effectiveBackgrounds?: Record<string, Background>;
+  effectiveItemLookIds?: Record<string, string>;
   notice: Notice | null;
   output: OutputView;
   stage: StageView;

@@ -43,6 +43,8 @@ export interface FitTextOptions {
   minTitlePx?: number;
   /** Floor font size in px for [data-role="body"] before ellipsis truncation. */
   minBodyPx?: number;
+  shrinkTitle?: boolean;
+  shrinkBody?: boolean;
   /**
    * An opaque token encoding the inputs that affect how text fits (font sizes,
    * layout classes, …). When it changes between actions the measure re-runs,
@@ -127,9 +129,14 @@ function fitElement(
   minPx: number,
   allowedW: number,
   allowedH: number,
+  shrink = true,
 ): number {
   neutralise(el);
   const m = readMetrics(el);
+  if (!shrink) {
+    restoreNatural(el);
+    return el.offsetHeight;
+  }
   el.style.width = `${allowedW}px`;
 
   let sizePx: number;
@@ -200,12 +207,14 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
   node,
   opts,
 ) => {
-  const minTitlePx = opts?.minTitlePx ?? 24;
-  const minBodyPx = opts?.minBodyPx ?? 16;
   let raf = 0;
   let lastDeps: string | undefined;
 
   const run = (): void => {
+    const minTitlePx = opts?.minTitlePx ?? 24;
+    const minBodyPx = opts?.minBodyPx ?? 16;
+    const shrinkTitle = opts?.shrinkTitle ?? true;
+    const shrinkBody = opts?.shrinkBody ?? true;
     const title = node.querySelector<HTMLElement>(TITLE_SEL);
     const body = node.querySelector<HTMLElement>(BODY_SEL);
     if (!title && !body) return;
@@ -224,21 +233,23 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
       return Math.max(0, ((contentW * pct) / 100));
     };
 
-    // Absolute mode: each role has its own explicit box (inline left/top/
-    // width/height). Capture the box's pixel size before neutralising, then
-    // fit each role independently against its own box — never its sibling.
+    // Absolute mode: restore and measure each explicit Look box, then fit
+    // each role independently against its own box — never its sibling.
     if (mode === "absolute") {
       if (title) {
+        // Discard the previous fit's pixel width before reading the Look box.
+        restoreNatural(title);
         // offset dimensions stay in the slide's logical coordinate space even
         // when a thumbnail scales the entire renderer with a CSS transform.
         const tw = Math.max(1, title.offsetWidth);
         const th = Math.max(1, title.offsetHeight);
-        fitElement(title, minTitlePx, tw, th);
+        fitElement(title, minTitlePx, tw, th, shrinkTitle);
       }
       if (body) {
+        restoreNatural(body);
         const bw = Math.max(1, body.offsetWidth);
         const bh = Math.max(1, body.offsetHeight);
-        fitElement(body, minBodyPx, bw, bh);
+        fitElement(body, minBodyPx, bw, bh, shrinkBody);
       }
       return;
     }
@@ -254,6 +265,7 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
           minTitlePx,
           wFor(title),
           Math.max(0, contentH - gap - bodyH),
+          shrinkTitle,
         );
       }
       if (body) {
@@ -262,6 +274,7 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
           minBodyPx,
           wFor(body),
           Math.max(0, contentH - gap - titleH),
+          shrinkBody,
         );
       }
       if (pass > 0 && tH === titleH && bH === bodyH) break;
@@ -294,6 +307,7 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
 
   return {
     update(nextOpts) {
+      opts = nextOpts;
       const nextDeps = nextOpts?.deps;
       if (nextDeps !== lastDeps) {
         lastDeps = nextDeps;

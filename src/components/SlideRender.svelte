@@ -3,6 +3,7 @@
   import type { Background, Look, Slide, TextStyle } from "../lib/types";
   import { DEFAULT_BODY_STYLE, DEFAULT_TITLE_STYLE } from "../lib/types";
   import { fitText } from "../lib/fitText";
+  import { lookElementCss } from "../lib/lookElementCss";
   import { hasChords, stripChords, parseChordLine } from "../lib/chords";
   import type { Overlay } from "../lib/types";
   import CameraFeed from "./CameraFeed.svelte";
@@ -26,9 +27,11 @@
         leave this off so capture devices are only open on Output (live +
         brief fade overlap) and the Editor live preview. */
     enableCamera?: boolean;
+    /** Preview-only fallback; projection retains its existing black default. */
+    fallbackColor?: string;
   }
 
-  let { slide, effectiveBackground, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, overlays = [], enableCamera = false }: Props = $props();
+  let { slide, effectiveBackground, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, overlays = [], enableCamera = false, fallbackColor = "#000000" }: Props = $props();
 
   const visibleOverlays = $derived.by(() => {
     if (overlays.length > 0) return overlays.filter((item) => item.visible);
@@ -53,10 +56,12 @@
   // defaults so a Look predating these fields still renders identically.
   const titleStyle: TextStyle = $derived(look.titleStyle ?? DEFAULT_TITLE_STYLE);
   const bodyStyle: TextStyle = $derived(look.bodyStyle ?? DEFAULT_BODY_STYLE);
+  const titleLayout = $derived(lookElementCss(look, "title"));
+  const bodyLayout = $derived(lookElementCss(look, "body"));
 
   /** Opaque fit-token for one TextStyle so fitText re-measures on any change. */
   function styleSig(s: TextStyle): string {
-    return `${s.align}:${s.lineHeight}:${s.shadowBlur}:${s.shadowX}:${s.shadowY}:${s.outlineWidth}:${s.outlineColor}:${s.bgColor}:${s.bgOpacity}`;
+    return `${s.align}:${s.bold}:${s.color}:${s.italic}:${s.allCaps}:${s.shrinkToFit}:${s.minSize}:${s.lineHeight}:${s.shadowBlur}:${s.shadowX}:${s.shadowY}:${s.outlineWidth}:${s.outlineColor}:${s.bgColor}:${s.bgOpacity}`;
   }
 
   /** `text-shadow` for one element, or `none` when the user zeroed it. */
@@ -84,7 +89,7 @@
   }
 
   function solidColor(bg: Background): string {
-    return bg.type === "solid" ? bg.color : "#000000";
+    return bg.type === "solid" ? bg.color : fallbackColor;
   }
 </script>
 
@@ -98,7 +103,11 @@
   class:pos-bottom={look.textPosition === "bottom"}
   use:fitText={{
     mode: look.positioning === "absolute" ? "absolute" : "auto",
-    deps: `${look.titleSize}:${look.bodySize}:${look.textPosition}:${look.positioning}:${look.titleFont}:${look.bodyFont}:${styleSig(titleStyle)}:${styleSig(bodyStyle)}:${effectiveShowText}:${effectiveShowBackground}`,
+    minTitlePx: titleStyle.minSize ?? 24,
+    minBodyPx: bodyStyle.minSize ?? 16,
+    shrinkTitle: titleStyle.shrinkToFit,
+    shrinkBody: bodyStyle.shrinkToFit,
+    deps: `${look.titleSize}:${look.bodySize}:${look.textPosition}:${look.positioning}:${look.titleFont}:${look.bodyFont}:${styleSig(titleStyle)}:${styleSig(bodyStyle)}:${effectiveShowText}:${effectiveShowBackground}:${titleLayout}:${bodyLayout}`,
   }}
   style:--look-title-size={`${look.titleSize}px`}
   style:--look-body-size={`${look.bodySize}px`}
@@ -147,8 +156,12 @@
     <h1
       class="look-title"
       data-role="title"
+      style={titleLayout}
       style:font-family={look.titleFont}
-      style:text-align={titleStyle.align}
+      style:color={titleStyle.color ?? look.textColor}
+      style:font-weight={titleStyle.bold ? "700" : "400"}
+      style:font-style={titleStyle.italic ? "italic" : "normal"}
+      style:text-transform={titleStyle.allCaps ? "uppercase" : "none"}
       style:text-shadow={shadowOf(titleStyle, 0.45)}
       style:-webkit-text-stroke={outlineOf(titleStyle)}
       style:paint-order={titleStyle.outlineWidth > 0 ? "stroke fill" : undefined}
@@ -157,11 +170,6 @@
       style:border-radius={titleStyle.bgOpacity > 0 ? "0.25em" : undefined}
       style:box-decoration-break={titleStyle.bgOpacity > 0 ? "clone" : undefined}
       style:-webkit-box-decoration-break={titleStyle.bgOpacity > 0 ? "clone" : undefined}
-      style:left={look.positioning === "absolute" ? `${look.titleBox.x}%` : undefined}
-      style:top={look.positioning === "absolute" ? `${look.titleBox.y}%` : undefined}
-      style:width={look.positioning === "absolute" ? `${look.titleBox.width}%` : undefined}
-      style:height={look.positioning === "absolute" ? `${look.titleBox.height}%` : undefined}
-      style:z-index={look.positioning === "absolute" ? look.titleBox.zIndex : undefined}
     >
       {stripChords(slide.title)}
     </h1>
@@ -171,8 +179,12 @@
       <div
         class="look-body chord-body"
         data-role="body"
+        style={bodyLayout}
         style:font-family={look.bodyFont}
-        style:text-align={bodyStyle.align}
+        style:color={bodyStyle.color ?? look.textColor}
+        style:font-weight={bodyStyle.bold ? "700" : "400"}
+        style:font-style={bodyStyle.italic ? "italic" : "normal"}
+        style:text-transform={bodyStyle.allCaps ? "uppercase" : "none"}
         style:text-shadow={shadowOf(bodyStyle, 0.4)}
         style:-webkit-text-stroke={outlineOf(bodyStyle)}
         style:paint-order={bodyStyle.outlineWidth > 0 ? "stroke fill" : undefined}
@@ -181,11 +193,6 @@
         style:border-radius={bodyStyle.bgOpacity > 0 ? "0.25em" : undefined}
         style:box-decoration-break={bodyStyle.bgOpacity > 0 ? "clone" : undefined}
         style:-webkit-box-decoration-break={bodyStyle.bgOpacity > 0 ? "clone" : undefined}
-        style:left={look.positioning === "absolute" ? `${look.bodyBox.x}%` : undefined}
-        style:top={look.positioning === "absolute" ? `${look.bodyBox.y}%` : undefined}
-        style:width={look.positioning === "absolute" ? `${look.bodyBox.width}%` : undefined}
-        style:height={look.positioning === "absolute" ? `${look.bodyBox.height}%` : undefined}
-        style:z-index={look.positioning === "absolute" ? look.bodyBox.zIndex : undefined}
       >
         {#each slide.body.split("\n") as line}
           {#if line.trim() === ""}
@@ -207,8 +214,12 @@
       <p
         class="look-body"
         data-role="body"
+        style={bodyLayout}
         style:font-family={look.bodyFont}
-        style:text-align={bodyStyle.align}
+        style:color={bodyStyle.color ?? look.textColor}
+        style:font-weight={bodyStyle.bold ? "700" : "400"}
+        style:font-style={bodyStyle.italic ? "italic" : "normal"}
+        style:text-transform={bodyStyle.allCaps ? "uppercase" : "none"}
         style:text-shadow={shadowOf(bodyStyle, 0.4)}
         style:-webkit-text-stroke={outlineOf(bodyStyle)}
         style:paint-order={bodyStyle.outlineWidth > 0 ? "stroke fill" : undefined}
@@ -217,11 +228,6 @@
         style:border-radius={bodyStyle.bgOpacity > 0 ? "0.25em" : undefined}
         style:box-decoration-break={bodyStyle.bgOpacity > 0 ? "clone" : undefined}
         style:-webkit-box-decoration-break={bodyStyle.bgOpacity > 0 ? "clone" : undefined}
-        style:left={look.positioning === "absolute" ? `${look.bodyBox.x}%` : undefined}
-        style:top={look.positioning === "absolute" ? `${look.bodyBox.y}%` : undefined}
-        style:width={look.positioning === "absolute" ? `${look.bodyBox.width}%` : undefined}
-        style:height={look.positioning === "absolute" ? `${look.bodyBox.height}%` : undefined}
-        style:z-index={look.positioning === "absolute" ? look.bodyBox.zIndex : undefined}
       >
         {isStage ? slide.body : stripChords(slide.body)}
       </p>
@@ -335,11 +341,15 @@
   .look-body {
     position: relative;
     z-index: 1;
+    width: var(--look-element-width, fit-content);
+    max-width: var(--look-element-max-width, 100%);
+    height: var(--look-element-height, auto);
+    align-self: var(--look-element-align-self, center);
   }
 
   /* FreeShow-style absolute layout: each text role becomes an explicit,
      draggable bounding box positioned by the geometry injected as inline
-     styles (left/top/width/height/z-index) from the Look. */
+     styles and CSS variables from the shared Look layout helper. */
   .slide-render.absolute .look-title,
   .slide-render.absolute .look-body {
     position: absolute;
@@ -349,11 +359,7 @@
     box-sizing: border-box;
     margin: 0;
     overflow: hidden;
-    text-align: center;
     white-space: pre-wrap;
-  }
-  .slide-render.absolute .look-body {
-    max-width: none;
   }
 
   .look-title {
@@ -373,7 +379,6 @@
     font-size: var(--look-body-size, clamp(1.25rem, 4.5vmin, 5rem));
     font-weight: 400;
     margin: 0;
-    max-width: 80%;
     line-height: var(--look-body-line-height, 1.4);
     white-space: pre-wrap;
     text-shadow: 0 2px 20px rgba(0, 0, 0, 0.4);
@@ -396,13 +401,11 @@
   .chord-line {
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
+    justify-content: var(--look-line-justify, center);
     gap: 0;
     line-height: 1.1;
     width: 100%;
   }
-  .slide-render.pos-top .chord-line { justify-content: flex-start; }
-  .slide-render.pos-bottom .chord-line { justify-content: flex-end; }
   .chord-segment {
     display: inline-flex;
     flex-direction: column;

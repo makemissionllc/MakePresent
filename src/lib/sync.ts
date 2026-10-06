@@ -218,8 +218,11 @@ export const api = {
   upsertLook: (lookId: string | null, patch: LookPatch) =>
     invoke<ClientState>("upsert_look", { lookId, patch }),
 
-  deleteLook: (lookId: string) =>
-    invoke<ClientState>("delete_look", { lookId }),
+  deleteLook: (lookId: string, replacementLookId: string | null = null) =>
+    invoke<ClientState>("delete_look", { lookId, replacementLookId }),
+
+  resolveLookBackground: (background: Background) =>
+    invoke<Background>("resolve_look_background", { background }),
 
   setOutputLook: (lookId: string | null) =>
     invoke<ClientState>("set_output_look", { lookId }),
@@ -234,6 +237,9 @@ export const api = {
 
   setDefaultLook: (kind: string, lookId: string | null) =>
     invoke<ClientState>("set_default_look", { kind, lookId }),
+
+  setItemLook: (itemId: string, lookId: string | null) =>
+    invoke<ClientState>("set_item_look", { itemId, lookId }),
 
   setExitAnimation: (path: string | null) =>
     invoke<ClientState>("set_exit_animation", { path }),

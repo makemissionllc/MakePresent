@@ -21,9 +21,10 @@
     /** Unique prefix so radio groups stay distinct when two editors mount. */
     uid: string;
     onChange: (patch: TextStylePatch) => void;
+    showAlignment?: boolean;
   }
 
-  let { role, style, uid, onChange }: Props = $props();
+  let { role, style, uid, onChange, showAlignment = true }: Props = $props();
 
   const s: TextStyle = $derived(
     style ?? (role === "title" ? DEFAULT_TITLE_STYLE : DEFAULT_BODY_STYLE),
@@ -50,7 +51,7 @@
 <div class="ts-section">
   <span class="ts-head">{heading} <span class="ts-sub">— {sub}</span></span>
 
-  <div class="ts-row" role="radiogroup" aria-label="{heading} horizontal alignment">
+  {#if showAlignment}<div class="ts-row" role="radiogroup" aria-label="{heading} horizontal alignment">
     <span class="ts-label">Align</span>
     <span class="ts-seg-group">
       {#each ALIGNS as a (a.value)}
@@ -65,7 +66,7 @@
         </label>
       {/each}
     </span>
-  </div>
+  </div>{/if}
 
   <div class="ts-row">
     <label class="ts-field">

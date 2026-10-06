@@ -237,6 +237,18 @@ pub struct TextStyle {
     /// Horizontal alignment of this element (default centre).
     #[serde(default)]
     pub align: HAlign,
+    #[serde(default)]
+    pub bold: bool,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub italic: bool,
+    #[serde(default)]
+    pub all_caps: bool,
+    #[serde(default = "default_true")]
+    pub shrink_to_fit: bool,
+    #[serde(default)]
+    pub min_size: Option<u32>,
     /// Line height multiplier (default 1.1 title / 1.4 body, matching the
     /// long-standing renderer CSS so legacy projects render identically).
     #[serde(default = "default_line_height")]
@@ -285,6 +297,12 @@ impl Default for TextStyle {
     fn default() -> Self {
         Self {
             align: HAlign::Center,
+            bold: false,
+            color: None,
+            italic: false,
+            all_caps: false,
+            shrink_to_fit: true,
+            min_size: None,
             line_height: default_line_height(),
             shadow_blur: default_shadow_blur(),
             shadow_x: 0.0,
@@ -304,6 +322,7 @@ impl TextStyle {
         Self {
             line_height: 1.1,
             shadow_blur: 24.0,
+            min_size: Some(24),
             ..Self::default()
         }
     }
@@ -431,6 +450,9 @@ pub struct Project {
     /// Shared background overrides keyed by playlist item id.
     #[serde(default)]
     pub item_backgrounds: HashMap<String, Background>,
+    /// Per-item Output Look overrides. Empty for legacy projects.
+    #[serde(default)]
+    pub item_looks: HashMap<String, String>,
     /// Named style profiles (Looks) that outputs render against. Stored with
     /// the project so they save/load with autosave. Defaults are seeded on new
     /// (and legacy) projects.
@@ -477,6 +499,7 @@ impl Project {
                 auto_advance_secs: None,
             }],
             item_backgrounds: HashMap::new(),
+            item_looks: HashMap::new(),
             looks: vec![Look::main_default(), Look::stage_default()],
             live: None,
             show_text: true,
@@ -576,16 +599,64 @@ impl Project {
         if let Some(background) = slide.item_id.as_ref().and_then(|id| self.item_backgrounds.get(id)) {
             return background.clone();
         }
-        let configured_id = match slide.kind {
+        let kind_look_id = match slide.kind {
             SlideKind::Scripture => defaults.scripture.as_deref(),
             SlideKind::Song => defaults.song.as_deref(),
             SlideKind::Generic => defaults.generic.as_deref(),
         };
-        let look = configured_id
+        let look = slide.item_id.as_ref().and_then(|id| self.item_looks.get(id))
             .and_then(|id| self.find_look(id))
+            .or_else(|| kind_look_id
+            .and_then(|id| self.find_look(id))
+            )
             .or_else(|| self.looks.iter().find(|look| look.name == "Main"))
             .or_else(|| self.looks.first());
         look.and_then(|look| look.background.clone()).unwrap_or_default()
+    }
+
+    /// Resolve the Output Look from explicit item override, assigned kind Look,
+    /// then the Output mapping. Old projects with no kind assignment therefore
+    /// retain their prior Output mapping unchanged.
+    pub fn effective_output_look_id(
+        &self,
+        slide: &Slide,
+        defaults: &DefaultLooks,
+        output_look_id: Option<&str>,
+    ) -> Option<String> {
+        let item = slide.item_id.as_ref().and_then(|id| self.item_looks.get(id)).map(String::as_str);
+        let kind = match slide.kind {
+            SlideKind::Song => defaults.song.as_deref(),
+            SlideKind::Scripture => defaults.scripture.as_deref(),
+            SlideKind::Generic => defaults.generic.as_deref(),
+        };
+        let item = item.filter(|id| self.find_look(id).is_some());
+        let kind = kind.filter(|id| self.find_look(id).is_some());
+        let output = output_look_id.filter(|id| self.find_look(id).is_some());
+        item.or(kind).or(output)
+            .or_else(|| self.looks.iter().find(|look| look.name == "Main").map(|look| look.id.as_str()))
+            .or_else(|| self.looks.first().map(|look| look.id.as_str()))
+            .map(str::to_string)
+    }
+
+    pub fn remove_look_and_reassign(&mut self, look_id: &str, replacement: Option<&str>) -> Result<Option<String>, String> {
+        if !self.looks.iter().any(|look| look.id == look_id) {
+            return Err(format!("look {look_id} not found"));
+        }
+        if let Some(id) = replacement {
+            if id == look_id || !self.looks.iter().any(|look| look.id == id) {
+                return Err("Choose a different existing Look as the replacement.".into());
+            }
+        }
+        self.looks.retain(|look| look.id != look_id);
+        self.ensure_default_looks();
+        let fallback = replacement.map(str::to_string)
+            .or_else(|| self.looks.iter().find(|look| look.name == "Main").map(|look| look.id.clone()))
+            .or_else(|| self.looks.first().map(|look| look.id.clone()));
+        for assigned in self.item_looks.values_mut() {
+            if assigned == look_id { if let Some(id) = &fallback { *assigned = id.clone(); } }
+        }
+        self.modified_at = now_iso();
+        Ok(fallback)
     }
 
     pub fn effective_backgrounds(&self, defaults: &DefaultLooks) -> HashMap<String, Background> {
@@ -700,6 +771,9 @@ pub struct ClientState {
     /// Rust-resolved background for each slide; derived at snapshot time and never persisted.
     #[serde(default)]
     pub effective_backgrounds: HashMap<String, Background>,
+    /// Rust-resolved Output Look id per playlist item; renderers only look up the id.
+    #[serde(default)]
+    pub effective_item_look_ids: HashMap<String, String>,
     pub notice: Option<Notice>,
     pub output: OutputView,
     pub stage: StageView,
@@ -830,6 +904,7 @@ pub fn remove_playlist_item(project: &mut Project, item_id: &str) -> Result<bool
     let removed_live = project.live.as_ref().is_some_and(|id| removed.contains(id));
     project.slides.retain(|s| !removed.contains(&s.id));
     project.item_backgrounds.remove(item_id);
+    project.item_looks.remove(item_id);
     if removed_live { project.live = None; }
     if project.selected.as_ref().is_some_and(|id| removed.contains(id)) {
         project.selected = project.slides.first().map(|s| s.id.clone());
@@ -1664,6 +1739,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_look_without_alignment_loads_with_unchanged_centered_styles() {
+        let project = Project::new("Legacy alignment");
+        let mut raw = serde_json::to_value(&project).unwrap();
+        for look in raw["looks"].as_array_mut().unwrap() {
+            for role in ["titleStyle", "bodyStyle"] {
+                look[role].as_object_mut().unwrap().remove("align");
+            }
+        }
+        let data_dir = std::env::temp_dir().join(format!("makrstudio-legacy-align-{}", Uuid::new_v4()));
+        fs::create_dir_all(&data_dir).unwrap();
+        let source = serde_json::to_string(&raw).unwrap();
+        fs::write(current_project_path(&data_dir), &source).unwrap();
+        let restored = recover_or_seed(&data_dir).0;
+        assert_eq!(restored.looks, project.looks);
+        assert_eq!(fs::read_to_string(current_project_path(&data_dir)).unwrap(), source);
+        fs::remove_dir_all(data_dir).unwrap();
+    }
+
+    #[test]
+    fn all_project_creation_and_load_paths_restore_main_and_stage_looks() {
+        let assert_defaults = |project: &Project| {
+            for name in ["Main", "Stage"] {
+                assert!(project.looks.iter().any(|look| look.name == name), "missing {name}");
+            }
+            assert_ne!(project.looks[0].id, project.looks[1].id);
+        };
+        // These are the constructors used by new_project and new_project_from_preset.
+        assert_defaults(&Project::new("New service"));
+        for preset in default_presets() {
+            assert_defaults(&Project::from_preset("New preset", "16:9", Transition::Cut, &preset));
+        }
+        let root = std::env::temp_dir().join(format!("makrstudio-look-loads-{}", Uuid::new_v4()));
+        assert_defaults(&recover_or_seed(&root.join("new-install")).0);
+        for empty_array in [false, true] {
+            let mut legacy = serde_json::to_value(Project::new("Legacy service")).unwrap();
+            if empty_array { legacy["looks"] = serde_json::json!([]); }
+            else { legacy.as_object_mut().unwrap().remove("looks"); }
+            let raw = serde_json::to_string(&legacy).unwrap();
+            for source in ["session", "autosave", "snapshot"] {
+                let data_dir = root.join(format!("{source}-{empty_array}"));
+                fs::create_dir_all(versions_dir(&data_dir)).unwrap();
+                let path = match source {
+                    "session" => data_dir.join("service.json"),
+                    "snapshot" => versions_dir(&data_dir).join("2026-10-06.json"),
+                    _ => current_project_path(&data_dir),
+                };
+                fs::write(&path, &raw).unwrap();
+                if source == "session" {
+                    write_session(&data_dir, &Session {
+                        project_path: Some(path.to_string_lossy().into_owned()),
+                        last_saved_at: None, last_open_at: None, clean_shutdown: true,
+                    }).unwrap();
+                }
+                let loaded = recover_or_seed(&data_dir).0;
+                assert_defaults(&loaded);
+                assert_eq!(loaded.name, "Legacy service");
+                assert_eq!(loaded.slides[0].body, legacy["slides"][0]["body"].as_str().unwrap());
+                // Migration repairs memory without rewriting the source project.
+                assert_eq!(fs::read_to_string(path).unwrap(), raw);
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn overlay_store_round_trips_through_atomic_file() {
         let data_dir = std::env::temp_dir().join(format!("makrstudio-overlays-{}", Uuid::new_v4()));
         let store = OverlayStore {
@@ -1802,6 +1942,69 @@ mod tests {
         });
         let template: PlaylistTemplate = serde_json::from_value(legacy_template).unwrap();
         assert!(template.item_backgrounds.is_empty());
+    }
+
+    #[test]
+    fn output_look_resolution_uses_item_then_kind_then_output_and_legacy_mapping() {
+        let mut project = Project::test();
+        let main = project.looks.iter().find(|look| look.name == "Main").unwrap().id.clone();
+        let ids = ["item-look", "kind-look", "output-look"].map(str::to_string);
+        for id in &ids {
+            let mut look = Look::main_default();
+            look.id = id.clone();
+            look.name = id.clone();
+            project.looks.push(look);
+        }
+        let mut slide = test_slide("song", Some("item-a"), Some("song-a"));
+        slide.kind = SlideKind::Song;
+        let mut defaults = DefaultLooks::default();
+        defaults.song = Some(ids[1].clone());
+        project.item_looks.insert("item-a".into(), ids[0].clone());
+        assert_eq!(project.effective_output_look_id(&slide, &defaults, Some(&ids[2])), Some(ids[0].clone()));
+        project.item_looks.clear();
+        assert_eq!(project.effective_output_look_id(&slide, &defaults, Some(&ids[2])), Some(ids[1].clone()));
+        defaults.song = None;
+        assert_eq!(project.effective_output_look_id(&slide, &defaults, Some(&ids[2])), Some(ids[2].clone()));
+        assert_eq!(project.effective_output_look_id(&slide, &defaults, None), Some(main));
+    }
+
+    #[test]
+    fn legacy_look_text_style_defaults_keep_existing_renderer_settings() {
+        let mut look = Look::main_default();
+        let mut json = serde_json::to_value(&look).unwrap();
+        for role in ["titleStyle", "bodyStyle"] {
+            let style = json[role].as_object_mut().unwrap();
+            for key in ["bold", "italic", "allCaps", "shrinkToFit", "minSize"] { style.remove(key); }
+        }
+        look = serde_json::from_value(json).unwrap();
+        assert!(!look.title_style.bold && !look.title_style.italic && !look.title_style.all_caps);
+        assert!(look.title_style.shrink_to_fit);
+        assert_eq!(look.title_style.min_size, None);
+        assert_eq!(look.body_style.min_size, None);
+    }
+
+    #[test]
+    fn deleting_a_mapped_look_reassigns_item_override_safely() {
+        let mut project = Project::test();
+        let main = project.looks.iter().find(|look| look.name == "Main").unwrap().id.clone();
+        let mut alternate = Look::main_default();
+        alternate.id = "alternate".into();
+        project.looks.push(alternate);
+        project.item_looks.insert("item".into(), "alternate".into());
+        assert_eq!(project.remove_look_and_reassign("alternate", Some(&main)).unwrap(), Some(main.clone()));
+        assert_eq!(project.item_looks.get("item"), Some(&main));
+        assert!(project.remove_look_and_reassign(&main, Some(&main)).is_err());
+    }
+
+    #[test]
+    fn look_json_export_import_roundtrip_keeps_all_fields() {
+        let mut look = Look::main_default();
+        look.title_style.bold = true;
+        look.title_style.min_size = Some(31);
+        look.background = Some(Background::Image { path: "/cache/hash.png".into(), hash: "hash".into(), thumb: "/cache/hash.jpg".into() });
+        let encoded = serde_json::to_string(&look).unwrap();
+        let decoded: Look = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, look);
     }
 
     #[test]
@@ -2051,7 +2254,7 @@ fn cull_snapshots(versions: &Path, max: usize) {
 
 fn load_from(path: &Path) -> Option<Project> {
     let raw = fs::read_to_string(path).ok()?;
-    let project: Project = serde_json::from_str(&raw).ok()?;
+    let mut project: Project = serde_json::from_str(&raw).ok()?;
     if project.schema_version != SCHEMA_VERSION {
         eprintln!(
             "project {} uses schema v{}, expected v{SCHEMA_VERSION}",
@@ -2060,6 +2263,7 @@ fn load_from(path: &Path) -> Option<Project> {
         );
         return None;
     }
+    project.ensure_default_looks();
     Some(project)
 }
 

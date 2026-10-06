@@ -700,6 +700,8 @@ pub fn run() {
             commands::set_ndi_look,
             commands::get_default_looks,
             commands::set_default_look,
+            commands::set_item_look,
+            commands::resolve_look_background,
             commands::set_exit_animation,
             commands::set_ndi_enabled,
             commands::start_ndi_scan,

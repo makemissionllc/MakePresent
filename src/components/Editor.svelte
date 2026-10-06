@@ -206,10 +206,11 @@
   let isDragging = $state(false);
   let dragType = $state<string | null>(null);
   let dragPayload = $state<any>(null);
-  let pointerDropTarget = $state<{ kind: "slide" | "item" | "grid" | "playlist" | "external" | "library" | "background-chip" | "other"; index?: number; id?: string } | null>(null);
+  let pointerDropTarget = $state<{ kind: "slide" | "item" | "grid" | "playlist" | "external" | "library" | "background-chip" | "look-canvas" | "other"; index?: number; id?: string } | null>(null);
   let nativeDropTarget = $state<string | null>(null);
   let nativeDropMedia = false;
   let nativeDropSongs = false;
+  let lookBackgroundDrop = $state<{ background: Background; token: number } | null>(null);
 
   // External OS file drag-and-drop — images/videos create new media slides
   let externalDragActive = $state(false);
@@ -477,6 +478,9 @@
   const outputPreviewLook = $derived.by(() => {
     const looks = appState?.looks ?? [];
     if (looks.length === 0) return null;
+    const resolvedId = outputPreviewSlide?.itemId ? appState?.effectiveItemLookIds?.[outputPreviewSlide.itemId] : null;
+    const resolved = resolvedId ? looks.find((look) => look.id === resolvedId) : null;
+    if (resolved) return resolved;
     const mapped = looks.find((l) => l.id === appState?.outputLookId);
     if (mapped) return mapped;
     return looks.find((l) => l.name === "Main") ?? looks[0] ?? null;
@@ -627,6 +631,11 @@
       if (selectedItemId === item.id) selectedItemId = items[0]?.id ?? null;
       if (appState.project.live) followLiveItem(appState);
     } catch (e) { errorMsg = String(e); }
+  }
+
+  async function setItemLook(item: PlaylistItem, lookId: string): Promise<void> {
+    try { appState = await api.setItemLook(item.id, lookId || null); }
+    catch (e) { errorMsg = String(e); }
   }
 
   function goLive(slide: Slide): void {
@@ -890,6 +899,7 @@
   }
 
   function locateDropTarget(target: Element | null, point: PointerDragPoint): NonNullable<typeof pointerDropTarget> | null {
+    if (target?.closest("[data-look-canvas]")) return { kind: "look-canvas" };
     const slide = target?.closest<HTMLElement>("[data-drop-slide-index]");
     if (slide) {
       const index = Number(slide.dataset.dropSlideIndex);
@@ -1958,7 +1968,7 @@
       tourActive ||
       helpOpen
     ) return;
-    if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && !isTextInputFocused()) {
+    if (centralView === "slides" && (e.key === "ArrowRight" || e.key === "ArrowLeft") && !isTextInputFocused()) {
       // Reuse existing next/previous logic — same path as triggers/UI clicks
       if (e.key === "ArrowRight") {
         e.preventDefault();
@@ -2132,7 +2142,14 @@
         await handleLibraryFiles(songPaths as any);
       }
       if (mediaPaths.length > 0) {
-        if (hit?.kind === "slide" && hit.id) {
+        if (hit?.kind === "look-canvas" && centralView === "looks") {
+          for (const path of mediaPaths) {
+            try {
+              const asset = await api.importMedia(path);
+              lookBackgroundDrop = { background: asset.background, token: Date.now() };
+            } catch (error) { errorMsg = `Could not use ${path.split(/[\\/]/).pop()}: ${String(error)}`; }
+          }
+        } else if (hit?.kind === "slide" && hit.id) {
           for (const path of mediaPaths) {
             try {
               const asset = await api.importMedia(path);
@@ -2174,7 +2191,7 @@
           const paths: string[] = Array.isArray(payload.paths) ? payload.paths : [];
           const hit = payload.position ? nativeDropHit(payload.position) : null;
           const hitType = hit?.kind === "library" ? nativeDropSongs : nativeDropMedia;
-          nativeDropTarget = hitType ? hit?.kind === "slide" ? hit.id ? `slide:${hit.id}` : `gap:${hit.index ?? 0}` : hit?.kind === "item" ? hit.id ? `item:${hit.id}` : `item-gap:${hit.index ?? 0}` : hit?.kind === "background-chip" ? "background-chip" : hit ? `${hit.kind}:${hit.index ?? ""}` : null : null;
+          nativeDropTarget = hitType ? hit?.kind === "look-canvas" ? "look-canvas" : hit?.kind === "slide" ? hit.id ? `slide:${hit.id}` : `gap:${hit.index ?? 0}` : hit?.kind === "item" ? hit.id ? `item:${hit.id}` : `item-gap:${hit.index ?? 0}` : hit?.kind === "background-chip" ? "background-chip" : hit ? `${hit.kind}:${hit.index ?? ""}` : null : null;
           if (hit?.kind === "slide" && !hit.id) dragOverIndex = hit.index ?? null;
           if (hit?.kind === "item") itemDropIndex = hit.index ?? null;
           const isDrop = payload.type === "drop";
@@ -2380,6 +2397,7 @@
           }}
         >
           {#each items as item, i (item.id)}
+            {@const usedLookId = appState?.effectiveItemLookIds?.[item.id]}
             {#if itemDropIndex === i}
               <div class="drop-indicator" aria-hidden="true"></div>
             {/if}
@@ -2418,6 +2436,16 @@
                 <button class="delete" title="Rename item" aria-label="Rename item" onclick={() => { renamingItemId=item.id; renameDraft=item.name; }}>✎</button>
                 <button class="delete" title="Delete item" aria-label="Delete item" onclick={() => void deleteItem(item)}>×</button>
               {/if}
+              <details class="item-look-menu">
+                <summary title="Item Look">⋯</summary>
+                <label>Use a different Look for this item
+                  <select value={appState?.project.itemLooks?.[item.id] ?? ""} onchange={(e) => void setItemLook(item, (e.currentTarget as HTMLSelectElement).value)}>
+                    <option value="">Automatic</option>
+                    {#each appState?.looks ?? [] as look (look.id)}<option value={look.id}>{look.name}</option>{/each}
+                  </select>
+                </label>
+                <small>Slides use {appState?.looks.find((look) => look.id === usedLookId)?.name ?? "the default Look"}.</small>
+              </details>
             </li>
           {/each}
           {#if itemDropIndex === items.length}
@@ -2479,14 +2507,14 @@
         </div>
         <div class="workspace-switch" class:looks-active={centralView === "looks"} aria-label="Workspace view">
           <button class="ws-btn" class:active={centralView === "slides"} aria-pressed={centralView === "slides"} onclick={() => (centralView = "slides")} aria-label="Open slide workspace"><span aria-hidden="true">▦</span> Slides</button>
-          <button class="ws-btn" class:active={centralView === "looks"} aria-pressed={centralView === "looks"} onclick={() => { centralView = "looks"; use("looks"); }} aria-label="Open Look editor"><span aria-hidden="true">◉</span> Looks</button>
+          <button class="ws-btn" class:active={centralView === "looks"} aria-pressed={centralView === "looks"} onclick={(e) => { centralView = "looks"; use("looks"); const content = e.currentTarget.closest(".editor-content"); if (content) content.scrollTop = 0; }} aria-label="Open Look editor"><span aria-hidden="true">◉</span> Looks</button>
         </div>
       </div>
       {#if centralView === "slides" && showHint(onboarding, "looks")}
         <p class="hint-line looks-hint">Looks control fonts and layout on each screen — open the Looks view to style them.<button class="hint-x" title="Dismiss" aria-label="Dismiss Looks hint" onclick={() => dismiss("looks")}>×</button></p>
       {/if}
       {#if centralView === "looks"}
-        <LookEditorView appState={appState} onUpdate={(s: ClientState) => (appState = s)} onError={(m: string) => (errorMsg = m)} />
+        <LookEditorView appState={appState} dropBackground={lookBackgroundDrop} nativeDropActive={nativeDropTarget === "look-canvas"} onUpdate={(s: ClientState) => (appState = s)} onError={(m: string) => (errorMsg = m)} />
       {:else if showDetail && selected}
         <div class="detail-header">
           <button class="ghost" onclick={() => closeDetail()} title="Back to grid">← Grid</button>
@@ -6289,4 +6317,5 @@
     .sidebar:not(.output-panel) { overflow: visible; }
     .detail-workspace { gap: 18px; }
   }
+  .editor-content:has(:global(.look-editor-view)) .editor-heading { position:sticky; top:-22px; z-index:10; background:var(--bg); padding-top:22px; margin-top:-22px; }
 </style>

@@ -206,6 +206,7 @@ impl AppState {
     }
 
     pub fn apply_settings(&self, settings: Settings) {
+        self.project.write().unwrap().ensure_default_looks();
         *self.settings.write().unwrap() = settings;
     }
 
@@ -265,6 +266,19 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn applying_loaded_settings_restores_empty_project_looks() {
+        let state = AppState::default();
+        let slide_ids: Vec<_> = state.project.read().unwrap().slides.iter().map(|s| s.id.clone()).collect();
+        state.project.write().unwrap().looks.clear();
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        state.apply_settings(settings);
+        let project = state.project.read().unwrap();
+        assert!(project.looks.iter().any(|look| look.name == "Main"));
+        assert!(project.looks.iter().any(|look| look.name == "Stage"));
+        assert_eq!(project.slides.iter().map(|s| s.id.clone()).collect::<Vec<_>>(), slide_ids);
+    }
 
     #[test]
     fn ack_tracks_windows_independently() {

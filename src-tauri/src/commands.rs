@@ -48,6 +48,11 @@ fn snapshot(app: &AppHandle) -> ClientState {
 
     let library = state.library.read().unwrap().clone();
     let items = derive_items(&project_snapshot, &library);
+    let effective_item_look_ids = items.iter().filter_map(|item| {
+        let slide = item.slide_ids.first().and_then(|id| project_snapshot.find(id))?;
+        project_snapshot.effective_output_look_id(slide, &settings.default_looks, settings.output_look_id.as_deref())
+            .map(|id| (item.id.clone(), id))
+    }).collect();
     let live_credit_line = current
         .as_ref()
         .and_then(|slide| slide.library_id.as_deref())
@@ -58,6 +63,7 @@ fn snapshot(app: &AppHandle) -> ClientState {
         project: project_snapshot,
         items,
         effective_backgrounds,
+        effective_item_look_ids,
         notice: state.notice.read().unwrap().clone(),
         output: OutputView {
             visible: windows::output_visible(app),
@@ -393,7 +399,8 @@ fn mutate<R>(
     Ok(snap)
 }
 
-fn replace_project(app: &AppHandle, project: Project) -> Result<ClientState, String> {
+fn replace_project(app: &AppHandle, mut project: Project) -> Result<ClientState, String> {
+    project.ensure_default_looks();
     let state = app.state::<AppState>();
     *state.project.write().unwrap() = project;
     state.set_notice(None);
@@ -917,6 +924,13 @@ fn transition_value(t: Transition) -> &'static str {
 #[serde(rename_all = "camelCase")]
 pub struct TextStylePatch {
     pub align: Option<crate::project::HAlign>,
+    pub bold: Option<bool>,
+    #[serde(default)]
+    pub color: Option<Option<String>>,
+    pub italic: Option<bool>,
+    pub all_caps: Option<bool>,
+    pub shrink_to_fit: Option<bool>,
+    pub min_size: Option<u32>,
     pub line_height: Option<f32>,
     pub shadow_blur: Option<f32>,
     pub shadow_x: Option<f32>,
@@ -1050,6 +1064,12 @@ fn apply_text_style_patch(style: &mut crate::project::TextStyle, patch: TextStyl
     if let Some(align) = patch.align {
         style.align = align;
     }
+    if let Some(value) = patch.bold { style.bold = value; }
+    if let Some(value) = patch.color { style.color = value; }
+    if let Some(value) = patch.italic { style.italic = value; }
+    if let Some(value) = patch.all_caps { style.all_caps = value; }
+    if let Some(value) = patch.shrink_to_fit { style.shrink_to_fit = value; }
+    if let Some(value) = patch.min_size { style.min_size = Some(value.clamp(8, 300)); }
     if let Some(line_height) = patch.line_height {
         style.line_height = line_height.clamp(0.8, 3.0);
     }
@@ -1094,23 +1114,20 @@ fn clamp_box(mut b: BoxGeometry) -> BoxGeometry {
 /// Delete a Look. Outputs still mapped to it fall back to the first remaining
 /// look rather than rendering un-styled.
 #[tauri::command]
-pub fn delete_look(app: AppHandle, look_id: String) -> Result<ClientState, String> {
+pub fn delete_look(app: AppHandle, look_id: String, replacement_look_id: Option<String>) -> Result<ClientState, String> {
     let state = app.state::<AppState>();
-    {
+    let fallback_id = {
         let mut project = state.project.write().unwrap();
-        if !project.looks.iter().any(|l| l.id == look_id) {
-            return Err(format!("look {look_id} not found"));
-        }
-        project.looks.retain(|l| l.id != look_id);
-        project.ensure_default_looks();
-        project.modified_at = now_iso();
-    }
+        project.remove_look_and_reassign(&look_id, replacement_look_id.as_deref())?
+    };
     state.request_save();
     // Point any output that referenced the deleted look at the default.
     {
         let settings = state.current_settings();
         let looks = state.project.read().unwrap().looks.clone();
-        let first_id = looks.first().map(|l| l.id.clone());
+        let first_id = fallback_id.filter(|id| looks.iter().any(|look| &look.id == id))
+            .or_else(|| looks.iter().find(|look| look.name == "Main").map(|look| look.id.clone()))
+            .or_else(|| looks.first().map(|l| l.id.clone()));
         let mut settings = settings;
         if settings.output_look_id.as_deref() == Some(look_id.as_str()) {
             settings.output_look_id = first_id.clone();
@@ -1119,7 +1136,10 @@ pub fn delete_look(app: AppHandle, look_id: String) -> Result<ClientState, Strin
             settings.stage_look_id = first_id.clone();
         }
         if settings.ndi_look_id.as_deref() == Some(look_id.as_str()) {
-            settings.ndi_look_id = first_id;
+            settings.ndi_look_id = first_id.clone();
+        }
+        for mapped in [&mut settings.default_looks.song, &mut settings.default_looks.scripture, &mut settings.default_looks.generic] {
+            if mapped.as_deref() == Some(look_id.as_str()) { *mapped = replacement_look_id.clone().or_else(|| first_id.clone()); }
         }
         state.apply_settings(settings);
         let _ = write_settings(&state.app_data_dir(), &state.current_settings());
@@ -1180,7 +1200,42 @@ pub fn set_default_look(app: AppHandle, kind: String, look_id: Option<String>) -
             look_id.unwrap_or_else(|| "none (Main)".to_string())
         ),
     );
-    Ok(snapshot(&app))
+    let snap = snapshot(&app);
+    let _ = app.emit("state", &snap);
+    Ok(snap)
+}
+
+#[tauri::command]
+pub fn set_item_look(app: AppHandle, item_id: String, look_id: Option<String>) -> Result<ClientState, String> {
+    if let Some(id) = look_id.as_deref() {
+        if app.state::<AppState>().project.read().unwrap().find_look(id).is_none() {
+            return Err(format!("look {id} not found"));
+        }
+    }
+    mutate(&app, |project| {
+        if !project.slides.iter().any(|slide| slide.item_id.as_deref() == Some(&item_id)) {
+            return Err(format!("playlist item {item_id} not found"));
+        }
+        if let Some(id) = &look_id { project.item_looks.insert(item_id.clone(), id.clone()); }
+        else { project.item_looks.remove(&item_id); }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn resolve_look_background(app: AppHandle, background: Background) -> Result<Background, String> {
+    let data_dir = app.state::<AppState>().app_data_dir();
+    match background {
+        Background::Image { hash, .. } => {
+            let (path, thumb) = crate::media::resolve_cached_media(&data_dir, &hash)?;
+            Ok(Background::Image { path: path.to_string_lossy().to_string(), hash, thumb: thumb.to_string_lossy().to_string() })
+        }
+        Background::Video { hash, duration_ms, .. } => {
+            let (path, thumb) = crate::media::resolve_cached_media(&data_dir, &hash)?;
+            Ok(Background::Video { path: path.to_string_lossy().to_string(), hash, thumb: thumb.to_string_lossy().to_string(), duration_ms })
+        }
+        other => Ok(other),
+    }
 }
 
 /// Set (or clear, with `None`) the optional exit/outro animation video played
@@ -3545,6 +3600,34 @@ pub fn set_stage_network_pin(app: AppHandle, pin: String) -> Result<ClientState,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn look_alignment_patch_survives_save_and_load_in_both_positioning_modes() {
+        let data_dir = std::env::temp_dir().join(format!("makrstudio-align-{}", Uuid::new_v4()));
+        for mode in ["auto", "absolute"] {
+            for (title, body) in [("left", "right"), ("center", "left"), ("right", "center")] {
+                let mut project = Project::new("Alignment roundtrip");
+                let id = project.looks[0].id.clone();
+                let patch: LookPatch = serde_json::from_value(serde_json::json!({
+                    "positioning": mode,
+                    "titleStyle": { "align": title },
+                    "bodyStyle": { "align": body }
+                })).unwrap();
+                // Same patch application and persistence paths as upsert_look/autosave.
+                apply_look_patch(&mut project.looks[0], patch);
+                crate::project::persist(&project, &data_dir).unwrap();
+                let restored = crate::project::recover_or_seed(&data_dir).0;
+                let look = restored.find_look(&id).unwrap();
+                let json = serde_json::to_value(look).unwrap();
+                assert_eq!(json["titleStyle"]["align"], title);
+                assert_eq!(json["bodyStyle"]["align"], body);
+                assert_eq!(json["positioning"], mode);
+                assert_eq!(look.title_style, project.looks[0].title_style);
+                assert_eq!(look.body_style, project.looks[0].body_style);
+            }
+        }
+        std::fs::remove_dir_all(data_dir).unwrap();
+    }
 
     #[test]
     fn song_credit_line_is_formatted_and_disabled_by_default() {

@@ -104,6 +104,17 @@ pub fn thumbnail_path_for(data_dir: &Path, hash: &str) -> PathBuf {
     thumbnails_dir(data_dir).join(format!("{hash}.{THUMB_EXT}"))
 }
 
+/// Resolve a content-addressed asset within this install's managed media cache.
+pub fn resolve_cached_media(data_dir: &Path, hash: &str) -> Result<(PathBuf, PathBuf), String> {
+    let dir = media_dir(data_dir);
+    let entries = fs::read_dir(&dir).map_err(|_| format!("Media {hash} is missing from this computer."))?;
+    let path = entries.filter_map(Result::ok).map(|entry| entry.path()).find(|path| {
+        path.file_stem().and_then(|stem| stem.to_str()) == Some(hash) && path.is_file()
+    }).ok_or_else(|| format!("Media {hash} is missing from this computer."))?;
+    let thumb = thumbnail_path_for(data_dir, hash);
+    Ok((path, thumb))
+}
+
 /// Resolve the ffmpeg binary to an absolute path, deterministically.
 ///
 /// Root cause of the old "available / NOT available" flicker across launches:

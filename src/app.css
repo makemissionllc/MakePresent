@@ -76,6 +76,15 @@
   --semantic-neutral-bg: rgba(148, 163, 184, 0.08);
   --semantic-idle: #64748b;
 
+  /* Song section cues in the editor. Neutral covers every other slide title. */
+  --section-verse: #70a9ff;
+  --section-chorus: #e9a35a;
+  --section-bridge: #bd9cf4;
+  --section-pre-chorus: #66c9bd;
+  --section-tag: #e1c86b;
+  --section-ending: #e68ea2;
+  --section-neutral: var(--semantic-neutral);
+
   /* Spacing scale — generous, consistent */
   --space-1: 4px;
   --space-2: 8px;

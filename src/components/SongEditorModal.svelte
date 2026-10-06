@@ -95,6 +95,13 @@
       });
       if (initialLyricsId != null) void chooseLyrics(initialLyricsId);
       else if (initialTitle.trim().length >= 2) void searchLyrics(initialTitle);
+    } else {
+      lyricsSearchSeq++;
+      lyricsFetchSeq++;
+      if (searchTimer) {
+        clearTimeout(searchTimer);
+        searchTimer = null;
+      }
     }
   });
 

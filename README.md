@@ -1265,3 +1265,27 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **Renderers `Output.svelte:30` + `Stage.svelte:14`** (independently, same video): `subscribeExitOutro` (`sync.ts:102`) → full-bleed muted-autoplay `<video class="outro" z-index 50>` over slide + overlay layers; video `ended`/`error` → `emitOutroDone` (`sync.ts:110`) → backend exits early (atomic once-guard `outro.rs:75`). No click/Esc-to-skip — the cap alone guarantees shutdown. Editor ignores the event (it is already closing).
 - **Safety vs. existing paths:** single-instance second-launch path untouched (never quits); autosave-on-exit preserved (up-front persist + `finalize` at exit); ack heartbeat untouched — windows stay alive and keep acking every 5s during the ≤6s outro, far under the 12s stale threshold (`Editor.svelte:222`), so the outro can never read as a freeze. NDI deliberately **skipped** in this pass: the send path has no wired capture yet, so there is no pixel seam for outro frames (broadcaster keeps its last-frame keep-alive until `finalize` stops it) — tracked as a follow-up once capture exists.
 - **Verify:** `npm run check` 0 errors 0 warnings; `cargo check` OK (same 3 pre-existing `dead_code`); `cargo test` **64 passed** (also fixed the suite's pre-existing compile failure: test `Settings` literal was missing `default_looks` `commands.rs:3171`, plus 2 new tests `commands.rs:3216/3227`). Runtime verification status: **theoretical on all windows** — this environment is headless (no display server), so the tray-Quit → outro-play → capped-exit sequence was verified by code inspection + typecheck/tests only, not by running the app; same for NDI (no hardware/SDK here — and NDI is explicitly out of this pass). Manual when on hardware: set video → tray Quit with Output live → video plays full-bleed, Editor closes at once, app exits ≤6s; remove the file → Quit is instant; no video → Quit is instant.
+
+---
+
+## Changed (2026-10-06) — Phase 1 quick editor controls
+
+- **Editor cues:** `src/app.css` defines six song section colors plus neutral; `src/components/Editor.svelte` matches Verse, Chorus, Bridge, Pre-Chorus, Tag, and Ending/Outro from each slide's block title and shows the color on grid cards and playlist rows. Unknown titles stay neutral. Grid slide numbers now sit beside names.
+- **Grid and live controls:** `src/components/Editor.svelte` adds a Small/Medium/Large thumbnail slider saved in local storage; larger cards give the existing `SlideThumbnail` more room to render text. Previous/Next beside the Output preview call the existing `prev_slide`/`next_slide` commands and disable at playlist ends. No project schema or renderer logic changed.
+- **Verify:** `npm run check` 0 errors/0 warnings; `cargo check` succeeds with three pre-existing dead-code warnings (`audio.rs`, `media.rs`, `project.rs`); `cargo test` 68 passed, 2 hardware-dependent tests ignored; `npm run build` succeeds. Native window, display, and projection behavior could not be visually verified here.
+
+---
+
+## Changed (2026-10-06) — Phase 2 bottom content bar
+
+- **Layout:** `src/components/Editor.svelte` keeps the Playlist in the left rail and moves Songs, Scripture autocomplete, and the existing Browse Scripture dock into a bottom Songs/Scripture/Media bar. It starts collapsed, opens on a tab click, and keeps the existing under-700px stacked workspace. `src/components/GuidedTour.svelte` points its source step at the new location.
+- **Behavior:** Song and verse click/drag handlers are the same handlers after relocation; Ctrl/Cmd+K remains available. The Media tab uses `list_media`/`search_media` in a simple list. `src/lib/mediaSlide.ts` shares the existing name-only `add_slide` then `update_slide` background path with `src/components/GlobalSearch.svelte`. The thumbnail grid and filters belong to Phase 3.
+- **Verify:** `npm run check` 0 errors/0 warnings; `cargo check` passes with three pre-existing dead-code warnings; `cargo test` 68 passed, 2 hardware tests ignored; `npm run build` passes. Live drag/drop and window layout could not be visually verified in this environment.
+
+---
+
+## Changed (2026-10-06) — Phase 3 media browser
+
+- **Media tab:** `src/components/Editor.svelte` shows imported images and videos in a responsive thumbnail grid with All/Images/Videos filters. Cards use existing `list_media`/`search_media` results, show an explicit fallback when a thumbnail cannot load, and keep search/load/add failures visible inline.
+- **Add or place:** Clicking a card appends a media slide; dragging it to a Playlist or grid position places it there. `src/lib/mediaSlide.ts` reuses the name-only `add_slide`, `update_slide` background, and existing `reorder_slides` commands. No Rust schema, renderer logic, or dependencies changed.
+- **Verify:** `npm run check` 0 errors/0 warnings; `cargo check` passes with three pre-existing dead-code warnings; `cargo test` 68 passed, 2 hardware tests ignored; `npm run build` passes. Native thumbnail display and drag/drop behavior could not be visually verified here.

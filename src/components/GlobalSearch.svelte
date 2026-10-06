@@ -1,6 +1,7 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api } from "../lib/sync";
+  import { addCachedMediaSlide } from "../lib/mediaSlide";
   import type { Library, LyricsHit, MediaAsset, ScriptureMatch } from "../lib/types";
   import { isMedia } from "../lib/types";
   import { surface, veil } from "../lib/motion";
@@ -69,6 +70,12 @@
         inputEl?.focus();
         inputEl?.select();
       });
+    } else {
+      seq++;
+      if (debounce) {
+        clearTimeout(debounce);
+        debounce = null;
+      }
     }
   });
 
@@ -163,11 +170,7 @@
   async function insertMedia(asset: MediaAsset): Promise<void> {
     inserting = `media-${asset.hash}`;
     try {
-      const base = asset.fileName.replace(/\.[^/.]+$/, "") || "Media";
-      const created = await api.addSlide("", "", base);
-      const newId = created.project.slides.at(-1)?.id;
-      if (!newId) throw new Error("failed to create media slide");
-      await api.updateSlide(newId, { background: asset.background });
+      await addCachedMediaSlide(asset);
       onClose();
     } catch (e) {
       errorMsg = String(e);

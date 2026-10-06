@@ -6,8 +6,9 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { listen } from "@tauri-apps/api/event";
   import { api, subscribeAck, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, LyricsHit, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide } from "../lib/types";
+  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, DisplayInfo, Library, LibrarySong, LyricsHit, MediaAsset, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide } from "../lib/types";
   import { isMedia, isLiveCamera } from "../lib/types";
+  import { addCachedMediaSlide } from "../lib/mediaSlide";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
   import SlideThumbnail from "./SlideThumbnail.svelte";
@@ -79,12 +80,93 @@
   function isSongExpanded(song: LibrarySong): boolean {
     return expandedSongs.has(song.id) || librarySearch.trim().length > 0;
   }
-  // The Library is the "active" sidebar section while the operator searches it
-  // or browses an expanded song — same `.active` convention as the scripture
-  // section, so it earns the larger flex share (see `library-active` CSS).
-  const libraryActive = $derived(
-    librarySearch.trim().length > 0 || expandedSongs.size > 0,
-  );
+  // Content sources share one bottom bar; the running Playlist stays on the left.
+  type SourceTab = "songs" | "scripture" | "media";
+  let sourceTab = $state<SourceTab>("songs");
+  let sourceOpen = $state(false);
+  let mediaQuery = $state("");
+  let mediaResults = $state<MediaAsset[]>([]);
+  let mediaFilter = $state<"all" | "image" | "video">("all");
+  const visibleMediaResults = $derived(mediaFilter === "all"
+    ? mediaResults
+    : mediaResults.filter((asset) => asset.kind === mediaFilter));
+  let mediaLoading = $state(false);
+  let mediaError = $state<string | null>(null);
+  let mediaAdding = $state<string | null>(null);
+  let mediaThumbFailures = $state<Set<string>>(new Set());
+  let mediaSearchTimer: ReturnType<typeof setTimeout> | null = null;
+  let mediaSearchSeq = 0;
+
+  async function loadMedia(query = mediaQuery): Promise<void> {
+    const seq = ++mediaSearchSeq;
+    mediaLoading = true;
+    mediaError = null;
+    try {
+      const trimmed = query.trim();
+      const found = trimmed ? await api.searchMedia(trimmed) : await api.listMedia();
+      if (seq === mediaSearchSeq) mediaResults = found;
+    } catch (e) {
+      if (seq === mediaSearchSeq) mediaError = `Could not load media: ${String(e)}`;
+    } finally {
+      if (seq === mediaSearchSeq) mediaLoading = false;
+    }
+  }
+
+  function openSourceTab(tab: SourceTab): void {
+    if (sourceTab === "media" && tab !== "media") {
+      mediaSearchSeq++;
+      mediaLoading = false;
+      if (mediaSearchTimer) clearTimeout(mediaSearchTimer);
+    }
+    sourceTab = tab;
+    sourceOpen = true;
+    if (tab === "media") void loadMedia();
+  }
+
+  function toggleSourceBar(): void {
+    sourceOpen = !sourceOpen;
+    if (sourceOpen && sourceTab === "media") void loadMedia();
+    if (!sourceOpen) {
+      mediaSearchSeq++;
+      mediaLoading = false;
+      if (mediaSearchTimer) clearTimeout(mediaSearchTimer);
+    }
+  }
+
+  function onMediaQueryInput(event: Event): void {
+    mediaQuery = (event.currentTarget as HTMLInputElement).value;
+    mediaSearchSeq++;
+    mediaLoading = true;
+    if (mediaSearchTimer) clearTimeout(mediaSearchTimer);
+    mediaSearchTimer = setTimeout(() => void loadMedia(mediaQuery), 300);
+  }
+
+  async function addMediaFromBar(asset: MediaAsset): Promise<void> {
+    mediaAdding = asset.hash;
+    mediaError = null;
+    try {
+      appState = await addCachedMediaSlide(asset);
+    } catch (e) {
+      mediaError = `Could not add ${asset.fileName}: ${String(e)}`;
+      errorMsg = mediaError;
+    } finally {
+      mediaAdding = null;
+    }
+  }
+
+  function onMediaAssetDragStart(event: DragEvent, asset: MediaAsset): void {
+    isDragging = true;
+    dragType = "cached-media";
+    dragPayload = { type: "cached-media", hash: asset.hash };
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("text/plain", JSON.stringify(dragPayload));
+    }
+  }
+
+  function onMediaThumbError(hash: string): void {
+    mediaThumbFailures = new Set([...mediaThumbFailures, hash]);
+  }
   let settingsOpen = $state(false);
   let welcomeDismissed = $state(false);
   let importingMedia = $state(false);
@@ -181,7 +263,7 @@
     {
       eyebrow: "Songs & Scripture",
       title: "Your songs and verses live here",
-      body: "Search Scripture, browse by book → chapter → verse, or pull a song into the playlist. Ctrl+K searches everything at once.",
+      body: "Open Songs or Scripture in the bottom bar. Click to add, or drag into the Playlist. Ctrl+K searches everything at once.",
     },
     {
       eyebrow: "You're set",
@@ -191,6 +273,10 @@
   ];
 
   const showTour = $derived(tourActive && !showHub && !onboardingOpen && !helpOpen && !settingsOpen && !globalSearchOpen && appState !== null);
+
+  $effect(() => {
+    if (showTour && tourStep === 2) openSourceTab("songs");
+  });
 
   function finishOnboarding(action: "view" | "tour" | "settings" | "skip"): void {
     onboarding = dismissWelcome(onboarding);
@@ -269,6 +355,36 @@
     return "Untitled";
   }
 
+  // Match the on-screen block title, not a custom playlist label. Prefixes
+  // allow imported names such as "Chorus 1 - Part 2" to keep their section cue.
+  function sectionColor(title: string): string {
+    const label = title.trim().toLowerCase().replace(/[–—]/g, "-");
+    if (/^pre[-\s]?chorus\b/.test(label)) return "var(--section-pre-chorus)";
+    if (/^chorus\b/.test(label)) return "var(--section-chorus)";
+    if (/^verse\b/.test(label)) return "var(--section-verse)";
+    if (/^bridge\b/.test(label)) return "var(--section-bridge)";
+    if (/^tag\b/.test(label)) return "var(--section-tag)";
+    if (/^(?:ending|outro)\b/.test(label)) return "var(--section-ending)";
+    return "var(--section-neutral)";
+  }
+
+  const THUMBNAIL_SIZES = ["small", "medium", "large"] as const;
+  type ThumbnailSize = typeof THUMBNAIL_SIZES[number];
+  let thumbnailSize = $state<ThumbnailSize>("medium");
+  let thumbnailPreferenceError = $state<string | null>(null);
+  const thumbnailSizeIndex = $derived(THUMBNAIL_SIZES.indexOf(thumbnailSize));
+
+  function onThumbnailSizeInput(event: Event): void {
+    const index = Number((event.currentTarget as HTMLInputElement).value);
+    thumbnailSize = THUMBNAIL_SIZES[index] ?? "medium";
+    try {
+      window.localStorage.setItem("makrstudio.grid-thumbnail-size", thumbnailSize);
+      thumbnailPreferenceError = null;
+    } catch {
+      thumbnailPreferenceError = "Thumbnail size works for this session, but could not be saved on this device.";
+    }
+  }
+
   // Grid/detail toggle — grid is primary workspace, detail is reached via click
   let showDetail = $state(false);
   let detailFromGrid = $state(false);
@@ -319,6 +435,11 @@
     return looks.find((l) => l.name === "Main") ?? looks[0] ?? null;
   });
   const isOnAir = $derived(!!(appState?.output.visible && project?.live));
+  const liveSlideIndex = $derived(project?.live
+    ? project.slides.findIndex((slide) => slide.id === project.live)
+    : -1);
+  const canGoPrevious = $derived(liveSlideIndex > 0);
+  const canGoNext = $derived(liveSlideIndex >= 0 && liveSlideIndex < (project?.slides.length ?? 0) - 1);
 
   // Stage preview (consistent treatment, straightforward)
   const stagePreviewSlide = $derived.by(() => {
@@ -376,6 +497,10 @@
   function goLive(slide: Slide): void {
     selectedId = slide.id;
     void run(() => api.setLiveSlide(slide.id));
+  }
+
+  function stepLive(direction: "previous" | "next"): void {
+    void run(() => direction === "next" ? api.nextSlide() : api.prevSlide());
   }
 
   function openDetail(slide: Slide): void {
@@ -777,6 +902,21 @@
           }
         } catch (err: unknown) { errorMsg = String(err); }
       })();
+    } else if (payload.type === "cached-media" && payload.hash) {
+      const asset = mediaResults.find((item) => item.hash === payload.hash);
+      if (!asset) {
+        errorMsg = "That media item is no longer available. Reopen the Media tab and try again.";
+      } else {
+        mediaAdding = asset.hash;
+        mediaError = null;
+        void addCachedMediaSlide(asset, dragOverIndex ?? targetIdx)
+          .then((state) => (appState = state))
+          .catch((err: unknown) => {
+            mediaError = `Could not add ${asset.fileName}: ${String(err)}`;
+            errorMsg = mediaError;
+          })
+          .finally(() => (mediaAdding = null));
+      }
     }
 
     dragOverIndex = null;
@@ -918,6 +1058,7 @@
       }
     } finally {
       importingMedia = false;
+      if (sourceOpen && sourceTab === "media") void loadMedia();
       dragOverIndex = null;
       isDragging = false;
       externalDragActive = false;
@@ -1209,6 +1350,7 @@
         appState = await api.updateSlide(slide.id, {
           background: asset.background,
         });
+        if (sourceOpen && sourceTab === "media") void loadMedia();
       } finally {
         importingMedia = false;
       }
@@ -1589,11 +1731,11 @@
       if (e.key === "ArrowRight") {
         e.preventDefault();
         use("shortcuts");
-        void api.nextSlide().then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
+        stepLive("next");
       } else {
         e.preventDefault();
         use("shortcuts");
-        void api.prevSlide().then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
+        stepLive("previous");
       }
     }
   }
@@ -1705,6 +1847,12 @@
   }
 
   onMount(() => {
+    try {
+      const saved = window.localStorage.getItem("makrstudio.grid-thumbnail-size");
+      if (saved && THUMBNAIL_SIZES.includes(saved as ThumbnailSize)) thumbnailSize = saved as ThumbnailSize;
+    } catch {
+      thumbnailPreferenceError = "Thumbnail size preference could not be read on this device.";
+    }
     let unSub: () => void = () => {};
     let unAuto: () => void = () => {};
     let unLib: () => void = () => {};
@@ -1834,6 +1982,8 @@
       if (titleTimer) clearTimeout(titleTimer);
       if (bodyTimer) clearTimeout(bodyTimer);
       if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
+      if (mediaSearchTimer) clearTimeout(mediaSearchTimer);
+      mediaSearchSeq++;
     };
   });
 </script>
@@ -1945,6 +2095,7 @@
               <button
                 class:active={project?.live === slide.id}
                 class="slide-entry"
+                style={`--section-color: ${sectionColor(slide.title)}`}
                 onclick={() => goLive(slide)}
                 draggable="false"
               >
@@ -2024,240 +2175,6 @@
         </div>
       </div>
 
-      <div class="sidebar-section scripture-section" class:has-content={scriptureOpen || scriptureQuery.trim().length > 0} class:active={scriptureOpen}>
-        <div class="section-title scripture-title">Add Scripture</div>
-        <div class="scripture-wrap">
-          <input
-            type="text"
-            class="search"
-            placeholder="e.g. John 3:16, psalm 23, jn 1"
-            value={scriptureQuery}
-            oninput={onScriptureInput}
-            onkeydown={onScriptureKeydown}
-            onfocus={() => {
-              if (scriptureResults.length > 0) scriptureOpen = true;
-            }}
-            onblur={() => {
-              setTimeout(() => {
-                scriptureOpen = false;
-              }, 150);
-            }}
-          />
-          {#if scriptureLoading}
-            <span class="scripture-loading" aria-hidden="true">
-              <span class="media-spinner"></span>
-            </span>
-          {/if}
-          {#if scriptureOpen}
-            <ul class="scripture-list">
-              {#each scriptureResults as match, i (match.reference)}
-                <li>
-                  <button
-                    class:active={i === scriptureIdx}
-                    class="scripture-entry"
-                    draggable="true"
-                    ondragstart={(e) => onScriptureDragStart(e, match.reference, match.text)}
-                    onmousedown={(e) => {
-                      e.preventDefault();
-                      selectScripture(match);
-                    }}
-                    aria-label={`Add ${match.reference} as a slide; drag to playlist to place it`}
-                  >
-                    <span class="scripture-ref">{match.reference}</span>
-                    <span class="scripture-preview">{match.text}</span>
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-          {#if scriptureQuery.trim() && !scriptureLoading && scriptureResults.length === 0 && looksLikeReference(scriptureQuery)}
-            <button
-              class="add scripture-fallback"
-              disabled={scriptureBusy}
-              onclick={() => fetchApiScripture(scriptureQuery)}
-            >
-              Look up “{scriptureQuery.trim()}” on bible-api.com
-            </button>
-          {/if}
-        <button
-          class="add scripture-import"
-          disabled={scriptureBusy}
-          onclick={() => void importOpenlpFile()}
-        >
-          Import OpenLP Bible…
-        </button>
-        {#if biblesFolder}
-          <p class="bibles-folder-hint">Or place OpenLP XML files directly in:<br><code>{biblesFolder}</code></p>
-        {/if}
-        {#if scriptureStatus}
-            <p class="scripture-status">{scriptureStatus}</p>
-          {/if}
-        </div>
-      </div>
-
-      <div class="browse-panel" class:tour-highlight={showTour && tourStep === 2}>
-        <button class="browse-header" onclick={() => (browseCollapsed = !browseCollapsed)} aria-expanded={!browseCollapsed}>
-          <span class="section-title" style="margin:0; border:none; padding:0;">Browse Scripture</span>
-          <span class="browse-toggle">{browseCollapsed ? "▸ Show" : "▾ Hide"}</span>
-        </button>
-        {#if !browseCollapsed}
-          <p class="browse-hint">Browsing as full-width panel below — click a verse to add as slide (drag secondary).</p>
-        {:else if showHint(onboarding, "browse")}
-          <p class="hint-line">Bible verses live here — Show to browse book → chapter → verse.<button class="hint-x" title="Dismiss" aria-label="Dismiss browse hint" onclick={() => dismiss("browse")}>×</button></p>
-        {/if}
-      </div>
-
-      <div
-        class="sidebar-section library-section"
-        role="region"
-        aria-label="Library — drop .pro/.cho/.usr files"
-        class:has-content={librarySongs.length > 0 || librarySearch.trim().length > 0}
-        class:library-active={libraryActive && (librarySongs.length > 0 || librarySearch.trim().length > 0)}
-        class:library-drag-active={libraryDragActive}
-        class:tour-highlight={showTour && tourStep === 2}
-        ondragover={(e) => handleLibraryDragOver(e)}
-        ondragleave={(e) => handleLibraryDragLeave(e)}
-        ondrop={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          libraryDragActive = false;
-          if ((e.dataTransfer?.files?.length ?? 0) > 0) void handleLibraryFiles(e.dataTransfer!.files);
-        }}
-      >
-        <div class="section-title library-title">Library</div>
-        <input
-          type="text"
-          class="search"
-          placeholder="Search songs"
-          bind:value={librarySearch}
-        />
-        <ul class="song-list">
-          {#each librarySongs as song (song.id)}
-            {@const songExpanded = isSongExpanded(song)}
-            <li>
-              <button
-                class="song-expand"
-                aria-expanded={songExpanded}
-                aria-label={songExpanded ? `Collapse ${song.title || "Untitled"}` : `Expand ${song.title || "Untitled"}`}
-                title={songExpanded ? "Collapse verses" : `Expand — ${getBlocksArray(song).length} ${getBlocksArray(song).length === 1 ? "verse" : "verses"}`}
-                onclick={() => toggleSongExpanded(song.id)}
-              >
-                <span class:expanded={songExpanded} aria-hidden="true">▸</span>
-              </button>
-              <button
-                class="song-entry"
-                draggable="true"
-                ondragstart={(e) => onLibrarySongDragStart(e, song)}
-                onclick={() => addToPlaylist(song)}
-                aria-label={`Add ${song.title || "Untitled song"} to the playlist; drag to place it`}
-              >
-                <span
-                  class="swatch song-swatch"
-                  class:camera={isLiveCamera(song.defaultBackground)}
-                  style:background-color={song.defaultBackground.type === "solid"
-                    ? song.defaultBackground.color
-                    : "#000"}
-                  style:background-image={isMedia(song.defaultBackground)
-                    ? `url('${fileUrl(song.defaultBackground.thumb)}')`
-                    : "none"}
-                  style:background-size="cover"
-                  style:background-position="center"
-                  title={isLiveCamera(song.defaultBackground) ? `Live camera: ${song.defaultBackground.label || "camera"}` : undefined}
-                >{#if isLiveCamera(song.defaultBackground)}<span aria-hidden="true">🎥</span>{/if}</span>
-                <span class="song-meta">
-                  <span class="song-label">{song.title || "Untitled"}</span>
-                  <span class="song-count">{getSongArrangementCount(song)} {getSongArrangementCount(song) === 1 ? "slide" : "slides"} · {getSongBlockCount(song)} blocks</span>
-                </span>
-              </button>
-              <button
-                class="delete"
-                title="Delete song"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  deleteSong(song);
-                }}
-              >
-                &times;
-              </button>
-            </li>
-            {#if songExpanded}
-            {#each getBlocksArray(song) as verse (verse.id)}
-              <li class="library-verse-row" transition:slideTransition={{ duration: librarySearch.trim() || prefersReducedMotion() ? 0 : 180, easing: cubicOut, axis: "y" }}>
-                <button
-                  class="library-verse"
-                  draggable="true"
-                  ondragstart={(e) => onLibraryVerseDragStart(e, song, verse)}
-                  onclick={() => void api.addSlide(verse.title, verse.body, undefined, "song").then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)))}
-                  aria-label={`Add ${verse.title || "Untitled verse"} as a slide; drag to place it`}
-                >
-                  <span class="verse-title">{verse.title || "Untitled verse"}</span>
-                  <span class="verse-preview">{verse.body.slice(0, 60)}{verse.body.length > 60 ? "…" : ""}</span>
-                </button>
-              </li>
-            {/each}
-            {#if song.arrangement && song.arrangement.length > 0}
-              <li class="arrangement-row" transition:slideTransition={{ duration: librarySearch.trim() || prefersReducedMotion() ? 0 : 180, easing: cubicOut, axis: "y" }}>
-                <span class="arrangement-label">Order:</span>
-                <div class="chip-list">
-                  {#each song.arrangement as blockKey, idx (blockKey + "-" + idx)}
-                    <span class="chip" title={blockKey}>
-                      {blockKey}
-                      <button class="chip-btn" title="Move left" onclick={() => moveArrangement(song, idx, idx - 1)} disabled={idx === 0}>‹</button>
-                      <button class="chip-btn" title="Move right" onclick={() => moveArrangement(song, idx, idx + 1)} disabled={idx === song.arrangement.length - 1}>›</button>
-                      <button class="chip-btn" title="Duplicate" onclick={() => duplicateArrangement(song, idx)}>⧉</button>
-                      <button class="chip-btn chip-remove" title="Remove from order" onclick={() => removeFromArrangement(song, idx)}>×</button>
-                    </span>
-                  {/each}
-                </div>
-                <div class="arrangement-actions">
-                  <select
-                    class="arrangement-add"
-                    value=""
-                    onchange={(e) => {
-                      const v = (e.target as HTMLSelectElement).value;
-                      if (v) {
-                        addBlockToArrangement(song, v);
-                        (e.target as HTMLSelectElement).value = "";
-                      }
-                    }}
-                  >
-                    <option value="">+ Add block…</option>
-                    {#each Object.keys(song.blocks ?? {}) as key (key)}
-                      <option value={key}>{key}</option>
-                    {/each}
-                  </select>
-                </div>
-              </li>
-            {/if}
-            {/if}
-          {:else}
-            <li class="empty">No songs yet. Add one below.</li>
-          {/each}
-        </ul>
-        {#if librarySongs.length === 0 && showHint(onboarding, "songs")}
-          <p class="hint-line">Songs live here — + Add song, or drop .pro / .cho / .usr files.<button class="hint-x" title="Dismiss" aria-label="Dismiss library hint" onclick={() => dismiss("songs")}>×</button></p>
-        {/if}
-        <button class="add" onclick={() => addLibrarySong()}>+ Add song</button>
-        <div
-          class="library-drop-zone"
-          role="region"
-          aria-label="Drop song files here"
-          class:drag-active={libraryDragActive}
-          ondragover={(e) => handleLibraryDragOver(e)}
-          ondragleave={(e) => handleLibraryDragLeave(e)}
-          ondrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            libraryDragActive = false;
-            if ((e.dataTransfer?.files?.length ?? 0) > 0) void handleLibraryFiles(e.dataTransfer!.files);
-          }}
-        >
-          <span class="drop-zone-label">Drop .pro / .cho / .usr here — adds to Library</span>
-          {#if libraryDragError}
-            <span class="drop-error" role="alert">{libraryDragError}</span>
-          {/if}
-        </div>
-      </div>
     </aside>
 
     <main class="editor">
@@ -2503,13 +2420,22 @@
         <div class="grid-toolbar">
           <div class="grid-toolbar-label"><span class="grid-toolbar-mark">01</span><span><strong>Arrange slides</strong><small>Drag thumbnails to set the running order</small></span></div>
           <span class="spacer"></span>
+          <label class="grid-size-control">
+            <span>Thumbnail size</span>
+            <input type="range" min="0" max="2" step="1" value={thumbnailSizeIndex} oninput={onThumbnailSizeInput} aria-label="Thumbnail size: small, medium, or large" />
+            <output>{thumbnailSize}</output>
+          </label>
           <button class="add-slide-button" onclick={() => addSlide()}><span aria-hidden="true">＋</span> Add slide</button>
+          {#if thumbnailPreferenceError}<span class="grid-size-error" role="alert">{thumbnailPreferenceError}</span>{/if}
         </div>
         {#if (project?.slides.length ?? 0) === 0}
           <div class="empty grid-empty">No slides yet. Add one to get started — it will appear here as a thumbnail.</div>
         {:else}
           <div
             class="slide-grid"
+            class:thumb-small={thumbnailSize === "small"}
+            class:thumb-medium={thumbnailSize === "medium"}
+            class:thumb-large={thumbnailSize === "large"}
             role="region"
             aria-label="Slides grid"
             ondragover={(e) => {
@@ -2534,7 +2460,7 @@
               {/if}
               <div
                 class="grid-cell"
-                style={`--item-index: ${Math.min(i, 8)}`}
+                style={`--item-index: ${Math.min(i, 8)}; --section-color: ${sectionColor(slide.title)}`}
                 class:selected={selectedId === slide.id}
                 class:live={project?.live === slide.id}
                 draggable="true"
@@ -2564,7 +2490,7 @@
                     <span class="grid-live-badge">LIVE</span>
                   {/if}
                 </button>
-                <div class="grid-label" title={slideDisplayName(slide)}>{slideDisplayName(slide)}</div>
+                <div class="grid-label" title={slideDisplayName(slide)}><span class="grid-number">{i + 1}</span><span class="grid-name">{slideDisplayName(slide)}</span></div>
                 <div class="grid-actions">
                   <button class="ghost grid-go-live" onclick={() => goLive(slide)} title="Go live">Go Live</button>
                   <button class="delete grid-delete" title="Delete slide" onclick={(e) => { e.stopPropagation(); deleteSlide(slide); }}>×</button>
@@ -2578,71 +2504,6 @@
         {/if}
       {/if}
       </div>
-      {#if !browseCollapsed}
-        <div class="browse-dock" role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
-          <div class="browse-dock-header"><strong>Browse Scripture</strong><button class="browse-dock-close" onclick={() => (browseCollapsed = true)} aria-label="Close Scripture browser">× Close</button></div>
-          <div class="browse-dock-left">
-            <label>
-              Translation
-              <select value={selectedBibleId ?? ""} onchange={onBrowseBibleChange} disabled={bibles.length === 0}>
-                {#each bibles as b}
-                  <option value={b.id}>{b.name} ({b.bookCount})</option>
-                {/each}
-              </select>
-            </label>
-            {#if browseError}
-              <p class="browse-error">{browseError}</p>
-            {/if}
-            <div class="browse-books">
-              {#each bibleBooks as book}
-                <button class="browse-book" class:active={book === selectedBook} onclick={() => onBrowseBookSelect(book)}>{book}</button>
-              {/each}
-            </div>
-          </div>
-          <div class="browse-dock-middle">
-            {#if selectedBook}
-              <div class="browse-chapters">
-                <span class="field-label">{selectedBook} — Chapters</span>
-                <div class="chapter-grid">
-                  {#each chapterNumbers as ch}
-                    <button class="chapter-pill" class:active={ch === selectedChapter} onclick={() => onBrowseChapterSelect(ch)}>{ch}</button>
-                  {/each}
-                </div>
-              </div>
-            {:else}
-              <p class="browse-placeholder">Select a book to see chapters</p>
-            {/if}
-            {#if browseLoading}
-              <span class="media-spinner" style="align-self:center; margin: 8px 0;"></span>
-            {/if}
-          </div>
-          <div class="browse-dock-right">
-            {#if chapterVerses.length > 0}
-              <ul class="browse-verses">
-                {#each chapterVerses as v}
-                  <li>
-                    <button
-                      class="browse-verse"
-                      draggable="true"
-                      ondragstart={(e) => onScriptureDragStart(e, `${selectedBook} ${selectedChapter}:${v.verse}`, v.text)}
-                      onclick={() => insertBrowseVerse(v)}
-                    >
-                      <span class="verse-num">{v.verse}</span>
-                      <span class="verse-text">{v.text}</span>
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            {:else if selectedChapter}
-              <p class="browse-placeholder">No verses</p>
-            {:else if selectedBook}
-              <p class="browse-placeholder">Select a chapter to see verses — click a verse to add as slide (drag secondary)</p>
-            {:else}
-              <p class="browse-placeholder">Select a book and chapter to browse verses. Click a verse to add as slide.</p>
-            {/if}
-          </div>
-        </div>
-      {/if}
     </main>
 
     <aside class="sidebar output-panel" class:tour-highlight={showTour && tourStep === 1}>
@@ -2716,6 +2577,10 @@
             {/if}
           </div>
           <span class="on-air-badge" class:on={isOnAir} class:off={!isOnAir}>{isOnAir ? "ON AIR" : "OFF"}</span>
+          <div class="preview-navigation" role="group" aria-label="Live slide navigation">
+            <button class="ghost" onclick={() => stepLive("previous")} disabled={!canGoPrevious} title="Previous live slide">← Previous</button>
+            <button class="ghost" onclick={() => stepLive("next")} disabled={!canGoNext} title="Next live slide">Next →</button>
+          </div>
         </div>
 
         {#if appState?.output.visible}
@@ -2929,7 +2794,372 @@
     </aside>
   </div>
 
+  <section class="source-bar" class:expanded={sourceOpen} aria-label="Content library">
+    <div class="source-tab-row">
+      <span class="source-bar-label">Add content</span>
+      <button class:active={sourceOpen && sourceTab === "songs"} aria-pressed={sourceOpen && sourceTab === "songs"} onclick={() => openSourceTab("songs")}>Songs</button>
+      <button class:active={sourceOpen && sourceTab === "scripture"} aria-pressed={sourceOpen && sourceTab === "scripture"} onclick={() => openSourceTab("scripture")}>Scripture</button>
+      <button class:active={sourceOpen && sourceTab === "media"} aria-pressed={sourceOpen && sourceTab === "media"} onclick={() => openSourceTab("media")}>Media</button>
+      <span class="spacer"></span>
+      <button class="source-toggle" aria-expanded={sourceOpen} aria-label={sourceOpen ? "Collapse content library" : "Expand content library"} onclick={toggleSourceBar}><span aria-hidden="true">{sourceOpen ? "⌄" : "⌃"}</span><span class="source-toggle-text">{sourceOpen ? "Collapse" : "Expand"}</span></button>
+    </div>
+    {#if sourceOpen}
+      <div class="source-panel" role="region" aria-label={`${sourceTab} content`}>
+        {#if sourceTab === "songs"}
+          <div class="source-pane songs-pane">
+            <div
+              class="sidebar-section library-section"
+              role="region"
+              aria-label="Library — drop .pro/.cho/.usr files"
+              class:has-content={librarySongs.length > 0 || librarySearch.trim().length > 0}
+              class:library-drag-active={libraryDragActive}
+              class:tour-highlight={showTour && tourStep === 2}
+              ondragover={(e) => handleLibraryDragOver(e)}
+              ondragleave={(e) => handleLibraryDragLeave(e)}
+              ondrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                libraryDragActive = false;
+                if ((e.dataTransfer?.files?.length ?? 0) > 0) void handleLibraryFiles(e.dataTransfer!.files);
+              }}
+            >
+              <div class="section-title library-title">Library</div>
+              <input
+                type="text"
+                class="search"
+                placeholder="Search songs"
+                bind:value={librarySearch}
+              />
+              <ul class="song-list">
+                {#each librarySongs as song (song.id)}
+                  {@const songExpanded = isSongExpanded(song)}
+                  <li>
+                    <button
+                      class="song-expand"
+                      aria-expanded={songExpanded}
+                      aria-label={songExpanded ? `Collapse ${song.title || "Untitled"}` : `Expand ${song.title || "Untitled"}`}
+                      title={songExpanded ? "Collapse verses" : `Expand — ${getBlocksArray(song).length} ${getBlocksArray(song).length === 1 ? "verse" : "verses"}`}
+                      onclick={() => toggleSongExpanded(song.id)}
+                    >
+                      <span class:expanded={songExpanded} aria-hidden="true">▸</span>
+                    </button>
+                    <button
+                      class="song-entry"
+                      draggable="true"
+                      ondragstart={(e) => onLibrarySongDragStart(e, song)}
+                      onclick={() => addToPlaylist(song)}
+                      aria-label={`Add ${song.title || "Untitled song"} to the playlist; drag to place it`}
+                    >
+                      <span
+                        class="swatch song-swatch"
+                        class:camera={isLiveCamera(song.defaultBackground)}
+                        style:background-color={song.defaultBackground.type === "solid"
+                          ? song.defaultBackground.color
+                          : "#000"}
+                        style:background-image={isMedia(song.defaultBackground)
+                          ? `url('${fileUrl(song.defaultBackground.thumb)}')`
+                          : "none"}
+                        style:background-size="cover"
+                        style:background-position="center"
+                        title={isLiveCamera(song.defaultBackground) ? `Live camera: ${song.defaultBackground.label || "camera"}` : undefined}
+                      >{#if isLiveCamera(song.defaultBackground)}<span aria-hidden="true">🎥</span>{/if}</span>
+                      <span class="song-meta">
+                        <span class="song-label">{song.title || "Untitled"}</span>
+                        <span class="song-count">{getSongArrangementCount(song)} {getSongArrangementCount(song) === 1 ? "slide" : "slides"} · {getSongBlockCount(song)} blocks</span>
+                      </span>
+                    </button>
+                    <button
+                      class="delete"
+                      title="Delete song"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        deleteSong(song);
+                      }}
+                    >
+                      &times;
+                    </button>
+                  </li>
+                  {#if songExpanded}
+                  {#each getBlocksArray(song) as verse (verse.id)}
+                    <li class="library-verse-row" transition:slideTransition={{ duration: librarySearch.trim() || prefersReducedMotion() ? 0 : 180, easing: cubicOut, axis: "y" }}>
+                      <button
+                        class="library-verse"
+                        draggable="true"
+                        ondragstart={(e) => onLibraryVerseDragStart(e, song, verse)}
+                        onclick={() => void api.addSlide(verse.title, verse.body, undefined, "song").then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)))}
+                        aria-label={`Add ${verse.title || "Untitled verse"} as a slide; drag to place it`}
+                      >
+                        <span class="verse-title">{verse.title || "Untitled verse"}</span>
+                        <span class="verse-preview">{verse.body.slice(0, 60)}{verse.body.length > 60 ? "…" : ""}</span>
+                      </button>
+                    </li>
+                  {/each}
+                  {#if song.arrangement && song.arrangement.length > 0}
+                    <li class="arrangement-row" transition:slideTransition={{ duration: librarySearch.trim() || prefersReducedMotion() ? 0 : 180, easing: cubicOut, axis: "y" }}>
+                      <span class="arrangement-label">Order:</span>
+                      <div class="chip-list">
+                        {#each song.arrangement as blockKey, idx (blockKey + "-" + idx)}
+                          <span class="chip" title={blockKey}>
+                            {blockKey}
+                            <button class="chip-btn" title="Move left" onclick={() => moveArrangement(song, idx, idx - 1)} disabled={idx === 0}>‹</button>
+                            <button class="chip-btn" title="Move right" onclick={() => moveArrangement(song, idx, idx + 1)} disabled={idx === song.arrangement.length - 1}>›</button>
+                            <button class="chip-btn" title="Duplicate" onclick={() => duplicateArrangement(song, idx)}>⧉</button>
+                            <button class="chip-btn chip-remove" title="Remove from order" onclick={() => removeFromArrangement(song, idx)}>×</button>
+                          </span>
+                        {/each}
+                      </div>
+                      <div class="arrangement-actions">
+                        <select
+                          class="arrangement-add"
+                          value=""
+                          onchange={(e) => {
+                            const v = (e.target as HTMLSelectElement).value;
+                            if (v) {
+                              addBlockToArrangement(song, v);
+                              (e.target as HTMLSelectElement).value = "";
+                            }
+                          }}
+                        >
+                          <option value="">+ Add block…</option>
+                          {#each Object.keys(song.blocks ?? {}) as key (key)}
+                            <option value={key}>{key}</option>
+                          {/each}
+                        </select>
+                      </div>
+                    </li>
+                  {/if}
+                  {/if}
+                {:else}
+                  <li class="empty">No songs yet. Add one below.</li>
+                {/each}
+              </ul>
+              {#if librarySongs.length === 0 && showHint(onboarding, "songs")}
+                <p class="hint-line">Songs live here — + Add song, or drop .pro / .cho / .usr files.<button class="hint-x" title="Dismiss" aria-label="Dismiss library hint" onclick={() => dismiss("songs")}>×</button></p>
+              {/if}
+              <button class="add" onclick={() => addLibrarySong()}>+ Add song</button>
+              <div
+                class="library-drop-zone"
+                role="region"
+                aria-label="Drop song files here"
+                class:drag-active={libraryDragActive}
+                ondragover={(e) => handleLibraryDragOver(e)}
+                ondragleave={(e) => handleLibraryDragLeave(e)}
+                ondrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  libraryDragActive = false;
+                  if ((e.dataTransfer?.files?.length ?? 0) > 0) void handleLibraryFiles(e.dataTransfer!.files);
+                }}
+              >
+                <span class="drop-zone-label">Drop .pro / .cho / .usr here — adds to Library</span>
+                {#if libraryDragError}
+                  <span class="drop-error" role="alert">{libraryDragError}</span>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {:else if sourceTab === "scripture"}
+          <div class="source-pane scripture-pane" class:browsing={!browseCollapsed}>
+            <div class="scripture-tools">
+              <div class="sidebar-section scripture-section" class:has-content={scriptureOpen || scriptureQuery.trim().length > 0} class:active={scriptureOpen}>
+                <div class="section-title scripture-title">Add Scripture</div>
+                <div class="scripture-wrap">
+                  <input
+                    type="text"
+                    class="search"
+                    placeholder="e.g. John 3:16, psalm 23, jn 1"
+                    value={scriptureQuery}
+                    oninput={onScriptureInput}
+                    onkeydown={onScriptureKeydown}
+                    onfocus={() => {
+                      if (scriptureResults.length > 0) scriptureOpen = true;
+                    }}
+                    onblur={() => {
+                      setTimeout(() => {
+                        scriptureOpen = false;
+                      }, 150);
+                    }}
+                  />
+                  {#if scriptureLoading}
+                    <span class="scripture-loading" aria-hidden="true">
+                      <span class="media-spinner"></span>
+                    </span>
+                  {/if}
+                  {#if scriptureOpen}
+                    <ul class="scripture-list">
+                      {#each scriptureResults as match, i (match.reference)}
+                        <li>
+                          <button
+                            class:active={i === scriptureIdx}
+                            class="scripture-entry"
+                            draggable="true"
+                            ondragstart={(e) => onScriptureDragStart(e, match.reference, match.text)}
+                            onmousedown={(e) => {
+                              e.preventDefault();
+                              selectScripture(match);
+                            }}
+                            aria-label={`Add ${match.reference} as a slide; drag to playlist to place it`}
+                          >
+                            <span class="scripture-ref">{match.reference}</span>
+                            <span class="scripture-preview">{match.text}</span>
+                          </button>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                  {#if scriptureQuery.trim() && !scriptureLoading && scriptureResults.length === 0 && looksLikeReference(scriptureQuery)}
+                    <button
+                      class="add scripture-fallback"
+                      disabled={scriptureBusy}
+                      onclick={() => fetchApiScripture(scriptureQuery)}
+                    >
+                      Look up “{scriptureQuery.trim()}” on bible-api.com
+                    </button>
+                  {/if}
+                <button
+                  class="add scripture-import"
+                  disabled={scriptureBusy}
+                  onclick={() => void importOpenlpFile()}
+                >
+                  Import OpenLP Bible…
+                </button>
+                {#if biblesFolder}
+                  <p class="bibles-folder-hint">Or place OpenLP XML files directly in:<br><code>{biblesFolder}</code></p>
+                {/if}
+                {#if scriptureStatus}
+                    <p class="scripture-status">{scriptureStatus}</p>
+                  {/if}
+                </div>
+              </div>
 
+              <div class="browse-panel" class:tour-highlight={showTour && tourStep === 2}>
+                <button class="browse-header" onclick={() => (browseCollapsed = !browseCollapsed)} aria-expanded={!browseCollapsed}>
+                  <span class="section-title" style="margin:0; border:none; padding:0;">Browse Scripture</span>
+                  <span class="browse-toggle">{browseCollapsed ? "▸ Show" : "▾ Hide"}</span>
+                </button>
+                {#if !browseCollapsed}
+                  <p class="browse-hint">Choose a book, chapter, then verse. Click to add or drag to the Playlist.</p>
+                {:else if showHint(onboarding, "browse")}
+                  <p class="hint-line">Bible verses live here — Show to browse book → chapter → verse.<button class="hint-x" title="Dismiss" aria-label="Dismiss browse hint" onclick={() => dismiss("browse")}>×</button></p>
+                {/if}
+              </div>
+
+            </div>
+            {#if !browseCollapsed}
+              <div class="browse-dock" role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
+                <div class="browse-dock-header"><strong>Browse Scripture</strong><button class="browse-dock-close" onclick={() => (browseCollapsed = true)} aria-label="Close Scripture browser">× Close</button></div>
+                <div class="browse-dock-left">
+                  <label>
+                    Translation
+                    <select value={selectedBibleId ?? ""} onchange={onBrowseBibleChange} disabled={bibles.length === 0}>
+                      {#each bibles as b}
+                        <option value={b.id}>{b.name} ({b.bookCount})</option>
+                      {/each}
+                    </select>
+                  </label>
+                  {#if browseError}
+                    <p class="browse-error">{browseError}</p>
+                  {/if}
+                  <div class="browse-books">
+                    {#each bibleBooks as book}
+                      <button class="browse-book" class:active={book === selectedBook} onclick={() => onBrowseBookSelect(book)}>{book}</button>
+                    {/each}
+                  </div>
+                </div>
+                <div class="browse-dock-middle">
+                  {#if selectedBook}
+                    <div class="browse-chapters">
+                      <span class="field-label">{selectedBook} — Chapters</span>
+                      <div class="chapter-grid">
+                        {#each chapterNumbers as ch}
+                          <button class="chapter-pill" class:active={ch === selectedChapter} onclick={() => onBrowseChapterSelect(ch)}>{ch}</button>
+                        {/each}
+                      </div>
+                    </div>
+                  {:else}
+                    <p class="browse-placeholder">Select a book to see chapters</p>
+                  {/if}
+                  {#if browseLoading}
+                    <span class="media-spinner" style="align-self:center; margin: 8px 0;"></span>
+                  {/if}
+                </div>
+                <div class="browse-dock-right">
+                  {#if chapterVerses.length > 0}
+                    <ul class="browse-verses">
+                      {#each chapterVerses as v}
+                        <li>
+                          <button
+                            class="browse-verse"
+                            draggable="true"
+                            ondragstart={(e) => onScriptureDragStart(e, `${selectedBook} ${selectedChapter}:${v.verse}`, v.text)}
+                            onclick={() => insertBrowseVerse(v)}
+                          >
+                            <span class="verse-num">{v.verse}</span>
+                            <span class="verse-text">{v.text}</span>
+                          </button>
+                        </li>
+                      {/each}
+                    </ul>
+                  {:else if selectedChapter}
+                    <p class="browse-placeholder">No verses</p>
+                  {:else if selectedBook}
+                    <p class="browse-placeholder">Select a chapter to see verses — click a verse to add as slide (drag secondary)</p>
+                  {:else}
+                    <p class="browse-placeholder">Select a book and chapter to browse verses. Click a verse to add as slide.</p>
+                  {/if}
+                </div>
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <div class="source-pane media-pane">
+            <div class="media-bar-head">
+              <div><strong>Imported media</strong><span>Click to add a slide, or drag a card into the Playlist.</span></div>
+              <input type="search" value={mediaQuery} oninput={onMediaQueryInput} placeholder="Search imported media" aria-label="Search imported media" />
+            </div>
+            <div class="media-filter" role="group" aria-label="Filter media by type">
+              <button class:active={mediaFilter === "all"} aria-pressed={mediaFilter === "all"} onclick={() => (mediaFilter = "all")}>All</button>
+              <button class:active={mediaFilter === "image"} aria-pressed={mediaFilter === "image"} onclick={() => (mediaFilter = "image")}>Images</button>
+              <button class:active={mediaFilter === "video"} aria-pressed={mediaFilter === "video"} onclick={() => (mediaFilter = "video")}>Videos</button>
+            </div>
+            {#if mediaError}<p class="media-bar-error" role="alert">{mediaError}</p>{/if}
+            {#if mediaLoading}<p class="media-bar-hint">Searching media…</p>
+            {:else if mediaResults.length === 0}<p class="media-bar-hint">No imported media found. Drop an image or video on the Playlist, or use Add media in a slide.</p>
+            {:else if visibleMediaResults.length === 0}<p class="media-bar-hint">No {mediaFilter === "image" ? "images" : "videos"} match this search.</p>
+            {:else}
+              <ul class="media-grid">
+                {#each visibleMediaResults as asset (asset.hash)}
+                  <li><button
+                    class="media-card"
+                    class:dragging={dragType === "cached-media" && dragPayload?.hash === asset.hash}
+                    draggable={mediaAdding === null}
+                    ondragstart={(event) => onMediaAssetDragStart(event, asset)}
+                    ondragend={onPlaylistDragEnd}
+                    onclick={() => void addMediaFromBar(asset)}
+                    disabled={mediaAdding !== null}
+                    aria-label={`Add ${asset.fileName} as a slide, or drag to place it in the Playlist`}
+                  >
+                    <span class="media-card-preview" aria-hidden="true">
+                      {#if isMedia(asset.background) && !mediaThumbFailures.has(asset.hash)}
+                        <img src={fileUrl(asset.background.thumb)} alt="" draggable="false" onerror={() => onMediaThumbError(asset.hash)} />
+                      {:else}
+                        <span class="media-card-no-preview">Preview unavailable</span>
+                      {/if}
+                      <span class="media-card-type">{asset.kind === "video" ? "Video" : "Image"}</span>
+                    </span>
+                    <span class="media-card-footer">
+                      <strong class="media-card-name" title={asset.fileName}>{asset.fileName}</strong>
+                      <span class="media-card-action">{mediaAdding === asset.hash ? "Adding…" : "Add slide →"}</span>
+                    </span>
+                  </button></li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
+  </section>
 </div>
 {/if}
 
@@ -3278,14 +3508,6 @@
   .sidebar-section.scripture-section.active .scripture-list {
     flex: 1;
     min-height: 120px;
-  }
-
-  /* Library earns the larger flex share while the operator is actively using
-     it (searching, or browsing an expanded song) — same `.active`-style
-     convention as the scripture section, so it grows instead of staying
-     squeezed when it is the most-used section. */
-  .sidebar-section.library-section.has-content.library-active {
-    flex: 2 1 0;
   }
 
   /* Phase 1 — Output panel is the representative screen for the warm/bold
@@ -4894,7 +5116,6 @@
     grid-template-columns: repeat(auto-fill, minmax(clamp(165px, 16vw, 230px), 1fr));
     gap: 16px;
     padding: 4px 2px 28px;
-    counter-reset: slide;
   }
   .grid-cell {
     position: relative;
@@ -4903,28 +5124,10 @@
     border-color: rgba(255,255,255,0.075);
     border-radius: 11px;
     background: linear-gradient(145deg, rgba(255,255,255,0.035), transparent 65%), #1b2120;
-    counter-increment: slide;
     box-shadow: 0 4px 15px rgba(0,0,0,0.12);
   }
   .grid-cell:hover { background: linear-gradient(145deg, rgba(255,255,255,0.06), transparent 65%), #202826; border-color: rgba(129,170,149,0.34); }
   .grid-thumb { border-radius: 7px; border-color: rgba(255,255,255,0.12); box-shadow: 0 3px 10px rgba(0,0,0,0.28); }
-  .grid-thumb::after {
-    content: counter(slide, decimal-leading-zero);
-    position: absolute;
-    left: 7px;
-    bottom: 7px;
-    display: grid;
-    place-items: center;
-    min-width: 24px;
-    height: 19px;
-    padding: 0 5px;
-    border: 1px solid rgba(255,255,255,0.16);
-    border-radius: 5px;
-    background: rgba(9,13,12,0.76);
-    color: rgba(255,255,255,0.82);
-    font: 700 9px var(--font-mono);
-    backdrop-filter: blur(5px);
-  }
   .grid-live-badge { z-index: 1; }
   .grid-label { text-align: left; padding: 2px; font-size: 11px; }
   .grid-actions { justify-content: stretch; }
@@ -5030,8 +5233,7 @@
     .editor-content { overflow: visible; flex: 0 0 auto; }
   }
 
-  /* Roomy source rail. Each collection grows with its content and the rail
-     scrolls as a whole, so a busy library does not crush the playlist. */
+  /* The left rail now gives the running Playlist its full height. */
   .sidebar:not(.output-panel) {
     gap: 18px;
     padding: 18px 15px;
@@ -5039,8 +5241,7 @@
     overflow-x: hidden;
   }
   .sidebar-section,
-  .sidebar-section.has-content,
-  .sidebar-section.library-section.has-content.library-active {
+  .sidebar-section.has-content {
     flex: 0 0 auto;
     min-height: 0;
     gap: 11px;
@@ -5195,6 +5396,205 @@
   .output-panel .preview-row { flex-direction: column; align-items: stretch; gap: 8px; margin: 0; }
   .output-panel .preview-box { flex: none; width: 100%; }
   .output-panel .on-air-badge { align-self: flex-start; }
+
+  /* Phase 1: compact cues that preserve the grid and playlist reading order. */
+  .slide-entry { position: relative; }
+  .slide-entry::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 3px;
+    background: var(--section-color, var(--section-neutral));
+  }
+  .grid-cell::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 12px;
+    right: 12px;
+    height: 3px;
+    border-radius: 0 0 3px 3px;
+    background: var(--section-color, var(--section-neutral));
+  }
+  .grid-label { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .grid-number {
+    flex: none;
+    min-width: 22px;
+    padding: 3px 5px;
+    border-radius: var(--radius-sm);
+    background: var(--panel-2);
+    color: var(--text-dim);
+    font: 700 10px var(--font-mono);
+    text-align: center;
+  }
+  .grid-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .grid-toolbar { flex-wrap: wrap; }
+  .grid-toolbar-label { flex: 1 1 175px; }
+  .grid-size-control { display: flex; align-items: center; gap: 7px; color: var(--text-dim); font-size: 10px; white-space: nowrap; }
+  .grid-size-control input { width: 88px; accent-color: var(--accent); cursor: pointer; }
+  .grid-size-control output { min-width: 42px; color: var(--text); text-transform: capitalize; }
+  .grid-size-error { flex: 1 0 100%; color: var(--semantic-warning); font-size: 11px; }
+  .slide-grid.thumb-small { --thumb-min: 160px; }
+  .slide-grid.thumb-medium { --thumb-min: 215px; }
+  .slide-grid.thumb-large { --thumb-min: 320px; }
+  .slide-grid.thumb-small, .slide-grid.thumb-medium, .slide-grid.thumb-large {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--thumb-min)), 1fr));
+  }
+  .preview-navigation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); width: 100%; }
+  .preview-navigation button { min-width: 0; padding: 8px 4px; font-size: 11px; }
+  .preview-navigation button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* Phase 2: one bottom source bar; the main workspace shrinks when opened. */
+  .sidebar:not(.output-panel) .playlist-section {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  .sidebar:not(.output-panel) .playlist-section .slide-list {
+    flex: 1 1 auto;
+    min-height: 80px;
+    max-height: none;
+  }
+  .source-bar {
+    flex: 0 0 auto;
+    height: 48px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    transition: height var(--motion-slow) var(--ease-emphasized);
+  }
+  .source-bar.expanded { height: clamp(250px, 42vh, 420px); }
+  .source-tab-row {
+    flex: none;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 5px var(--space-4);
+  }
+  .source-bar-label {
+    flex: none;
+    margin-right: var(--space-2);
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+  .source-tab-row button {
+    flex: none;
+    min-height: 34px;
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .source-tab-row button:hover { background: var(--panel-2); color: var(--text); }
+  .source-tab-row button.active {
+    border-color: var(--semantic-live-border);
+    background: var(--semantic-live-bg);
+    color: var(--text);
+  }
+  .source-tab-row .source-toggle { border-color: var(--border); }
+  .source-toggle { display: inline-flex; align-items: center; gap: var(--space-1); }
+  .source-panel { flex: 1 1 0; min-height: 0; overflow: hidden; border-top: 1px solid var(--border); }
+  .source-pane { height: 100%; min-width: 0; min-height: 0; padding: var(--space-3) var(--space-4); overflow: auto; }
+  .songs-pane .library-section {
+    width: min(100%, 980px);
+    height: 100%;
+    min-height: 235px;
+    margin-inline: auto;
+    padding: 0;
+    gap: var(--space-2);
+    overflow: hidden;
+  }
+  .songs-pane .song-list {
+    flex: 1 1 auto;
+    min-height: 80px;
+    max-height: none;
+    overflow-y: auto;
+  }
+  .songs-pane .library-drop-zone { margin-top: 0; padding: 8px 10px; }
+  .scripture-pane .scripture-section { padding: 0; gap: var(--space-2); }
+  .scripture-pane .scripture-list { max-height: 150px; }
+  .scripture-tools { display: flex; flex-direction: column; gap: var(--space-3); width: min(100%, 640px); }
+  .scripture-pane .browse-panel { margin: 0; }
+  .scripture-pane.browsing {
+    display: grid;
+    grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
+    gap: var(--space-4);
+    overflow: hidden;
+  }
+  .scripture-pane.browsing .scripture-tools { width: 100%; min-height: 0; overflow-y: auto; }
+  .scripture-pane .browse-dock {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    resize: none;
+  }
+  .media-pane { width: min(100%, 980px); margin-inline: auto; }
+  .media-bar-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-3); }
+  .media-bar-head > div { display: grid; gap: var(--space-1); }
+  .media-bar-head strong { color: var(--text); font-size: 13px; }
+  .media-bar-head span, .media-bar-hint { color: var(--text-dim); font-size: 11px; }
+  .media-bar-head input { width: min(100%, 310px); padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); color: var(--text); }
+  .media-bar-error { color: var(--semantic-error); font-size: 12px; }
+  .media-filter { display: flex; gap: var(--space-1); margin-bottom: var(--space-4); }
+  .media-filter button { padding: 7px 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-dim); font-size: 11px; font-weight: 650; }
+  .media-filter button:hover { background: var(--panel-2); color: var(--text); }
+  .media-filter button.active { border-color: var(--semantic-live-border); background: var(--semantic-live-bg); color: var(--text); }
+  .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap: var(--space-3); margin: 0; padding: 0 0 var(--space-3); list-style: none; }
+  .media-grid li { min-width: 0; }
+  .media-card { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel-2); color: var(--text); text-align: left; cursor: grab; }
+  .media-card:hover { border-color: var(--accent); box-shadow: var(--shadow-soft); }
+  .media-card:active { cursor: grabbing; }
+  .media-card.dragging { opacity: .55; }
+  .media-card:disabled { cursor: wait; }
+  .media-card-preview { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 9; background: #000; overflow: hidden; }
+  .media-card-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .media-card-no-preview { color: var(--text-dim); font-size: 11px; }
+  .media-card-type { position: absolute; top: var(--space-2); left: var(--space-2); padding: 4px 7px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); font-size: 10px; font-weight: 700; }
+  .media-card-footer { display: grid; gap: var(--space-2); width: 100%; padding: var(--space-3); }
+  .media-card-name { overflow: hidden; font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+  .media-card-action { color: var(--accent); font-size: 11px; font-weight: 700; }
+
+  @media (max-width: 1100px) {
+    .scripture-pane.browsing { display: block; overflow-y: auto; }
+    .scripture-pane.browsing .scripture-tools { width: 100%; max-width: 640px; overflow: visible; }
+    .scripture-pane .browse-dock {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr);
+      grid-template-rows: auto minmax(0, 1fr);
+      height: 300px;
+      margin-top: var(--space-3);
+    }
+  }
+  @media (max-width: 700px) {
+    .source-tab-row { gap: var(--space-1); padding-inline: var(--space-2); }
+    .source-bar-label { display: none; }
+    .source-tab-row button { padding-inline: 8px; font-size: 11px; }
+    .source-toggle-text { display: none; }
+    .source-pane { padding-inline: var(--space-3); }
+    .scripture-pane .browse-dock { display: grid; grid-template-columns: 1fr; grid-template-rows: auto; height: auto; overflow: visible; }
+    .media-bar-head { align-items: stretch; flex-direction: column; }
+    .media-bar-head input { width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .source-bar { transition: none; }
+  }
 
   @media (max-width: 1100px) {
     .detail-workspace { grid-template-columns: 1fr; }

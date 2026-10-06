@@ -980,3 +980,27 @@ copies), `thumbnails/` (hash-keyed thumbnails).
 - **Fix 2 — appindicator warning: documented, not migrated.** Tray is Tauri's `tray-icon 0.24.2` → transitive `libappindicator 0.9.0` → system Ayatana AppIndicator3; no direct dependency in `Cargo.toml`, and no `libayatana-appindicator-glib` package exists on Noble. Benign upstream warning; only a future Tauri `tray-icon` upgrade can remove it. Noted in README Linux notes.
 - **Packaging `tauri.conf.json:41`:** `targets` was `["nsis","msi"]` only with no `bundle.linux` section and CI built Linux `--no-bundle` — no Linux installer existed. Now `["nsis","msi","deb","appimage"]` + `bundle.linux` (`deb.depends`: `libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1`, `librsvg2-2`; `appimage.bundleMediaFramework: false`), icons extended with `64x64.png` + 512px `icon.png` for the Linux icon theme, `longDescription` de-Windowed. `package.json` gains `tauri:build:linux`; CI `ubuntu` job now bundles deb+AppImage and uploads artifacts. `productName: MakrStudio` confirmed; `identifier` deliberately stays `com.makesoftware.makepresent` (rename breaks upgrades + D-Bus name); generated `.desktop` carries `Name=MakrStudio`. Windows-only `NDI_Runtime_V6.exe` (~9.6 MB) still ships inside all bundles (Tauri has no per-platform resources) — accepted, noted.
 - **Verify:** `npm run check` 0/0; `cargo check` OK (3 pre-existing `dead_code`: `media.rs:16` `COPY_SUFFIX`, `project.rs:117`, `audio.rs:390`); `cargo test media::` 6 passed (skip-path — ffmpeg not installed on this box, no sudo; positive-path verification needs ffmpeg present); `tauri.conf.json` parses, targets/icons/linux keys confirmed. Runtime on Linux GUI (tray under Zorin AppIndicator extension, dual-launch D-Bus path, real camera/mic) still needs a packaged-build smoke test — noted follow-up, not this change.
+
+---
+
+## Changed (2026-10-06) — Phase 1 quick editor controls
+
+- **Visual navigation:** `src/app.css` adds a small section color set; `src/components/Editor.svelte` maps block titles to Verse, Chorus, Bridge, Pre-Chorus, Tag, Ending/Outro, or neutral and marks playlist rows and grid cards. Grid numbers now appear next to slide names.
+- **Operator controls:** `src/components/Editor.svelte` adds a locally remembered Small/Medium/Large grid slider and Previous/Next buttons by the Output preview. Buttons use the existing Rust `prev_slide`/`next_slide` path; Output and Stage remain renderers of backend state. No new Rust fields or tests were needed.
+- **Verify:** `npm run check` 0/0; `cargo check` passes with three existing dead-code warnings; `cargo test` 68 passed and 2 hardware tests ignored; `npm run build` passes. Live desktop/display behavior was not visually verified in this environment.
+
+---
+
+## Changed (2026-10-06) — Phase 2 bottom content bar
+
+- **Source layout:** `src/components/Editor.svelte` leaves the running Playlist on the left and places Songs, Scripture search/Browse Scripture, and Media search in one bottom bar, collapsed by default. The existing song/verse drag and click actions remain wired; the under-700px workspace still stacks. `src/components/GuidedTour.svelte` follows the moved source area.
+- **Shared media path:** `src/lib/mediaSlide.ts` is used by the bottom Media list and `src/components/GlobalSearch.svelte`, calling the existing `add_slide` (name only) and `update_slide` background commands. No backend state, schema, crate, or npm package changed; Media grid/filter work remains Phase 3.
+- **Verify:** `npm run check` 0/0; `cargo check` succeeds with three existing dead-code warnings; `cargo test` 68 passed, 2 hardware tests ignored; `npm run build` succeeds. Native drag/drop, DPI, and display layout were not visually verified here.
+
+---
+
+## Changed (2026-10-06) — Phase 3 media browser
+
+- **Browse:** `src/components/Editor.svelte` renders cached image/video thumbnails in a responsive Media grid, with All/Images/Videos filters, text search through existing `list_media`/`search_media`, and visible missing-preview and operation-error states.
+- **Place:** Card click appends; HTML drag to Playlist/grid uses `src/lib/mediaSlide.ts` to call the existing `add_slide` name-only → `update_slide` background pipeline and `reorder_slides` for placement. Backend state remains authoritative; no schema or dependency changes.
+- **Verify:** `npm run check` 0/0; `cargo check` succeeds with three pre-existing dead-code warnings; `cargo test` 68 passed, 2 hardware tests ignored; `npm run build` succeeds. Native thumbnail rendering and drag/drop were not visually verified in this environment.

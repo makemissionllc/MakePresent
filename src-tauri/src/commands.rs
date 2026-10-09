@@ -2,7 +2,7 @@ use crate::logging::{Level, LogEntry};
 use crate::project::{
     apply_background_to_all_items as apply_background_to_all_items_project,
     clear_slide_background as clear_slide_background_project,
-    derive_items, is_first_run, item_backgrounds_in_template, now_iso, remove_playlist_item, reorder_item_slides,
+    copy_slides_into_item as copy_slides_into_item_project, derive_items, is_first_run, item_backgrounds_in_template, now_iso, remove_playlist_item, reorder_item_slides,
     remap_template_item_backgrounds, set_item_background as set_item_background_project,
     set_kind_background as set_kind_background_project, slides_from_template, Background, BackgroundMode, BroadcastView, ClientState, Library, LibrarySlide,
     BoxGeometry, LibrarySong, Look, OutputView, Overlay, OverlayPlacement, OverlayStore,
@@ -890,7 +890,8 @@ pub fn prev_slide(app: AppHandle) -> Result<ClientState, String> {
     advance(&app, -1)
 }
 
-/// Per-project Output transition: "cut" (default) or "fade".
+/// Per-project Output/Stage transition. Both windows render from the same
+/// backend-owned project setting.
 #[tauri::command]
 pub fn set_transition(app: AppHandle, transition: Transition) -> Result<ClientState, String> {
     let state = app.state::<AppState>();
@@ -914,6 +915,8 @@ fn transition_value(t: Transition) -> &'static str {
     match t {
         Transition::Cut => "cut",
         Transition::Fade => "fade",
+        Transition::Wipe => "wipe",
+        Transition::Push => "push",
     }
 }
 
@@ -954,6 +957,8 @@ pub struct LookPatch {
     pub body_font: Option<String>,
     pub text_color: Option<String>,
     pub show_background: Option<bool>,
+    #[serde(default)]
+    pub show_body: Option<bool>,
     pub text_position: Option<TextPosition>,
     pub title_style: Option<TextStylePatch>,
     pub body_style: Option<TextStylePatch>,
@@ -1035,6 +1040,7 @@ fn apply_look_patch(look: &mut Look, patch: LookPatch) {
     if let Some(show_background) = patch.show_background {
         look.show_background = show_background;
     }
+    if let Some(show_body) = patch.show_body { look.show_body = show_body; }
     if let Some(text_position) = patch.text_position {
         look.text_position = text_position;
     }
@@ -1138,9 +1144,7 @@ pub fn delete_look(app: AppHandle, look_id: String, replacement_look_id: Option<
         if settings.ndi_look_id.as_deref() == Some(look_id.as_str()) {
             settings.ndi_look_id = first_id.clone();
         }
-        for mapped in [&mut settings.default_looks.song, &mut settings.default_looks.scripture, &mut settings.default_looks.generic] {
-            if mapped.as_deref() == Some(look_id.as_str()) { *mapped = replacement_look_id.clone().or_else(|| first_id.clone()); }
-        }
+        settings.default_looks.reassign_deleted(&look_id, first_id.as_deref());
         state.apply_settings(settings);
         let _ = write_settings(&state.app_data_dir(), &state.current_settings());
     }
@@ -1184,20 +1188,21 @@ pub fn set_default_look(app: AppHandle, kind: String, look_id: Option<String>) -
         }
     }
     let mut settings = state.current_settings();
-    match kind.as_str() {
-        "scripture" => settings.default_looks.scripture = look_id.clone(),
-        "song" => settings.default_looks.song = look_id.clone(),
-        "generic" => settings.default_looks.generic = look_id.clone(),
+    let slide_kind = match kind.as_str() {
+        "scripture" => SlideKind::Scripture,
+        "song" => SlideKind::Song,
+        "generic" => SlideKind::Generic,
         _ => return Err(format!("unknown kind {kind} — expected scripture, song, or generic")),
-    }
+    };
+    settings.default_looks.assign(&state.project.read().unwrap(), slide_kind, look_id.clone())?;
+    write_settings(&state.app_data_dir(), &settings).map_err(|e| format!("Could not save Look assignment: {e}"))?;
     state.apply_settings(settings);
-    let _ = crate::project::write_settings(&state.app_data_dir(), &state.current_settings());
     log(
         &app,
         Level::Info,
         &format!(
             "default look: {kind} -> {}",
-            look_id.unwrap_or_else(|| "none (Main)".to_string())
+            look_id.unwrap_or_else(|| "none (Output Look)".to_string())
         ),
     );
     let snap = snapshot(&app);
@@ -1220,6 +1225,23 @@ pub fn set_item_look(app: AppHandle, item_id: String, look_id: Option<String>) -
         else { project.item_looks.remove(&item_id); }
         Ok(())
     })
+}
+
+#[tauri::command]
+pub fn create_starter_looks(app: AppHandle) -> Result<ClientState, String> {
+    let state = app.state::<AppState>();
+    let mut settings = state.current_settings();
+    {
+        let mut project = state.project.write().unwrap();
+        let mut updated = project.clone();
+        crate::project::create_starter_looks(&mut updated, &mut settings.default_looks);
+        write_settings(&state.app_data_dir(), &settings).map_err(|e| format!("Could not save starter Look assignments: {e}"))?;
+        updated.modified_at = now_iso();
+        *project = updated;
+    }
+    state.apply_settings(settings);
+    state.request_save();
+    Ok(snapshot_and_emit(&app))
 }
 
 #[tauri::command]
@@ -1460,6 +1482,8 @@ pub fn new_project_from_preset(
     let aspect_val = aspect.unwrap_or(preset.default_aspect.clone());
     let trans: crate::project::Transition = match transition.as_deref() {
         Some("fade") | Some("Fade 300ms") | Some("Dissolve") => crate::project::Transition::Fade,
+        Some("wipe") => crate::project::Transition::Wipe,
+        Some("push") => crate::project::Transition::Push,
         _ => crate::project::Transition::Cut,
     };
     let mut project = crate::project::Project::from_preset(&name, &aspect_val, trans, &preset);
@@ -1859,6 +1883,18 @@ pub fn reorder_item(app: AppHandle, item_id: String, new_index: usize) -> Result
     mutate(&app, |project| {
         project.slides = reorder_item_slides(std::mem::take(&mut project.slides), &item_id, new_index)?;
         Ok(())
+    })
+}
+
+#[tauri::command]
+pub fn copy_playlist_item_into_group(
+    app: AppHandle,
+    source_slide_ids: Vec<String>,
+    target_slide_id: String,
+    insert_at: usize,
+) -> Result<ClientState, String> {
+    mutate(&app, |project| {
+        copy_slides_into_item_project(project, &source_slide_ids, &target_slide_id, insert_at).map(|_| ())
     })
 }
 
@@ -2900,6 +2936,74 @@ pub fn search_scripture(
     Ok(index.search(&query, 10))
 }
 
+fn search_raw_scripture_text(
+    books: &[crate::scripture::RawBook],
+    query: &str,
+    limit: usize,
+) -> Vec<ScriptureMatch> {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+    let mut matches = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for book in books {
+        for chapter in &book.chapters {
+            let Ok(chapter_number) = chapter.chapter.parse::<u32>() else { continue };
+            for verse in &chapter.verses {
+                if verse.text.to_lowercase().contains(&needle) {
+                    let Ok(verse_number) = verse.verse.parse::<u32>() else { continue };
+                    let dedupe_key = (book.book.clone(), chapter_number, verse_number, verse.text.clone());
+                    if !seen.insert(dedupe_key) {
+                        continue;
+                    }
+                    matches.push(ScriptureMatch {
+                        book: book.book.clone(),
+                        chapter: chapter_number,
+                        verse: verse_number,
+                        reference: format!("{} {}:{}", book.book, chapter_number, verse_number),
+                        text: verse.text.clone(),
+                    });
+                    if matches.len() >= limit {
+                        return matches;
+                    }
+                }
+            }
+        }
+    }
+    matches
+}
+
+/// Search verse text in the selected local Bible translation.
+#[tauri::command]
+pub fn search_bible_text(
+    app: AppHandle,
+    bible_id: String,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<ScriptureMatch>, String> {
+    let state = app.state::<AppState>();
+    let limit = limit.unwrap_or(100).clamp(1, 500);
+    if let Some(version_id) = bible_id.strip_prefix("downloaded:") {
+        let bible = crate::scripture::load_downloaded_bible(&state.app_data_dir(), version_id)?;
+        return Ok(search_raw_scripture_text(&bible.books, &query, limit));
+    }
+    match bible_id.as_str() {
+        "kjv" => {
+            let guard = state.scripture.read().unwrap();
+            let index = guard.as_ref().ok_or_else(|| "scripture index not loaded".to_string())?;
+            Ok(index.search_text(&query, limit))
+        }
+        "imported" => {
+            let mut books = crate::scripture::load_imported_books(&state.app_data_dir());
+            let (scanned, _) = crate::scripture::scan_bibles_folder(&state.app_data_dir());
+            books.extend(scanned);
+            Ok(search_raw_scripture_text(&books, &query, limit))
+        }
+        _ => Err(format!("unknown bible id: {bible_id}")),
+    }
+}
+
 /// The outcome of folding imported scripture into the search index.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2918,6 +3022,14 @@ pub struct BibleInfo {
     pub id: String,
     pub name: String,
     pub book_count: usize,
+    #[serde(default)]
+    pub short_name: Option<String>,
+    #[serde(default)]
+    pub language_name: Option<String>,
+    #[serde(default)]
+    pub license_url: Option<String>,
+    #[serde(default)]
+    pub downloaded: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -3035,7 +3147,7 @@ pub async fn lookup_api_scripture(
 }
 
 #[tauri::command]
-pub fn list_bibles(app: AppHandle) -> Vec<BibleInfo> {
+pub fn list_bibles(app: AppHandle) -> Result<Vec<BibleInfo>, String> {
     let state = app.state::<AppState>();
     let data_dir = state.app_data_dir();
     // Ensure bibles folder exists and scan for dropped XML files (refresh without restart)
@@ -3096,6 +3208,10 @@ pub fn list_bibles(app: AppHandle) -> Vec<BibleInfo> {
             id: "kjv".to_string(),
             name: "King James Version".to_string(),
             book_count: idx.book_count(),
+            short_name: Some("KJV".to_string()),
+            language_name: Some("English".to_string()),
+            license_url: None,
+            downloaded: false,
         });
     }
     let imported = crate::scripture::load_imported_books(&data_dir);
@@ -3108,16 +3224,98 @@ pub fn list_bibles(app: AppHandle) -> Vec<BibleInfo> {
             id: "imported".to_string(),
             name: "Imported Bibles".to_string(),
             book_count: distinct.len(),
+            short_name: None,
+            language_name: None,
+            license_url: None,
+            downloaded: false,
         });
     }
+    out.extend(crate::scripture::list_downloaded_bibles(&data_dir)?.into_iter().map(|bible| {
+        BibleInfo {
+            id: format!("downloaded:{}", bible.id),
+            name: bible.name,
+            book_count: bible.books.len(),
+            short_name: bible.short_name,
+            language_name: bible.language_name,
+            license_url: bible.license_url,
+            downloaded: true,
+        }
+    }));
     if out.is_empty() {
         out.push(BibleInfo {
             id: "kjv".to_string(),
             name: "King James Version".to_string(),
             book_count: 66,
+            short_name: Some("KJV".to_string()),
+            language_name: Some("English".to_string()),
+            license_url: None,
+            downloaded: false,
         });
     }
-    out
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn list_remote_bible_versions() -> Result<Vec<crate::scripture::RemoteBibleVersion>, String> {
+    // Keep translations already included with the app visible even when the
+    // remote catalog is unavailable. They can be installed without internet.
+    let mut versions = crate::scripture::fetch_remote_bible_versions()
+        .await
+        .unwrap_or_default();
+    versions.extend(crate::scripture::bundled_bible_versions());
+    versions.sort_by(|a, b| {
+        let a_lang = a.language_english_name.as_deref().unwrap_or_default();
+        let b_lang = b.language_english_name.as_deref().unwrap_or_default();
+        let a_english_rank = if a_lang.eq_ignore_ascii_case("english") {
+            0
+        } else {
+            1
+        };
+        let b_english_rank = if b_lang.eq_ignore_ascii_case("english") {
+            0
+        } else {
+            1
+        };
+        a_english_rank
+            .cmp(&b_english_rank)
+            .then_with(|| a_lang.cmp(b_lang))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(versions)
+}
+
+#[tauri::command]
+pub async fn download_bible_version(app: AppHandle, version_id: String) -> Result<BibleInfo, String> {
+    let bible = if let Some(resource) = crate::scripture::bundled_bible_resource(&version_id) {
+        let path = app
+            .path()
+            .resolve(resource, tauri::path::BaseDirectory::Resource)
+            .map_err(|e| format!("could not locate bundled Bible {version_id}: {e}"))?;
+        let id = version_id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::scripture::load_bundled_bible(&path, &id)
+        })
+            .await
+            .map_err(|e| format!("Bible import task failed: {e}"))??
+    } else {
+        crate::scripture::download_remote_bible(&version_id).await?
+    };
+    let data_dir = app.state::<AppState>().app_data_dir();
+    let bible_for_write = bible.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::scripture::save_downloaded_bible(&data_dir, &bible_for_write)
+    })
+    .await
+    .map_err(|e| format!("Bible save task failed: {e}"))??;
+    Ok(BibleInfo {
+        id: format!("downloaded:{}", bible.id),
+        name: bible.name,
+        book_count: bible.books.len(),
+        short_name: bible.short_name,
+        language_name: bible.language_name,
+        license_url: bible.license_url,
+        downloaded: true,
+    })
 }
 
 #[tauri::command]
@@ -3129,6 +3327,10 @@ pub fn get_bibles_folder(app: AppHandle) -> String {
 #[tauri::command]
 pub fn get_book_list(app: AppHandle, bible_id: String) -> Result<Vec<String>, String> {
     let state = app.state::<AppState>();
+    if let Some(version_id) = bible_id.strip_prefix("downloaded:") {
+        let bible = crate::scripture::load_downloaded_bible(&state.app_data_dir(), version_id)?;
+        return Ok(bible.books.into_iter().map(|book| book.book).collect());
+    }
     match bible_id.as_str() {
         "kjv" => {
             let guard = state.scripture.read().unwrap();
@@ -3163,6 +3365,17 @@ pub fn get_chapter(
     chapter: u32,
 ) -> Result<Vec<ChapterVerse>, String> {
     let state = app.state::<AppState>();
+    if let Some(version_id) = bible_id.strip_prefix("downloaded:") {
+        let bible = crate::scripture::load_downloaded_bible(&state.app_data_dir(), version_id)?;
+        let raw_book = bible.books.iter().find(|candidate| candidate.book.eq_ignore_ascii_case(&book))
+            .ok_or_else(|| format!("book {book} not found in {}", bible.name))?;
+        let raw_chapter = raw_book.chapters.iter().find(|candidate| candidate.chapter.parse::<u32>().ok() == Some(chapter))
+            .ok_or_else(|| format!("{book} {chapter} not found in {}", bible.name))?;
+        return Ok(raw_chapter.verses.iter().filter_map(|verse| Some(ChapterVerse {
+            verse: verse.verse.parse().ok()?,
+            text: verse.text.clone(),
+        })).collect());
+    }
     match bible_id.as_str() {
         "kjv" => {
             let guard = state.scripture.read().unwrap();
@@ -3205,6 +3418,14 @@ pub fn get_chapter(
 #[tauri::command]
 pub fn list_chapters(app: AppHandle, bible_id: String, book: String) -> Result<Vec<u32>, String> {
     let state = app.state::<AppState>();
+    if let Some(version_id) = bible_id.strip_prefix("downloaded:") {
+        let bible = crate::scripture::load_downloaded_bible(&state.app_data_dir(), version_id)?;
+        let raw_book = bible.books.iter().find(|candidate| candidate.book.eq_ignore_ascii_case(&book))
+            .ok_or_else(|| format!("book {book} not found in {}", bible.name))?;
+        let mut chapters: Vec<u32> = raw_book.chapters.iter().filter_map(|chapter| chapter.chapter.parse().ok()).collect();
+        chapters.sort_unstable();
+        return Ok(chapters);
+    }
     match bible_id.as_str() {
         "kjv" => {
             let guard = state.scripture.read().unwrap();

@@ -2,7 +2,8 @@
   import { onMount } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api, emitOutroDone, emitRenderAck, subscribeCountdown, subscribeExitOutro, subscribeState } from "../lib/sync";
-  import type { ClientState, CountdownView, Look, Slide } from "../lib/types";
+  import type { ClientState, CountdownView, Look, Slide, Transition } from "../lib/types";
+  import { prefersReducedMotion } from "../lib/motion";
   import SlideRender from "./SlideRender.svelte";
 
   const FADE_MS = 400;
@@ -18,6 +19,8 @@
   let inOpacity = $state(1);
   // Opacity of the outgoing (leaving) slide during crossfade.
   let outOpacity = $state(1);
+  let activeTransition = $state<Transition>("cut");
+  let transitionStarted = $state(false);
   // True while a crossfade is active — drives GPU layer hints.
   let crossfading = $state(false);
   let appState = $state<ClientState | null>(null);
@@ -89,9 +92,9 @@
   // nothing visible. Unmount stops all tracks (CameraFeed).
   const onDeck = $derived(appState?.onDeck ?? null);
 
-  // The Output is a dumb renderer: it only choreographs the fade. The backend
+  // The Output is a dumb renderer: it only choreographs the selected effect. The backend
   // decides which slide is live; here we layer the old slide on top of the new
-  // one and crossfade between them when the project's transition is "fade".
+  // one and applies the project's transition choice.
   //
   // GPU compositing: during the crossfade both .frame elements are promoted to
   // their own GPU layers via `will-change: transform, opacity` and a
@@ -109,17 +112,22 @@
       return;
     }
 
-    if (transition === "fade") {
+    if (transition !== "cut" && !prefersReducedMotion()) {
+      activeTransition = transition;
+      transitionStarted = false;
       leaving = prev;
       outOpacity = 1;
       shown = next;
-      inOpacity = 0;
+      inOpacity = transition === "fade" ? 0 : 1;
       crossfading = true;
       // Force style recompute so both transitions start from a clean state.
       void document.body.offsetWidth;
       requestAnimationFrame(() => {
-        outOpacity = 0;
-        inOpacity = 1;
+        transitionStarted = true;
+        if (activeTransition === "fade") {
+          outOpacity = 0;
+          inOpacity = 1;
+        }
       });
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
@@ -127,6 +135,8 @@
         outOpacity = 1;
         inOpacity = 1;
         crossfading = false;
+        transitionStarted = false;
+        activeTransition = "cut";
       }, FADE_MS + 40);
     } else {
       leaving = null;
@@ -134,6 +144,8 @@
       shown = next;
       inOpacity = 1;
       crossfading = false;
+      transitionStarted = false;
+      activeTransition = "cut";
       window.clearTimeout(timer);
     }
   });
@@ -187,9 +199,11 @@
       <div
         class="frame"
         class:gpu={crossfading}
+        class:push-in={activeTransition === "push" && !transitionStarted}
         style:opacity={inOpacity}
+        style:clip-path={activeTransition === "wipe" ? (transitionStarted ? "inset(0)" : "inset(0 100% 0 0)") : undefined}
       >
-        <SlideRender slide={shown} effectiveBackground={appState?.effectiveBackgrounds?.[shown.id] ?? shown.background} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} />
+        <SlideRender slide={shown} effectiveBackground={appState?.effectiveBackgrounds?.[shown.id] ?? shown.background} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} presentSongTitle={true} />
       </div>
     {/if}
   {:else if !leaving}
@@ -201,9 +215,10 @@
       <div
         class="frame"
         class:gpu={crossfading}
+        class:push-out={activeTransition === "push" && transitionStarted}
         style:opacity={outOpacity}
       >
-        <SlideRender slide={leaving} effectiveBackground={appState?.effectiveBackgrounds?.[leaving.id] ?? leaving.background} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} />
+        <SlideRender slide={leaving} effectiveBackground={appState?.effectiveBackgrounds?.[leaving.id] ?? leaving.background} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} presentSongTitle={true} />
       </div>
     {/if}
   {/if}
@@ -344,7 +359,7 @@
 
   .frame {
     opacity: 1;
-    transition: opacity 400ms ease;
+    transition: opacity 400ms ease, transform 400ms cubic-bezier(0.22, 1, 0.36, 1), clip-path 400ms cubic-bezier(0.22, 1, 0.36, 1);
     /* was `contain: size layout style paint` — `size` freezes the box to the
        stale window size during the OS fullscreen swap-chain recreation, so the
        incoming/outgoing frames clip to the old size instead of blending. Keep
@@ -370,6 +385,8 @@
     will-change: transform, opacity;
     transform: translate3d(0, 0, 0);
   }
+  .frame.push-in { transform: translate3d(100%, 0, 0); }
+  .frame.push-out { transform: translate3d(-100%, 0, 0); }
 
   .preloader {
     position: absolute;

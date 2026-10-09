@@ -26,6 +26,8 @@
   const TRANSITIONS = [
     { id: "cut", label: "Cut" },
     { id: "fade", label: "Fade (400 ms)" },
+    { id: "wipe", label: "Wipe (left to right)" },
+    { id: "push", label: "Push (left)" },
   ] as const;
 
   function todayLabel(): string {

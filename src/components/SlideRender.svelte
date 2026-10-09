@@ -29,9 +29,11 @@
     enableCamera?: boolean;
     /** Preview-only fallback; projection retains its existing black default. */
     fallbackColor?: string;
+    /** Present the parent song name instead of its Verse/Chorus section label. */
+    presentSongTitle?: boolean;
   }
 
-  let { slide, effectiveBackground, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, overlays = [], enableCamera = false, fallbackColor = "#000000" }: Props = $props();
+  let { slide, effectiveBackground, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, overlays = [], enableCamera = false, fallbackColor = "#000000", presentSongTitle = false }: Props = $props();
 
   const visibleOverlays = $derived.by(() => {
     if (overlays.length > 0) return overlays.filter((item) => item.visible);
@@ -41,6 +43,7 @@
   const effectiveShowBackground = $derived(showBackground && look.showBackground);
   const background = $derived(effectiveBackground ?? slide.background);
   const effectiveShowText = $derived(showText);
+  const renderedTitle = $derived(presentSongTitle && slide.kind === "song" && slide.itemName?.trim() ? slide.itemName.trim() : slide.title);
   const shouldShowChords = $derived(isStage && hasChords(slide.body));
   const frameRatio = $derived.by(() => {
     if (!aspectRatio) return null;
@@ -152,7 +155,7 @@
       {/if}
     {/if}
   {/if}
-  {#if effectiveShowText && slide.title}
+  {#if effectiveShowText && renderedTitle}
     <h1
       class="look-title"
       data-role="title"
@@ -171,10 +174,10 @@
       style:box-decoration-break={titleStyle.bgOpacity > 0 ? "clone" : undefined}
       style:-webkit-box-decoration-break={titleStyle.bgOpacity > 0 ? "clone" : undefined}
     >
-      {stripChords(slide.title)}
+      {stripChords(renderedTitle)}
     </h1>
   {/if}
-  {#if effectiveShowText && slide.body}
+  {#if effectiveShowText && look.showBody !== false && slide.body}
     {#if shouldShowChords}
       <div
         class="look-body chord-body"

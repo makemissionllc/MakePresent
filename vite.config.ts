@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url";
 
 const host = process.env.TAURI_DEV_HOST;
 
-export default defineConfig({
-  plugins: [svelte()],
+export default defineConfig(({ command }) => ({
+  // Keep dev styles with their component: a stale virtual CSS request must
+  // never fall through to serving raw Svelte source as a stylesheet.
+  plugins: [svelte({ emitCss: command === "build" })],
 
   clearScreen: false,
 
@@ -35,4 +37,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

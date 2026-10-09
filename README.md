@@ -1,5 +1,11 @@
 # MakrStudio (formerly MakePresent)
 
+## Changed (2026-10-07) — Downloadable Bible versions
+
+- Added a searchable “Get more Bible versions” panel to Browse Scripture. It combines translations from the free, no-key [HelloAO Free Use Bible API](https://bible.helloao.org/docs/reference/translations/) with included NIV, NKJV, NLT, MSG, ESV, NIRV, NASB, and AMP versions. Catalog versions download from HelloAO; included versions install offline from the app bundle.
+- Downloads are stored per translation under the app data `bibles/downloads` folder and remain separate from KJV and OpenLP imports. The existing book/chapter/verse browser reads them through the same verse insertion flow. `src-tauri/src/scripture.rs`, `src-tauri/src/commands.rs`, `src/components/Editor.svelte`, `src/lib/sync.ts`, and `src/lib/types.ts` contain the change; no package or crate was added.
+- Verified with `npm run check` (0 errors/warnings), `cargo check`, `cargo test` (112 passed, 2 ignored), `npm run build`, and `git diff --check`. Live downloads and license terms for individual translations were not verified against the remote API in-app; the UI links to each source license, and an internet connection is required for catalog/download. Native Windows WebView2 and projection displays were not tested.
+
 **Live presentation software for churches — by DwellPraise Ministries / MakeSoftware.**
 
 MakrStudio is a free, self-hosted, church presentation tool built around a
@@ -420,7 +426,7 @@ src-tauri/                                 Rust backend
    ├─ lib.rs                               Lifecycle: setup, tray/standby, finalize, command registration
    ├─ state.rs                             AppState — the single source of truth
    ├─ project.rs                           Domain model, persistence, autosave worker
-   ├─ commands.rs                          109 registered Tauri IPC commands
+   ├─ commands.rs                          110 registered Tauri IPC commands
    ├─ windows.rs                           Output/Stage lifecycle + display picking + editor respawn
    ├─ media.rs                             Media import/cache + ffmpeg thumbnails
    ├─ broadcast.rs                         NDI sender (runtime-loaded SDK, own thread)
@@ -452,7 +458,7 @@ src-tauri/                                 Rust backend
 | `new_project` | Create a fresh project |
 | `add_slide` / `update_slide` / `delete_slide` | Edit playlist slides |
 | `set_live_slide` / `clear_output` | Set / clear the live slide |
-| `set_transition` | Set project Cut/Fade transition |
+| `set_transition` | Set project Cut/Fade/Wipe/Push transition |
 | `log_output_intentionally_closed` | Mark an output close as intentional (no self-heal) |
 
 **Looks**
@@ -1372,7 +1378,7 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 ## Changed (2026-10-06) — Phase 8B item and kind background inheritance
 
 - **Rust authority:** legacy slides default to `Custom`; new text slides inherit. `Project.item_backgrounds` is serde-defaulted and keyed by playlist item id. Rust resolves slide Custom → item background → assigned kind Look → Main/first Look → built-in default. `ClientState.effectiveBackgrounds` is derived for rendering, not persisted. Template save/load retains item backgrounds while assigning fresh item ids; deleting an item removes its background.
-- **Commands and Editor:** added `set_item_background`, `set_kind_background`, `apply_background_to_all_items`, and `clear_slide_background` (109 registered commands total). The grid has an item background popover with media/color choices and apply scope; media cards can set the selected item's background. Custom slide cards show a marker and can return to item inheritance. Settings describes live inheritance from the kind Look.
+- **Commands and Editor:** added `set_item_background`, `set_kind_background`, `apply_background_to_all_items`, and `clear_slide_background` (110 registered commands total). The grid has an item background popover with media/color choices and apply scope; media cards can set the selected item's background. Custom slide cards show a marker and can return to item inheritance. Settings describes live inheritance from the kind Look.
 - **Rendering and compatibility:** Output, Stage, previews, and the on-deck preloader render the backend-resolved background. Output and Stage remain render-only; no duplicate background state is persisted in ClientState. Existing projects/templates without the new fields keep their stored slide backgrounds unchanged.
 - **Verify:** `npm run check` 0 errors/0 warnings; `cargo check` and `cargo check --target x86_64-pc-windows-msvc` pass with three existing dead-code warnings; `cargo test` 93 passed and 1 NDI-runtime test ignored; `npm run build` passes. Rust unit tests cover precedence, legacy defaults, template roundtrip with fresh ids, delete cleanup, clear-to-inherit, kind Look creation, bulk kind filtering, and preserving the live slide. The native Editor/Output/Stage UI was not visually exercised; no Windows display or OBS was available.
 
@@ -1411,3 +1417,33 @@ Full 10-row table with `file:line` evidence in `docs/PROJECT.md` § Windows Bloc
 - **Fix:** the pure `lookElementCss` helper supplies shared alignment, geometry and flex rules to Title, Body and Stage chord lines in `SlideRender`. Look box sizes use CSS variables that survive fitting; absolute fitting restores the current box before measuring, and action updates use current options. Auto layouts retain centered legacy sizing while Left/Right anchor short text correctly. No persisted fields, IPC commands or dependencies changed; the IPC list is unchanged.
 - **Checks:** browser fixtures verified Left/Center/Right for Title and Body in auto and absolute layouts, song titles, wrapped scripture references/verses, grid thumbnails and Output/Stage previews, actual Output/Stage components, positioning changes and reload. Rust tests exercise the same Look patch/persist/load paths for all alignment values in both modes and verify legacy missing-align fields retain centered styles without rewriting the file. No frontend unit-test runner is configured.
 - **Results and limits:** `npm run check` reports 0 errors/0 warnings; `cargo check` passes with two existing dead-code warnings; `cargo test` passes (102 passed, 2 display/hardware tests ignored); `npm run build` passes. Native live Output/Stage windows, physical displays, native app restart and NDI hardware were not verified. Browser component reload and real Rust file reload were checked. Part B and Phase 9C were not started.
+
+## Changed (2026-10-07) — Screenshot rendering repairs
+
+- Fixed development stylesheet loading in `vite.config.ts`: a virtual Svelte CSS request was serving raw component source, dropping the renderer's base styles and clipping slides to the upper-left quarter. Development now injects styles with their component; production keeps extracted CSS.
+- `src/components/Editor.svelte` keeps Go Live/delete on one card-action row and the optional item-background reset below it. Playlist rename/delete and Look selection expand inside the existing options menu without overflowing the sidebar. The Background chip uses a compact icon.
+- `src/components/LookEditorView.svelte` adds missing local styles for 28px color swatches, custom color controls, and inspector inputs, using existing tokens. No backend logic, persisted data, or dependencies changed.
+- Verified browser fixtures for full slide backgrounds/text, the actual Output component, Looks preview/swatches, expanded playlist options, custom-background cards, and the stacked layout at 680px without horizontal overflow. The original development server also picked up the repaired styles. `npm run check` passes with 0 errors/0 warnings; `npm run build`, `cargo check`, `cargo test` (106 passed, 2 ignored), and `git diff --check` pass. Rust retains two existing dead-code warnings (`AudioPlayer::is_active`, `COPY_SUFFIX`). Native Windows WebView2, physical displays, and NDI hardware were not verified.
+
+## Changed (2026-10-07) — Built-in Plugins hub
+
+- Added a Plugins tab to `src/components/SettingsPanel.svelte` that presents the existing MIDI, OSC, NDI, Stage network, audio, online lyrics, Scripture, and media features with concise descriptions and live or ready status labels. Setup buttons open the current settings panels; lyrics and Scripture open Global Search, and media opens the existing bottom Media browser.
+- The hub uses existing state and actions; no plugin downloads, backend changes, persisted fields, or dependencies were added. `npm run check` and `npm run build` pass. The browser preview showed all eight cards; lyrics opened Global Search and media opened the Media browser. Native output and hardware connections were not exercised.
+
+## Changed (2026-10-07) — Copy Playlist items into a slide group
+
+- Dropping a Playlist item onto a slide now copies its slides into that target slide's group at the drop position. The original item remains in the Playlist. Copies retain their text, names, library links, custom backgrounds, and auto-advance settings, and inherit the target group's name, Look, and item background.
+- Added the single backend command `copy_playlist_item_into_group`, with the copy and ordering operation in `src-tauri/src/project.rs`; `src/components/Editor.svelte` provides the drop cue and updates the selected group. No new persisted fields or dependencies. The registered command count is now 110.
+- Verified with Rust tests, `cargo check`, `npm run check`, `npm run build`, and `git diff --check`. Browser verification could not be completed because the development fixture raised a pre-existing missing `visible` state error; native Windows WebView2 and touch dragging were also not available to verify.
+
+## Changed (2026-10-07) — Slide fade transitions
+
+- The Stage live slide now follows the project's Cut/Fade setting and crossfades over the same 400 ms as Output. Its next-slide preview fades briefly when the queued slide changes, and slide cards fade as they are added or removed in the editor.
+- Transitions run only for slide identity changes, so edits to a live slide update immediately without replaying the effect. Reduced-motion settings skip the Output/Stage crossfade and disable the editor and Stage preview fades. No backend state, persisted fields, or dependencies changed.
+- Verified with `npm run check` (0 errors, 0 warnings), `cargo check`, `cargo test` (108 passed, 2 ignored), and `npm run build`. Visual verification on native Stage/Output windows and physical displays was not available. `cargo check` reports the two existing warnings in `audio.rs` and `media.rs`.
+
+## Changed (2026-10-07) — Presentation transitions and song titles
+
+- Added Wipe (left to right) and Push (left) to the existing Cut and Fade choices. Output and Stage render the same project-selected transition; reduced-motion settings use an immediate cut. Project creation and the editor picker offer the same choices.
+- During live song presentation, Output and Stage now show the Playlist song name in the Look's title area instead of the current Verse/Chorus section label. Editor thumbnails keep their section labels so volunteers can identify each lyric slide. Scripture and generic slides are unchanged.
+- Added a Rust serialization round-trip test for all transition values. Verified with `npm run check` (0 errors, 0 warnings), `cargo check`, `cargo test` (109 passed, 2 ignored), `npm run build`, and `git diff --check`. Native projection displays were unavailable for visual verification; two pre-existing Rust dead-code warnings remain (`AudioPlayer::is_active`, `COPY_SUFFIX`).

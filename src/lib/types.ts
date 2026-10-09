@@ -158,6 +158,7 @@ export interface Look {
   bodyFont: string;
   textColor: string;
   showBackground: boolean;
+  showBody?: boolean;
   textPosition: TextPosition;
   /** Per-element Title styling (also the scripture reference line). */
   titleStyle: TextStyle;
@@ -169,7 +170,7 @@ export interface Look {
   background?: Background | null;
 }
 
-export type Transition = "cut" | "fade";
+export type Transition = "cut" | "fade" | "wipe" | "push";
 
 export interface Project {
   schemaVersion: number;
@@ -196,6 +197,7 @@ export interface LookPatch {
   bodyFont?: string;
   textColor?: string;
   showBackground?: boolean;
+  showBody?: boolean;
   textPosition?: TextPosition;
   titleStyle?: TextStylePatch;
   bodyStyle?: TextStylePatch;
@@ -502,6 +504,7 @@ export interface ScriptureMatch {
   verse: number;
   reference: string;
   text: string;
+  translation?: string | null;
 }
 
 export interface ScriptureImportResult {
@@ -514,6 +517,24 @@ export interface BibleInfo {
   id: string;
   name: string;
   bookCount: number;
+  shortName?: string | null;
+  languageName?: string | null;
+  licenseUrl?: string | null;
+  downloaded?: boolean;
+}
+
+export interface RemoteBibleVersion {
+  id: string;
+  name: string;
+  englishName?: string | null;
+  shortName?: string | null;
+  language?: string | null;
+  languageName?: string | null;
+  languageEnglishName?: string | null;
+  licenseUrl?: string | null;
+  totalNumberOfVerses?: number | null;
+  availableFormats: string[];
+  source?: "bundled";
 }
 
 export interface ChapterVerse {

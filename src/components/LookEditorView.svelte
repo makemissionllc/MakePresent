@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { api } from "../lib/sync";
@@ -19,9 +19,10 @@
     onError: (msg: string) => void;
     dropBackground?: { background: Background; token: number } | null;
     nativeDropActive?: boolean;
+    requestedLookId?: string | null;
   }
 
-  let { appState, onUpdate, onError, dropBackground = null, nativeDropActive = false }: Props = $props();
+  let { appState, onUpdate, onError, dropBackground = null, nativeDropActive = false, requestedLookId = null }: Props = $props();
 
   const looks = $derived(appState?.looks ?? []);
   let activeLookId = $state<string | null>(null);
@@ -45,6 +46,26 @@
   let replacementLookId = $state("");
   let drawingRevision = $state(0);
   let appliedDropToken = $state<number | null>(null);
+  const kindChoices = [{ kind: "song", label: "Songs" }, { kind: "scripture", label: "Scripture" }, { kind: "generic", label: "Text" }] as const;
+  const missingKindLook = $derived(kindChoices.some(({ kind }) => !looks.some((look) => look.id === appState?.defaultLooks?.[kind])));
+  let assignmentBusy = $state(false);
+  let assignmentNotice = $state<{ message: string; kind: "song" | "scripture" | "generic"; previous: string | null } | null>(null);
+  let sampledLookId: string | null = null;
+  $effect(() => {
+    if (requestedLookId) untrack(() => selectLook(requestedLookId!));
+  });
+  $effect(() => {
+    if (activeLook && activeLook.id !== sampledLookId) {
+      sampledLookId = activeLook.id;
+      sampleKind = sampleForLook(activeLook.id);
+    }
+  });
+  function sampleForLook(id: string): string {
+    if (appState?.defaultLooks?.song === id) return "song-four";
+    if (appState?.defaultLooks?.scripture === id) return "scripture";
+    if (appState?.defaultLooks?.generic === id) return "text";
+    return "song-four";
+  }
 
   $effect(() => {
     // Sync draft when active look changes
@@ -72,6 +93,7 @@
       bodyFont: updated.bodyFont,
       textColor: updated.textColor,
       showBackground: updated.showBackground,
+      showBody: updated.showBody ?? true,
       textPosition: updated.textPosition,
       titleStyle: updated.titleStyle ?? { ...DEFAULT_TITLE_STYLE },
       bodyStyle: updated.bodyStyle ?? { ...DEFAULT_BODY_STYLE },
@@ -187,6 +209,7 @@
       name: look.name, titleSize: look.titleSize, bodySize: look.bodySize,
       titleFont: look.titleFont, bodyFont: look.bodyFont, textColor: look.textColor,
       showBackground: look.showBackground, textPosition: look.textPosition,
+      showBody: look.showBody ?? true,
       titleStyle: look.titleStyle, bodyStyle: look.bodyStyle, positioning: look.positioning,
       titleBox: look.titleBox, bodyBox: look.bodyBox, background: look.background ?? null,
     };
@@ -245,9 +268,32 @@
     const fn = target === "output" ? api.setOutputLook : api.setStageLook;
     void fn(id).then(onUpdate).catch((e: unknown) => (lookErr = String(e)));
   }
-  function assignKind(kind: "song" | "scripture" | "generic", id: string | null): void {
+  async function assignKind(kind: "song" | "scripture" | "generic", id: string | null, recordUndo = true): Promise<void> {
     lookErr = null;
-    void api.setDefaultLook(kind, id).then(onUpdate).catch((e: unknown) => (lookErr = String(e)));
+    const previous = appState?.defaultLooks?.[kind] ?? null;
+    assignmentBusy = true;
+    try {
+      flushCommit();
+      await commitQueue;
+      const state = await api.setDefaultLook(kind, id);
+      onUpdate(state);
+      const label = kindChoices.find((choice) => choice.kind === kind)!.label;
+      assignmentNotice = recordUndo ? { kind, previous, message: id ? `${label} now use '${state.looks.find((look) => look.id === id)?.name ?? "this Look"}'.` : `${label} now use the Output Look.` } : null;
+      if (id === activeLook?.id) sampleKind = kind === "song" ? "song-four" : kind === "scripture" ? "scripture" : "text";
+    } catch (e) { lookErr = String(e); }
+    finally { assignmentBusy = false; }
+  }
+  async function createStarters(): Promise<void> {
+    assignmentBusy = true;
+    lookErr = null;
+    try {
+      flushCommit();
+      await commitQueue;
+      const state = await api.createStarterLooks();
+      onUpdate(state);
+      if (state.defaultLooks.song) selectLook(state.defaultLooks.song);
+    } catch (e) { lookErr = String(e); }
+    finally { assignmentBusy = false; }
   }
 
   // Bounding box editor
@@ -438,6 +484,7 @@
     if (sampleKind === "song-two") return { ...base, title: "Great Is Thy Faithfulness", body: "Great is Thy faithfulness, O God my Father\nThere is no shadow of turning with Thee" };
     if (sampleKind === "scripture") return { ...base, kind: "scripture", title: "John 3:16 · KJV", body: "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life." };
     if (sampleKind === "stress") return { ...base, title: "A Long Title for a Difficult Slide", body: "This long-text stress test checks how the Look handles a paragraph with many words, narrow widths, and several lines. A volunteer can see whether the text remains readable across the screen without clipping." };
+    if (sampleKind === "text") return { ...base, title: "Welcome", body: "We're glad you're here\nSunday service · 10:00" };
     return base;
   });
 
@@ -454,6 +501,7 @@
       const state = await api.upsertLook(activeLook.id, {
         titleSize: 72, bodySize: 40, titleFont: "sans-serif", bodyFont: "sans-serif",
         textColor: "#ffffff", showBackground: true, textPosition: "center",
+        showBody: true,
         titleStyle: { ...DEFAULT_TITLE_STYLE }, bodyStyle: { ...DEFAULT_BODY_STYLE },
         positioning: "auto", titleBox: { x: 5, y: 10, width: 90, height: 20, zIndex: 1 },
         bodyBox: { x: 5, y: 35, width: 90, height: 45, zIndex: 1 }, background: null,
@@ -516,13 +564,17 @@
           {#if appState?.defaultLooks?.song === lk.id}<span class="badge kind-song">Songs</span>{/if}
           {#if appState?.defaultLooks?.scripture === lk.id}<span class="badge kind-scripture">Scripture</span>{/if}
           {#if appState?.defaultLooks?.generic === lk.id}<span class="badge kind-text">Text</span>{/if}
-          {#if appState?.items?.some((item) => item.kind === "song" && appState?.project.itemLooks?.[item.id] === lk.id) && appState?.defaultLooks?.song !== lk.id}<span class="badge kind-song">Songs</span>{/if}
-          {#if appState?.items?.some((item) => item.kind === "scripture" && appState?.project.itemLooks?.[item.id] === lk.id) && appState?.defaultLooks?.scripture !== lk.id}<span class="badge kind-scripture">Scripture</span>{/if}
-          {#if appState?.items?.some((item) => item.kind === "generic" && appState?.project.itemLooks?.[item.id] === lk.id) && appState?.defaultLooks?.generic !== lk.id}<span class="badge kind-text">Text</span>{/if}
+          {#if appState?.items?.some((item) => appState?.project.itemLooks?.[item.id] === lk.id)}<span class="badge" title="Used by a playlist item">Item</span>{/if}
         </button>
       {/each}
     </div>
     {#if lookErr}<p class="status err">{lookErr}</p>{/if}
+    {#if missingKindLook}
+      <div class="starter-banner"><span>Give songs, scripture and text their own look</span><button class="ghost" disabled={assignmentBusy} onclick={createStarters}>Create starter Looks</button></div>
+    {/if}
+    {#if assignmentNotice}
+      <div class="assignment-notice" role="status"><span>{assignmentNotice.message}</span><button class="ghost" disabled={assignmentBusy} onclick={() => assignmentNotice && void assignKind(assignmentNotice.kind, assignmentNotice.previous, false)}>Undo</button></div>
+    {/if}
   </div>
 
   <div class="look-main">
@@ -535,6 +587,7 @@
               <option value="song-four">Song · 4 lines</option>
               <option value="song-two">Song · 2 lines</option>
               <option value="scripture">Scripture · long verse</option>
+              <option value="text">Text</option>
               <option value="stress">Long-text stress test</option>
             </select>
           </label>
@@ -694,8 +747,9 @@
           <input type="checkbox" checked={draft.showBackground} onchange={(e) => setDraft("showBackground", (e.target as HTMLInputElement).checked)} />
           Show background
         </label>
+        <label class="check"><input type="checkbox" checked={draft.showBody !== false} onchange={(e) => setDraft("showBody", e.currentTarget.checked)} /> Show body text</label>
         <div class="field">
-          <span class="field-label">Default background for new slides using this Look</span>
+          <span class="field-label">This Look's background</span>
           <div class="swatches">
             {#each PALETTE as color}
               <button class="swatch" style:background-color={color} class:selected={draft.background?.type === "solid" && draft.background.color.toLowerCase() === color} onclick={() => setLookBackgroundColor(color)} title={color}></button>
@@ -717,7 +771,7 @@
               <button class="ghost" onclick={() => clearLookBackground()} title="Clear Look background">Clear</button>
             {/if}
           </div>
-          <span class="field-hint">When this Look is set as default for a kind (Scripture/Song/Generic), new slides of that kind will start with this background (one-time copy).</span>
+          <span class="field-hint">Slides following this Look use its background and styling live. Their own slide or item background takes priority.</span>
         </div>
         <label class="element-only">
           Text position
@@ -772,10 +826,8 @@
         </div>
 
         <div class="assign-block">
-          <span class="assign-title">Default Look for each kind</span>
-          <label>Songs<select value={appState?.defaultLooks?.song ?? ""} onchange={(e) => assignKind("song", (e.currentTarget as HTMLSelectElement).value || null)}><option value="">Use Output Look</option>{#each looks as lk (lk.id)}<option value={lk.id}>{lk.name}</option>{/each}</select></label>
-          <label>Scripture<select value={appState?.defaultLooks?.scripture ?? ""} onchange={(e) => assignKind("scripture", (e.currentTarget as HTMLSelectElement).value || null)}><option value="">Use Output Look</option>{#each looks as lk (lk.id)}<option value={lk.id}>{lk.name}</option>{/each}</select></label>
-          <label>Text<select value={appState?.defaultLooks?.generic ?? ""} onchange={(e) => assignKind("generic", (e.currentTarget as HTMLSelectElement).value || null)}><option value="">Use Output Look</option>{#each looks as lk (lk.id)}<option value={lk.id}>{lk.name}</option>{/each}</select></label>
+          <span class="assign-title">Use this Look for</span>
+          <div class="kind-chips">{#each kindChoices as choice (choice.kind)}<button class="ghost" class:active={appState?.defaultLooks?.[choice.kind] === draft.id} aria-pressed={appState?.defaultLooks?.[choice.kind] === draft.id} disabled={assignmentBusy} onclick={() => void assignKind(choice.kind, appState?.defaultLooks?.[choice.kind] === draft!.id ? null : draft!.id)}>{choice.label}</button>{/each}</div>
           <p class="field-hint">Output Auto uses an item override, then this kind Look, then the Output Look.</p>
         </div>
 
@@ -810,6 +862,13 @@
 </div>
 
 <style>
+  .swatches { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+  .swatch, .media-add { flex: 0 0 28px; width: 28px; height: 28px; min-height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .swatch.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .swatch img { width: 100%; height: 100%; object-fit: cover; }
+  .custom-color { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+  .look-form input[type="color"] { width: 32px; height: 28px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
+  .look-form input[type="text"], .look-form input[type="number"], .look-form select { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); color: var(--text); font: inherit; }
   .look-editor-view {
     display: flex;
     gap: 16px;
@@ -1179,6 +1238,9 @@
   .badge.kind-song { background:#347a55; }
   .badge.kind-scripture { background:#566db3; }
   .badge.kind-text { background:#686879; }
+  .kind-chips, .starter-banner, .assignment-notice { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+  .starter-banner, .assignment-notice { padding:10px; border:1px solid var(--border); border-radius:8px; font-size:12px; }
+  .kind-chips button.active { border-color:var(--accent); background:var(--panel-2); }
   .look-actions { display:flex; gap:6px; flex-wrap:wrap; }
   .import-look { position:relative; display:inline-flex; align-items:center; padding:6px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer; }
   .import-look input { position:absolute; inset:0; opacity:0; width:100%; cursor:pointer; }

@@ -6,6 +6,7 @@ import type {
   AudioStateView,
   AutosaveEvent,
   BibleInfo,
+  RemoteBibleVersion,
   ChapterVerse,
   ClientState,
   CountdownView,
@@ -238,6 +239,8 @@ export const api = {
   setDefaultLook: (kind: string, lookId: string | null) =>
     invoke<ClientState>("set_default_look", { kind, lookId }),
 
+  createStarterLooks: () => invoke<ClientState>("create_starter_looks"),
+
   setItemLook: (itemId: string, lookId: string | null) =>
     invoke<ClientState>("set_item_look", { itemId, lookId }),
 
@@ -276,6 +279,9 @@ export const api = {
   searchScripture: (query: string) =>
     invoke<ScriptureMatch[]>("search_scripture", { query }),
 
+  searchBibleText: (bibleId: string, query: string, limit = 100) =>
+    invoke<ScriptureMatch[]>("search_bible_text", { bibleId, query, limit }),
+
   importOpenlpBible: (path: string) =>
     invoke<ScriptureImportResult>("import_openlp_bible", { path }),
 
@@ -292,6 +298,11 @@ export const api = {
     }),
 
   listBibles: () => invoke<BibleInfo[]>("list_bibles"),
+
+  listRemoteBibleVersions: () => invoke<RemoteBibleVersion[]>("list_remote_bible_versions"),
+
+  downloadBibleVersion: (versionId: string) =>
+    invoke<BibleInfo>("download_bible_version", { versionId }),
 
   getBookList: (bibleId: string) =>
     invoke<string[]>("get_book_list", { bibleId }),
@@ -312,6 +323,9 @@ export const api = {
 
   reorderItem: (itemId: string, newIndex: number) =>
     invoke<ClientState>("reorder_item", { itemId, newIndex }),
+
+  copyPlaylistItemIntoGroup: (sourceSlideIds: string[], targetSlideId: string, insertAt: number) =>
+    invoke<ClientState>("copy_playlist_item_into_group", { sourceSlideIds, targetSlideId, insertAt }),
 
   deleteItem: (itemId: string) =>
     invoke<ClientState>("delete_item", { itemId }),

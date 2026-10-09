@@ -417,7 +417,7 @@ fn media_asset_hash(path: &Path, kind: MediaKind, data_dir: &Path) -> Result<Med
     let dest = media_dir(data_dir).join(&file_name);
     if !dest.exists() {
         fs::create_dir_all(media_dir(data_dir)).map_err(|e| e.to_string())?;
-        let tmp = media_dir(data_dir).join(format!("{file_name}.{}.part", std::process::id()));
+        let tmp = media_dir(data_dir).join(format!("{file_name}.{}{COPY_SUFFIX}", std::process::id()));
         fs::copy(path, &tmp).map_err(|e| format!("could not copy media file: {e}"))?;
         // Ignore rename failure if another concurrent import already created dest
         if let Err(e) = fs::rename(&tmp, &dest) {

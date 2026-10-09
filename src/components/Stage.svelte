@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { fade } from "svelte/transition";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api, emitOutroDone, emitRenderAck, subscribeCountdown, subscribeExitOutro, subscribeState } from "../lib/sync";
-  import type { ClientState, CountdownView, Look } from "../lib/types";
+  import type { ClientState, CountdownView, Look, Slide, Transition } from "../lib/types";
   import { fitText } from "../lib/fitText";
+  import { prefersReducedMotion } from "../lib/motion";
   import SlideRender from "./SlideRender.svelte";
   import { stripChords } from "../lib/chords";
 
@@ -27,6 +29,7 @@
       Stage renderer is alive and applied state, so the Editor can warn on a
       silent freeze instead of only noticing at the screen. */
   const ACK_MS = 5000;
+  const FADE_MS = 400;
 
   function formatCountdown(seconds: number): string {
     const h = Math.floor(seconds / 3600);
@@ -37,6 +40,63 @@
 
   const current = $derived(appState?.current ?? null);
   const next = $derived(appState?.next ?? null);
+  // Stage follows the backend's live slide and transition setting. It only
+  // choreographs the visual crossfade between the old and new frames.
+  let shownCurrent = $state<Slide | null>(null);
+  let leavingCurrent = $state<Slide | null>(null);
+  let currentInOpacity = $state(1);
+  let currentOutOpacity = $state(1);
+  let currentTransition = $state<Transition>("cut");
+  let currentTransitionStarted = $state(false);
+  let currentCrossfading = $state(false);
+  let currentFadeTimer: number | undefined;
+
+  $effect(() => {
+    const incoming = current;
+    const previous = shownCurrent;
+    if (incoming?.id === previous?.id && (incoming === null) === (previous === null)) {
+      // Live slide edits update in place without restarting the transition.
+      if (incoming !== previous) shownCurrent = incoming;
+      return;
+    }
+
+    const selectedTransition = appState?.project?.transition ?? "cut";
+    if (selectedTransition !== "cut" && !prefersReducedMotion()) {
+      currentTransition = selectedTransition;
+      currentTransitionStarted = false;
+      leavingCurrent = previous;
+      currentOutOpacity = 1;
+      shownCurrent = incoming;
+      currentInOpacity = selectedTransition === "fade" ? 0 : 1;
+      currentCrossfading = true;
+      void document.body.offsetWidth;
+      requestAnimationFrame(() => {
+        currentTransitionStarted = true;
+        if (currentTransition === "fade") {
+          currentOutOpacity = 0;
+          currentInOpacity = 1;
+        }
+      });
+      window.clearTimeout(currentFadeTimer);
+      currentFadeTimer = window.setTimeout(() => {
+        leavingCurrent = null;
+        currentOutOpacity = 1;
+        currentInOpacity = 1;
+        currentCrossfading = false;
+        currentTransitionStarted = false;
+        currentTransition = "cut";
+      }, FADE_MS + 40);
+    } else {
+      leavingCurrent = null;
+      shownCurrent = incoming;
+      currentOutOpacity = 1;
+      currentInOpacity = 1;
+      currentCrossfading = false;
+      currentTransitionStarted = false;
+      currentTransition = "cut";
+      window.clearTimeout(currentFadeTimer);
+    }
+  });
 
   // Resolve the Look assigned to this Stage window. Falls back to the look
   // named "Stage", then the first look, when unmapped.
@@ -92,6 +152,7 @@
       un();
       unCountdown();
       unOutro();
+      window.clearTimeout(currentFadeTimer);
       if (clock !== undefined) window.clearInterval(clock);
       if (ackTimer !== undefined) window.clearInterval(ackTimer);
     };
@@ -105,12 +166,19 @@
     </div>
   {/if}
   <section class="current">
-    {#if current && look}
-      <SlideRender {look} slide={current} effectiveBackground={appState?.effectiveBackgrounds?.[current.id] ?? current.background} {showText} {showBackground} {aspectRatio} isStage={true} />
-    {:else if current}
-      <p class="placeholder">{current.body || current.title}</p>
-    {:else}
+    {#if shownCurrent && look}
+      <div class="stage-frame" class:crossfading={currentCrossfading} class:push-in={currentTransition === "push" && !currentTransitionStarted} style:opacity={currentInOpacity} style:clip-path={currentTransition === "wipe" ? (currentTransitionStarted ? "inset(0)" : "inset(0 100% 0 0)") : undefined}>
+        <SlideRender {look} slide={shownCurrent} effectiveBackground={appState?.effectiveBackgrounds?.[shownCurrent.id] ?? shownCurrent.background} {showText} {showBackground} {aspectRatio} isStage={true} presentSongTitle={true} />
+      </div>
+    {:else if shownCurrent}
+      <p class="placeholder">{shownCurrent.body || shownCurrent.title}</p>
+    {:else if !leavingCurrent}
       <p class="placeholder">No live slide</p>
+    {/if}
+    {#if leavingCurrent && look}
+      <div class="stage-frame stage-frame-leaving" class:crossfading={currentCrossfading} class:push-out={currentTransition === "push" && currentTransitionStarted} style:opacity={currentOutOpacity}>
+        <SlideRender {look} slide={leavingCurrent} effectiveBackground={appState?.effectiveBackgrounds?.[leavingCurrent.id] ?? leavingCurrent.background} {showText} {showBackground} {aspectRatio} isStage={true} presentSongTitle={true} />
+      </div>
     {/if}
   </section>
 
@@ -118,9 +186,11 @@
     <div class="next">
       <span class="next-label">NEXT</span>
       {#if next}
-        <div class="next-body-wrap" use:fitText>
-          <p class="next-body" data-role="body">{stripChords(next.body) || stripChords(next.title)}</p>
-        </div>
+        {#key next.id}
+          <div class="next-body-wrap" use:fitText transition:fade={{ duration: prefersReducedMotion() ? 0 : 180 }}>
+            <p class="next-body" data-role="body">{stripChords(next.body) || stripChords(next.title)}</p>
+          </div>
+        {/key}
       {:else}
         <p class="placeholder">Nothing queued</p>
       {/if}
@@ -212,6 +282,24 @@
     overflow: hidden;
     container-type: size;
   }
+
+  .stage-frame {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 1;
+    transition: opacity 400ms ease, transform 400ms cubic-bezier(0.22, 1, 0.36, 1), clip-path 400ms cubic-bezier(0.22, 1, 0.36, 1);
+    contain: layout style paint;
+    will-change: opacity;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    isolation: isolate;
+  }
+  .stage-frame-leaving { z-index: 1; }
+  .stage-frame.crossfading { will-change: transform, opacity; }
+  .stage-frame.push-in { transform: translate3d(100%, 0, 0); }
+  .stage-frame.push-out { transform: translate3d(-100%, 0, 0); }
 
   .side {
     position: relative;

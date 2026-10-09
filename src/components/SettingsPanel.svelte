@@ -36,11 +36,13 @@
   interface Props {
     app: ClientState | null;
     onclose: () => void;
+    onBrowseMedia?: () => void;
+    onUpdate?: (s: ClientState) => void;
   }
 
-  let { app: appState, onclose }: Props = $props();
+  let { app: appState, onclose, onBrowseMedia = () => {}, onUpdate = () => {} }: Props = $props();
 
-  let tab = $state<"general" | "looks" | "triggers" | "network" | "audio" | "logs">("general");
+  let tab = $state<"plugins" | "general" | "looks" | "triggers" | "network" | "audio" | "logs">("general");
   let status = $state<{ kind: "ok" | "err"; text: string } | null>(null);
   let logs = $state<LogEntry[]>([]);
   let logsMsg = $state<string | null>(null);
@@ -174,7 +176,7 @@
 
   function setDefaultLook(kind: string, id: string | null): void {
     lookErr = null;
-    void api.setDefaultLook(kind, id).then((s) => (appState = s)).catch((e: unknown) => (lookErr = String(e)));
+    void api.setDefaultLook(kind, id).then((s) => { appState = s; onUpdate(s); }).catch((e: unknown) => (lookErr = String(e)));
   }
 
   function assignTo(target: "output" | "stage", id: string | null): void {
@@ -419,7 +421,7 @@
           },
           {
             label: "Default transition",
-            value: appState.defaultTransition === "fade" ? "Fade" : "Cut",
+            value: ({ cut: "Cut", fade: "Fade", wipe: "Wipe", push: "Push" } as const)[appState.defaultTransition],
           },
           {
             label: "NDI broadcast",
@@ -867,6 +869,21 @@
     return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
   }
 
+  function openIntegration(destination: "general" | "triggers" | "network" | "audio"): void {
+    tab = destination;
+    if (destination === "audio") {
+      audioVolumeDraft = audioView.volume;
+      void refreshAudioDevices();
+    }
+  }
+
+  function openGlobalSearch(): void {
+    onclose();
+    window.setTimeout(() => window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "k", ctrlKey: true, bubbles: true,
+    })), 0);
+  }
+
 </script>
 
 <div class="overlay" in:veil={{ duration: 180 }}>
@@ -878,6 +895,9 @@
     </header>
 
     <nav class="tabs">
+      <button class="tab" class:active={tab === "plugins"} onclick={() => (tab = "plugins")}>
+        Plugins
+      </button>
       <button class="tab" class:active={tab === "general"} onclick={() => (tab = "general")}>
         General
       </button>
@@ -899,7 +919,58 @@
     </nav>
 
     <div class="content">
-      {#if tab === "general"}
+      {#if tab === "plugins"}
+        <div class="plugin-hub">
+          <div class="plugin-intro">
+            <span class="plugin-kicker">MAKRSTUDIO TOOLS</span>
+            <h3>Make your setup work together</h3>
+            <p>These built-in connections are ready when you need them. Each one keeps its settings in the place it already belongs.</p>
+          </div>
+          <div class="plugin-grid">
+            <article class="plugin-card">
+              <span class="plugin-icon" aria-hidden="true">♫</span>
+              <div class="plugin-copy"><div class="plugin-title"><h4>MIDI controls</h4><span class="plugin-status" class:connected={appState?.midiEnabled}>{appState?.midiEnabled ? "On" : "Off"}</span></div><p>Advance slides or trigger actions from a keyboard or control surface.</p></div>
+              <button class="plugin-action" onclick={() => openIntegration("triggers")}>Set up <span aria-hidden="true">→</span></button>
+            </article>
+            <article class="plugin-card">
+              <span class="plugin-icon" aria-hidden="true">⌁</span>
+              <div class="plugin-copy"><div class="plugin-title"><h4>OSC control</h4><span class="plugin-status" class:connected={appState?.oscEnabled}>{appState?.oscEnabled ? `On · ${appState?.oscPort}` : "Off"}</span></div><p>Connect automation tools and send live slide commands over your local network.</p></div>
+              <button class="plugin-action" onclick={() => openIntegration("triggers")}>Set up <span aria-hidden="true">→</span></button>
+            </article>
+            <article class="plugin-card">
+              <span class="plugin-icon" aria-hidden="true">◉</span>
+              <div class="plugin-copy"><div class="plugin-title"><h4>NDI output</h4><span class="plugin-status" class:connected={appState?.broadcast.enabled}>{appState?.broadcast.enabled ? (appState?.broadcast.hasRealFrames ? "Live" : "Starting") : "Off"}</span></div><p>Send the live Output picture to OBS and other NDI tools on your network.</p></div>
+              <button class="plugin-action" onclick={() => openIntegration("general")}>Set up <span aria-hidden="true">→</span></button>
+            </article>
+            <article class="plugin-card">
+              <span class="plugin-icon" aria-hidden="true">▣</span>
+              <div class="plugin-copy"><div class="plugin-title"><h4>Stage on phones</h4><span class="plugin-status" class:connected={appState?.stageNetworkEnabled}>{appState?.stageNetworkEnabled ? "On" : "Off"}</span></div><p>Share the Stage Display with performers on the same Wi-Fi.</p></div>
+              <button class="plugin-action" onclick={() => openIntegration("network")}>Set up <span aria-hidden="true">→</span></button>
+            </article>
+            <article class="plugin-card">
+              <span class="plugin-icon" aria-hidden="true">♪</span>
+              <div class="plugin-copy"><div class="plugin-title"><h4>Service audio</h4><span class="plugin-status" class:connected={audioView.status === "playing"}>{audioView.status === "playing" ? "Playing" : "Ready"}</span></div><p>Play background music through your chosen audio output.</p></div>
+              <button class="plugin-action" onclick={() => openIntegration("audio")}>Set up <span aria-hidden="true">→</span></button>
+            </article>
+            <article class="plugin-card">
+              <span class="plugin-icon" aria-hidden="true">♪</span>
+              <div class="plugin-copy"><div class="plugin-title"><h4>Online lyrics</h4><span class="plugin-status connected">Ready</span></div><p>Find lyrics while searching. Results are reviewed before you add them.</p></div>
+              <button class="plugin-action" onclick={openGlobalSearch}>Search songs <span aria-hidden="true">→</span></button>
+            </article>
+            <article class="plugin-card">
+              <span class="plugin-icon" aria-hidden="true">▤</span>
+              <div class="plugin-copy"><div class="plugin-title"><h4>Scripture library</h4><span class="plugin-status connected">On device</span></div><p>Search the included Bible text or add another supported Bible file.</p></div>
+              <button class="plugin-action" onclick={openGlobalSearch}>Find a verse <span aria-hidden="true">→</span></button>
+            </article>
+            <article class="plugin-card">
+              <span class="plugin-icon" aria-hidden="true">▧</span>
+              <div class="plugin-copy"><div class="plugin-title"><h4>Media library</h4><span class="plugin-status connected">Ready</span></div><p>Browse images and video backgrounds from your media library.</p></div>
+              <button class="plugin-action" onclick={() => { onclose(); onBrowseMedia(); }}>Browse media <span aria-hidden="true">→</span></button>
+            </article>
+          </div>
+          <p class="plugin-footnote">Connections stay on your local setup. Online lyric searches send the song title you enter to LRCLIB.</p>
+        </div>
+      {:else if tab === "general"}
         <div class="panel-general">
           <p class="hint">
             These are per-machine settings: display assignments, fullscreen,
@@ -1314,39 +1385,39 @@
                   </div>
 
                   <div class="assign-block">
-                    <span class="assign-title">Default Look for new slides</span>
-                    <p class="hint" style="margin:0 0 8px">Slides set to Inherit follow their item background first, then the default Look for their kind. Change a default Look to update every inheriting slide of that kind; slides with their own background stay unchanged.</p>
+                    <span class="assign-title">Look for Songs, Scripture and Text</span>
+                    <p class="hint" style="margin:0 0 8px">Slides follow their kind's Look styling and background live, unless their item uses a different Look. Slide and item backgrounds take priority over the Look's background. These assignments also appear in Looks.</p>
                     <label>
-                      Scripture — Add Scripture / Browse
+                      Scripture
                       <select
                         value={appState?.defaultLooks?.scripture ?? ""}
                         onchange={(e) => setDefaultLook("scripture", (e.target as HTMLSelectElement).value || null)}
                       >
-                        <option value="">Main (default)</option>
+                        <option value="">Use Output Look</option>
                         {#each looks as lk (lk.id)}
                           <option value={lk.id}>{lk.name}</option>
                         {/each}
                       </select>
                     </label>
                     <label>
-                      Song — Library / Add song
+                      Songs
                       <select
                         value={appState?.defaultLooks?.song ?? ""}
                         onchange={(e) => setDefaultLook("song", (e.target as HTMLSelectElement).value || null)}
                       >
-                        <option value="">Main (default)</option>
+                        <option value="">Use Output Look</option>
                         {#each looks as lk (lk.id)}
                           <option value={lk.id}>{lk.name}</option>
                         {/each}
                       </select>
                     </label>
                     <label>
-                      Generic — + Add slide / Media
+                      Text
                       <select
                         value={appState?.defaultLooks?.generic ?? ""}
                         onchange={(e) => setDefaultLook("generic", (e.target as HTMLSelectElement).value || null)}
                       >
-                        <option value="">Main (default)</option>
+                        <option value="">Use Output Look</option>
                         {#each looks as lk (lk.id)}
                           <option value={lk.id}>{lk.name}</option>
                         {/each}
@@ -1811,7 +1882,7 @@
     gap: 4px;
     padding: 10px 14px 0;
     border-bottom: 1px solid var(--border);
-    /* Six tabs overflow narrow dialogs (dialog is overflow:hidden) — scroll
+    /* Tabs scroll on narrow dialogs (dialog is overflow:hidden) — scroll
        the tab strip instead of clipping Audio/Logs out of reach. */
     overflow-x: auto;
   }
@@ -1831,6 +1902,24 @@
     border-color: var(--border);
     color: var(--text);
   }
+
+  .plugin-hub { max-width: 980px; margin: 0 auto; }
+  .plugin-intro { margin: 4px 0 20px; }
+  .plugin-kicker { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+  .plugin-intro h3 { margin: 6px 0; color: var(--text); font-size: 20px; }
+  .plugin-intro p, .plugin-card p, .plugin-footnote { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
+  .plugin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 275px), 1fr)); gap: 12px; }
+  .plugin-card { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: start; gap: 10px 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+  .plugin-icon { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid rgba(129,170,149,.2); border-radius: 9px; background: rgba(129,170,149,.08); color: var(--accent); font-size: 18px; }
+  .plugin-copy { min-width: 0; }
+  .plugin-title { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin: 1px 0 5px; }
+  .plugin-title h4 { margin: 0; color: var(--text); font-size: 13px; }
+  .plugin-status { flex: none; padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); font-size: 10px; line-height: 1.2; }
+  .plugin-status.connected { border-color: var(--semantic-live-border); background: var(--semantic-live-bg); color: var(--accent); }
+  .plugin-action { grid-column: 2; display: flex; justify-content: space-between; align-items: center; width: 100%; min-height: 34px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); color: var(--text); font-size: 11px; text-align: left; }
+  .plugin-action:hover { border-color: var(--accent); background: rgba(129,170,149,.08); }
+  .plugin-action span { color: var(--accent); }
+  .plugin-footnote { margin: 16px 0 4px; font-size: 11px; }
 
   .content {
     flex: 1;

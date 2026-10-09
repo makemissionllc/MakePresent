@@ -28,6 +28,50 @@ pub struct RawVerse {
     pub text: String,
 }
 
+/// A downloadable translation from the Free Use Bible API catalog.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteBibleVersion {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub english_name: Option<String>,
+    #[serde(default)]
+    pub short_name: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default)]
+    pub language_name: Option<String>,
+    #[serde(default)]
+    pub language_english_name: Option<String>,
+    #[serde(default)]
+    pub license_url: Option<String>,
+    #[serde(default)]
+    pub total_number_of_verses: Option<usize>,
+    #[serde(default)]
+    pub available_formats: Vec<String>,
+    /// `bundled` marks a translation included in the application resources.
+    /// Catalog translations leave this unset and download from HelloAO.
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+/// A locally downloaded translation, kept separate so it never overwrites
+/// the bundled KJV or another translation with the same book names.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadedBible {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub short_name: Option<String>,
+    #[serde(default)]
+    pub language_name: Option<String>,
+    #[serde(default)]
+    pub license_url: Option<String>,
+    pub books: Vec<RawBook>,
+}
+
 // ---------------------------------------------------------------------------
 // In-memory index types
 // ---------------------------------------------------------------------------
@@ -427,6 +471,35 @@ impl ScriptureIndex {
                 );
                 if results.len() >= limit {
                     break;
+                }
+            }
+        }
+        results
+    }
+
+    /// Search verse text in the indexed books, returning matches in Bible order.
+    pub fn search_text(&self, query: &str, limit: usize) -> Vec<ScriptureMatch> {
+        let needle = query.trim().to_lowercase();
+        if needle.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        let mut results = Vec::new();
+        for name in self.ordered_book_names() {
+            let Some(book) = self.books.get(&name) else { continue };
+            for chapter in &book.chapters {
+                for verse in &chapter.verses {
+                    if verse.text.to_lowercase().contains(&needle) {
+                        results.push(ScriptureMatch {
+                            book: book.name.clone(),
+                            chapter: chapter.chapter,
+                            verse: verse.verse,
+                            reference: format!("{} {}:{}", book.name, chapter.chapter, verse.verse),
+                            text: verse.text.clone(),
+                        });
+                        if results.len() >= limit {
+                            return results;
+                        }
+                    }
                 }
             }
         }
@@ -907,6 +980,328 @@ pub fn parse_openlp_xml(xml: &str) -> Result<Vec<RawBook>, String> {
 // bible-api.com REST integration
 // ---------------------------------------------------------------------------
 
+const FREE_BIBLE_API: &str = "https://bible.helloao.org/api";
+const MAX_BIBLE_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
+
+/// Translation XML files already present in the project, made available as
+/// one-click offline installs from Browse Scripture.
+const BUNDLED_BIBLE_SOURCES: &[(&str, &str, &str, &str)] = &[
+    (
+        "included_niv",
+        "New International Version",
+        "NIV",
+        "bibles/niv.xml",
+    ),
+    (
+        "included_nkjv",
+        "New King James Version",
+        "NKJV",
+        "bibles/nkjv.xml",
+    ),
+    (
+        "included_nlt",
+        "New Living Translation",
+        "NLT",
+        "bibles/nlt.xml",
+    ),
+    ("included_msg", "The Message", "MSG", "bibles/msg.xml"),
+    (
+        "included_esv",
+        "English Standard Version",
+        "ESV",
+        "bibles/esv.xml",
+    ),
+    (
+        "included_nirv",
+        "New International Reader's Version",
+        "NIRV",
+        "bibles/nirv.xml",
+    ),
+    (
+        "included_nasb",
+        "New American Standard Bible 1995",
+        "NASB",
+        "bibles/nasb.xml",
+    ),
+    (
+        "included_amp",
+        "Amplified Bible 2001",
+        "AMP",
+        "bibles/amp.xml",
+    ),
+];
+
+pub fn bundled_bible_versions() -> Vec<RemoteBibleVersion> {
+    BUNDLED_BIBLE_SOURCES
+        .iter()
+        .map(|(id, name, short_name, _)| RemoteBibleVersion {
+            id: (*id).to_string(),
+            name: (*name).to_string(),
+            english_name: Some((*name).to_string()),
+            short_name: Some((*short_name).to_string()),
+            language: Some("eng".to_string()),
+            language_name: Some("English".to_string()),
+            language_english_name: Some("English".to_string()),
+            license_url: None,
+            total_number_of_verses: None,
+            available_formats: vec!["xml".to_string()],
+            source: Some("bundled".to_string()),
+        })
+        .collect()
+}
+
+pub fn bundled_bible_resource(id: &str) -> Option<&'static str> {
+    BUNDLED_BIBLE_SOURCES
+        .iter()
+        .find_map(|(source_id, _, _, path)| (*source_id == id).then_some(*path))
+}
+
+pub fn load_bundled_bible(path: &Path, id: &str) -> Result<DownloadedBible, String> {
+    let (_, name, short_name, _) = BUNDLED_BIBLE_SOURCES
+        .iter()
+        .find(|(source_id, _, _, _)| *source_id == id)
+        .ok_or_else(|| "unknown bundled Bible version".to_string())?;
+    let xml = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read bundled Bible {}: {e}", path.display()))?;
+    let books = parse_openlp_xml(&xml)?;
+    Ok(DownloadedBible {
+        id: id.to_string(),
+        name: (*name).to_string(),
+        short_name: Some((*short_name).to_string()),
+        language_name: Some("English".to_string()),
+        license_url: None,
+        books,
+    })
+}
+
+#[derive(Deserialize)]
+struct RemoteBibleCatalog {
+    #[serde(default)]
+    translations: Vec<RemoteBibleVersion>,
+}
+
+#[derive(Deserialize)]
+struct RemoteCompleteBible {
+    translation: RemoteBibleVersion,
+    books: Vec<RemoteCompleteBook>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteCompleteBook {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    common_name: Option<String>,
+    chapters: Vec<RemoteCompleteChapter>,
+}
+
+#[derive(Deserialize)]
+struct RemoteCompleteChapter {
+    chapter: RemoteChapterContent,
+}
+
+#[derive(Deserialize)]
+struct RemoteChapterContent {
+    number: u32,
+    #[serde(default)]
+    content: Vec<RemoteChapterPart>,
+}
+
+#[derive(Deserialize)]
+struct RemoteChapterPart {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    number: Option<u32>,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+fn normalize_remote_bible(
+    complete: RemoteCompleteBible,
+    expected_id: &str,
+    fallback_name: &str,
+) -> Result<DownloadedBible, String> {
+    if complete.translation.id != expected_id {
+        return Err(format!("downloaded translation id did not match the requested version {expected_id}"));
+    }
+    let mut books = Vec::with_capacity(complete.books.len());
+    for book in complete.books {
+        let mut chapters = Vec::with_capacity(book.chapters.len());
+        for entry in book.chapters {
+            let verses: Vec<_> = entry.chapter.content.into_iter()
+                .filter(|part| part.kind == "verse")
+                .filter_map(|part| Some(RawVerse { verse: part.number?.to_string(), text: part.text? }))
+                .collect();
+            if !verses.is_empty() {
+                chapters.push(RawChapter { chapter: entry.chapter.number.to_string(), verses });
+            }
+        }
+        if !chapters.is_empty() {
+            let name = book.common_name.filter(|name| !name.trim().is_empty()).unwrap_or(book.name);
+            books.push(RawBook { book: name, chapters });
+        }
+    }
+    if books.is_empty() {
+        return Err(format!("{fallback_name} contained no readable verses"));
+    }
+
+    let translation = complete.translation;
+    Ok(DownloadedBible {
+        id: translation.id,
+        name: translation.english_name.unwrap_or(translation.name),
+        short_name: translation.short_name,
+        language_name: translation.language_english_name.or(translation.language_name).or(translation.language),
+        license_url: translation.license_url,
+        books,
+    })
+}
+
+fn free_bible_api_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .user_agent("MakrStudio/0.1 (https://github.com/dwellpraise/makepresent)")
+        .build()
+        .map_err(|e| format!("Bible API client: {e}"))
+}
+
+/// Return versions with a JSON download format from the no-key Free Use Bible API.
+pub async fn fetch_remote_bible_versions() -> Result<Vec<RemoteBibleVersion>, String> {
+    let response = free_bible_api_client()?
+        .get(format!("{FREE_BIBLE_API}/available_translations.json"))
+        .send()
+        .await
+        .map_err(|e| format!("could not reach the free Bible version catalog: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Bible version catalog returned HTTP {}", response.status()));
+    }
+    let catalog: RemoteBibleCatalog = response
+        .json()
+        .await
+        .map_err(|e| format!("could not read the Bible version catalog: {e}"))?;
+    let mut versions: Vec<_> = catalog
+        .translations
+        .into_iter()
+        .filter(|version| version.available_formats.iter().any(|format| format == "json"))
+        .collect();
+    versions.sort_by(|a, b| {
+        let a_lang = a.language_english_name.as_deref().unwrap_or_default();
+        let b_lang = b.language_english_name.as_deref().unwrap_or_default();
+        let a_english_rank = if a_lang.eq_ignore_ascii_case("english") { 0 } else { 1 };
+        let b_english_rank = if b_lang.eq_ignore_ascii_case("english") { 0 } else { 1 };
+        a_english_rank
+            .cmp(&b_english_rank)
+            .then_with(|| a_lang.cmp(b_lang))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(versions)
+}
+
+/// Download one complete translation and normalize it to MakrStudio's
+/// existing offline book/chapter/verse representation.
+pub async fn download_remote_bible(version_id: &str) -> Result<DownloadedBible, String> {
+    if version_id.is_empty()
+        || version_id.len() > 48
+        || !version_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("invalid Bible version id".to_string());
+    }
+    let response = free_bible_api_client()?
+        .get(format!("{FREE_BIBLE_API}/{version_id}/complete.simple.json"))
+        .send()
+        .await
+        .map_err(|e| format!("could not reach the Bible download server: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Bible version {version_id} download returned HTTP {}",
+            response.status()
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_BIBLE_DOWNLOAD_BYTES as u64)
+    {
+        return Err(format!("Bible version {version_id} is larger than the 64 MB download limit"));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("could not read Bible version {version_id} download: {e}"))?;
+    if bytes.len() > MAX_BIBLE_DOWNLOAD_BYTES {
+        return Err(format!("Bible version {version_id} is larger than the 64 MB download limit"));
+    }
+    let complete: RemoteCompleteBible = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("Bible version {version_id} download had an unsupported format: {e}"))?;
+    normalize_remote_bible(complete, version_id, version_id)
+}
+
+/// Persist one downloaded Bible to its own atomically replaced file.
+pub fn save_downloaded_bible(data_dir: &Path, bible: &DownloadedBible) -> Result<(), String> {
+    let path = downloaded_bible_path(data_dir, &bible.id)?;
+    let parent = path.parent().ok_or_else(|| "invalid Bible cache path".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("could not create Bible cache: {e}"))?;
+    let json = serde_json::to_vec(bible).map_err(|e| format!("could not encode Bible: {e}"))?;
+    let temp = parent.join(format!(".{}.{}.tmp", bible.id, std::process::id()));
+    std::fs::write(&temp, json).map_err(|e| format!("could not write Bible cache: {e}"))?;
+    if let Err(error) = std::fs::rename(&temp, &path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(format!("could not finalize Bible download: {error}"));
+    }
+    Ok(())
+}
+
+fn downloaded_bible_path(data_dir: &Path, version_id: &str) -> Result<PathBuf, String> {
+    if version_id.is_empty()
+        || version_id.len() > 48
+        || !version_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("invalid Bible version id".to_string());
+    }
+    Ok(data_dir
+        .join("bibles")
+        .join("downloads")
+        .join(format!("{version_id}.json")))
+}
+
+pub fn load_downloaded_bible(data_dir: &Path, version_id: &str) -> Result<DownloadedBible, String> {
+    let path = downloaded_bible_path(data_dir, version_id)?;
+    let bytes = std::fs::read(&path)
+        .map_err(|e| format!("could not read downloaded Bible {}: {e}", path.display()))?;
+    let bible: DownloadedBible = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("downloaded Bible {} is damaged: {e}", path.display()))?;
+    if bible.id != version_id {
+        return Err("downloaded Bible id does not match its file".to_string());
+    }
+    Ok(bible)
+}
+
+pub fn list_downloaded_bibles(data_dir: &Path) -> Result<Vec<DownloadedBible>, String> {
+    let dir = data_dir.join("bibles").join("downloads");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("could not read downloaded Bible folder {}: {error}", dir.display())),
+    };
+    let mut out = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("could not read downloaded Bible folder {}: {e}", dir.display()))?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+            let bytes = std::fs::read(&path).map_err(|e| format!("could not read downloaded Bible {}: {e}", path.display()))?;
+            let bible: DownloadedBible = serde_json::from_slice(&bytes)
+                .map_err(|e| format!("downloaded Bible {} is damaged: {e}", path.display()))?;
+            out.push(bible);
+        }
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(out)
+}
+
 /// A single verse returned by bible-api.com.
 #[derive(Debug, Deserialize)]
 struct ApiVerse {
@@ -1249,5 +1644,55 @@ mod tests {
         assert_eq!(r16[0].text, "WEB 16");
         let r17 = idx.search("john 3:17", 5);
         assert_eq!(r17[0].text, "KJV 17");
+    }
+
+    #[test]
+    fn downloaded_bible_is_saved_and_loaded_as_its_own_translation() {
+        let data_dir = std::env::temp_dir().join(format!("makrstudio-bible-test-{}", uuid::Uuid::new_v4()));
+        let bible = DownloadedBible {
+            id: "eng_test".into(),
+            name: "Test Translation".into(),
+            short_name: Some("TST".into()),
+            language_name: Some("English".into()),
+            license_url: Some("https://example.test/license".into()),
+            books: vec![RawBook {
+                book: "John".into(),
+                chapters: vec![RawChapter {
+                    chapter: "3".into(),
+                    verses: vec![RawVerse { verse: "16".into(), text: "A sample verse".into() }],
+                }],
+            }],
+        };
+        save_downloaded_bible(&data_dir, &bible).unwrap();
+        let loaded = load_downloaded_bible(&data_dir, "eng_test").unwrap();
+        assert_eq!(loaded.name, "Test Translation");
+        assert_eq!(loaded.books[0].chapters[0].verses[0].text, "A sample verse");
+        assert_eq!(list_downloaded_bibles(&data_dir).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn downloaded_bible_ids_cannot_escape_the_cache_folder() {
+        let data_dir = std::env::temp_dir();
+        assert!(downloaded_bible_path(&data_dir, "../outside").is_err());
+        assert!(downloaded_bible_path(&data_dir, "").is_err());
+    }
+
+    #[test]
+    fn free_bible_api_simple_json_normalizes_only_verses() {
+        let response = r#"{
+          "translation": {"id":"eng_sample","name":"Sample","englishName":"Sample English","shortName":"SMP","licenseUrl":"https://example.test/license"},
+          "books": [{"name":"JHN","commonName":"John","chapters":[{"chapter":{"number":3,"content":[
+            {"type":"heading","text":"For God so loved"},
+            {"type":"verse","number":16,"text":"For God so loved the world."}
+          ]}}]}]
+        }"#;
+        let complete: RemoteCompleteBible = serde_json::from_str(response).unwrap();
+        let bible = normalize_remote_bible(complete, "eng_sample", "Sample").unwrap();
+        assert_eq!(bible.name, "Sample English");
+        assert_eq!(bible.short_name.as_deref(), Some("SMP"));
+        assert_eq!(bible.books[0].book, "John");
+        assert_eq!(bible.books[0].chapters[0].verses.len(), 1);
+        assert_eq!(bible.books[0].chapters[0].verses[0].text, "For God so loved the world.");
     }
 }

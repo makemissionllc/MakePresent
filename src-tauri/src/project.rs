@@ -70,6 +70,8 @@ pub enum Transition {
     #[default]
     Cut,
     Fade,
+    Wipe,
+    Push,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -368,6 +370,9 @@ pub struct Look {
     /// Whether the slide's background (solid colour or media) is drawn. When
     /// off only the text is shown, e.g. transparent for stage/stream compositing.
     pub show_background: bool,
+    /// Title-only Looks can hide body text; old Looks always show it.
+    #[serde(default = "default_show_body")]
+    pub show_body: bool,
     /// Vertical placement of the text block within the frame (auto mode only).
     pub text_position: TextPosition,
     /// Per-element text styling for the Title role (also the scripture
@@ -397,6 +402,7 @@ fn default_title_font() -> String {
 fn default_body_font() -> String {
     "sans-serif".to_string()
 }
+fn default_show_body() -> bool { true }
 
 impl Look {
     pub fn main_default() -> Self {
@@ -409,6 +415,7 @@ impl Look {
             body_font: default_body_font(),
             text_color: "#ffffff".to_string(),
             show_background: true,
+            show_body: true,
             text_position: TextPosition::Center,
             title_style: TextStyle::title_default(),
             body_style: TextStyle::body_default(),
@@ -429,6 +436,7 @@ impl Look {
             body_font: default_body_font(),
             text_color: "#ffffff".to_string(),
             show_background: false,
+            show_body: true,
             text_position: TextPosition::Center,
             title_style: TextStyle::title_default(),
             body_style: TextStyle::body_default(),
@@ -893,6 +901,60 @@ pub fn reorder_item_slides(slides: Vec<Slide>, item_id: &str, new_index: usize) 
     let item = groups.remove(old);
     groups.insert(new_index.min(groups.len()), item);
     Ok(groups.into_iter().flat_map(|(_, members)| members).collect())
+}
+
+/// Copy the slides in one playlist item into the item containing `target_slide_id`.
+/// The source item stays intact; copies inherit the target item's name and group
+/// settings while retaining their own slide content and slide-level settings.
+pub fn copy_slides_into_item(
+    project: &mut Project,
+    source_slide_ids: &[String],
+    target_slide_id: &str,
+    insert_at: usize,
+) -> Result<Vec<String>, String> {
+    if source_slide_ids.is_empty() {
+        return Err("source playlist item has no slides".to_string());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for id in source_slide_ids {
+        if !seen.insert(id.as_str()) {
+            return Err(format!("duplicate source slide {id}"));
+        }
+        if !project.slides.iter().any(|slide| slide.id == *id) {
+            return Err(format!("source slide {id} not found"));
+        }
+    }
+
+    let target_position = project.slides.iter().position(|slide| slide.id == target_slide_id)
+        .ok_or_else(|| format!("target slide {target_slide_id} not found"))?;
+    let target = &project.slides[target_position];
+    let target_item_id = target.item_id.clone()
+        .ok_or_else(|| "target slide is not in a playlist item".to_string())?;
+    let target_item_name = target.item_name.clone().unwrap_or_else(|| target.display_name());
+
+    let mut group_start = target_position;
+    while group_start > 0 && project.slides[group_start - 1].item_id.as_deref() == Some(&target_item_id) {
+        group_start -= 1;
+    }
+    let mut group_end = target_position + 1;
+    while group_end < project.slides.len() && project.slides[group_end].item_id.as_deref() == Some(&target_item_id) {
+        group_end += 1;
+    }
+    let insertion = insert_at.clamp(group_start, group_end);
+
+    let mut copies = Vec::with_capacity(source_slide_ids.len());
+    let mut copied_ids = Vec::with_capacity(source_slide_ids.len());
+    for source_id in source_slide_ids {
+        let mut copy = project.slides.iter().find(|slide| slide.id == *source_id).unwrap().clone();
+        copy.id = Uuid::new_v4().to_string();
+        copy.item_id = Some(target_item_id.clone());
+        copy.item_name = Some(target_item_name.clone());
+        copied_ids.push(copy.id.clone());
+        copies.push(copy);
+    }
+    project.slides.splice(insertion..insertion, copies);
+    project.selected = copied_ids.first().cloned();
+    Ok(copied_ids)
 }
 
 pub fn remove_playlist_item(project: &mut Project, item_id: &str) -> Result<bool, String> {
@@ -1501,13 +1563,68 @@ pub struct Settings {
 }
 
 /// Default Look mapping per slide kind — Scripture/Song/Generic.
-/// Inheriting slides follow the assigned Look live; `None` falls back to Main.
+/// Output styling follows the assigned Look live; `None` uses the Output mapping.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DefaultLooks {
     pub scripture: Option<String>,
     pub song: Option<String>,
     pub generic: Option<String>,
+}
+
+impl DefaultLooks {
+    pub fn for_kind(&self, kind: SlideKind) -> Option<&str> {
+        match kind { SlideKind::Song => self.song.as_deref(), SlideKind::Scripture => self.scripture.as_deref(), SlideKind::Generic => self.generic.as_deref() }
+    }
+
+    pub fn assign(&mut self, project: &Project, kind: SlideKind, id: Option<String>) -> Result<(), String> {
+        if let Some(id) = &id {
+            if project.find_look(id).is_none() { return Err(format!("Look {id} not found")); }
+        }
+        *match kind { SlideKind::Song => &mut self.song, SlideKind::Scripture => &mut self.scripture, SlideKind::Generic => &mut self.generic } = id;
+        Ok(())
+    }
+
+    pub fn reassign_deleted(&mut self, deleted: &str, replacement: Option<&str>) {
+        for assigned in [&mut self.song, &mut self.scripture, &mut self.generic] {
+            if assigned.as_deref() == Some(deleted) { *assigned = replacement.map(str::to_string); }
+        }
+    }
+}
+
+/// Explicit operator action only. Existing named Looks and assignments are preserved.
+pub fn create_starter_looks(project: &mut Project, defaults: &mut DefaultLooks) {
+    let main = project.looks.iter().find(|look| look.name == "Main")
+        .or_else(|| project.looks.first()).cloned().unwrap_or_else(Look::main_default);
+    for (name, kind) in [("Songs", Some(SlideKind::Song)), ("Scripture", Some(SlideKind::Scripture)), ("Text", Some(SlideKind::Generic)), ("Title", None)] {
+        let existing = project.looks.iter().find(|look| look.name.eq_ignore_ascii_case(name)).map(|look| look.id.clone());
+        let id = existing.unwrap_or_else(|| {
+            let mut look = main.clone();
+            look.id = Uuid::new_v4().to_string();
+            look.name = name.into();
+            look.positioning = Positioning::Auto;
+            look.text_position = TextPosition::Center;
+            look.show_body = name != "Title";
+            look.title_style.align = HAlign::Center;
+            look.body_style.align = HAlign::Center;
+            look.title_style.bold = true;
+            match name {
+                "Songs" => { look.title_size = 32; look.body_size = 72; look.body_style.bold = true; look.body_style.shadow_blur = 32.0; }
+                "Scripture" => { look.title_size = 56; look.body_size = 44; look.body_style.bold = false; look.title_style.bg_opacity = 0.65; look.body_style.bg_opacity = 0.65; }
+                "Text" => { look.title_size = 96; look.body_size = 44; }
+                _ => { look.title_size = 144; }
+            }
+            let id = look.id.clone();
+            project.looks.push(look);
+            id
+        });
+        if let Some(kind) = kind {
+            if defaults.for_kind(kind).and_then(|id| project.find_look(id)).is_none() {
+                // id came from an existing or newly created Look.
+                defaults.assign(project, kind, Some(id)).expect("starter Look exists");
+            }
+        }
+    }
 }
 
 fn default_osc_port() -> u16 {
@@ -1739,6 +1856,108 @@ mod tests {
     use super::*;
 
     #[test]
+    fn kind_assignments_follow_resolution_order_and_unassign_to_output() {
+        let mut project = Project::new("Kinds");
+        let main = project.looks[0].id.clone();
+        let mut defaults = DefaultLooks::default();
+        create_starter_looks(&mut project, &mut defaults);
+        let title = project.looks.iter().find(|look| look.name == "Title").unwrap().id.clone();
+        let output = project.looks.iter().find(|look| look.name == "Stage").unwrap().id.clone();
+        for kind in [SlideKind::Song, SlideKind::Scripture, SlideKind::Generic] {
+            let mut slide = test_slide("slide", Some("item"), None);
+            slide.kind = kind;
+            slide.background_mode = BackgroundMode::Custom;
+            let assigned = defaults.for_kind(kind).unwrap().to_string();
+            assert_eq!(project.effective_output_look_id(&slide, &defaults, Some(&output)), Some(assigned.clone()));
+            // A custom background changes only the background, never typography.
+            assert_eq!(project.effective_background(&slide, &defaults), slide.background);
+            project.item_looks.insert("item".into(), title.clone());
+            assert_eq!(project.effective_output_look_id(&slide, &defaults, Some(&output)), Some(title.clone()));
+            project.item_looks.clear();
+            defaults.assign(&project, kind, Some(title.clone())).unwrap();
+            assert_eq!(defaults.for_kind(kind), Some(title.as_str()));
+            assert_eq!(project.effective_output_look_id(&slide, &defaults, Some(&output)), Some(title.clone()));
+            defaults.assign(&project, kind, None).unwrap();
+            assert_eq!(project.effective_output_look_id(&slide, &defaults, Some(&output)), Some(output.clone()));
+            assert_eq!(project.effective_output_look_id(&slide, &defaults, None), Some(main.clone()));
+            assert!(defaults.assign(&project, kind, Some("missing".into())).is_err());
+            assert_eq!(defaults.for_kind(kind), None);
+        }
+    }
+
+    #[test]
+    fn starter_looks_are_explicit_idempotent_and_keep_existing_names_and_mappings() {
+        let mut project = Project::new("Starters");
+        assert_eq!(project.looks.len(), 2); // New projects never create starters.
+        let main = project.looks[0].clone();
+        let mut defaults = DefaultLooks::default();
+        create_starter_looks(&mut project, &mut defaults);
+        assert_eq!(project.looks.len(), 6);
+        assert_eq!(project.looks[0], main);
+        let songs = project.find_look(defaults.song.as_deref().unwrap()).unwrap();
+        assert!(songs.body_style.bold && songs.body_size > songs.title_size);
+        let scripture = project.find_look(defaults.scripture.as_deref().unwrap()).unwrap();
+        assert!(scripture.title_style.bold && scripture.title_style.bg_opacity > 0.0);
+        let title = project.looks.iter().find(|look| look.name == "Title").unwrap();
+        assert!(!title.show_body);
+        let roundtrip: Project = serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();
+        assert_eq!(roundtrip.looks, project.looks);
+        assert!(![defaults.song.as_deref(), defaults.scripture.as_deref(), defaults.generic.as_deref()].contains(&Some(title.id.as_str())));
+        let before = project.looks.clone();
+        let assignments = defaults.clone();
+        create_starter_looks(&mut project, &mut defaults);
+        assert_eq!(project.looks, before);
+        assert_eq!(defaults, assignments);
+        // Existing custom names/styles are reused and never overwritten.
+        let existing = project.looks.iter_mut().find(|look| look.name == "Songs").unwrap();
+        existing.body_size = 123;
+        existing.name = "songs".into();
+        defaults.song = None;
+        defaults.generic = Some(main.id.clone());
+        let before = project.looks.clone();
+        create_starter_looks(&mut project, &mut defaults);
+        assert_eq!(project.looks, before);
+        assert_eq!(defaults.song, assignments.song);
+        assert_eq!(defaults.generic, Some(main.id));
+    }
+
+    #[test]
+    fn deleting_kind_look_reassigns_to_valid_replacement_for_every_kind() {
+        let mut project = Project::new("Delete mapped Look");
+        let mut defaults = DefaultLooks::default();
+        create_starter_looks(&mut project, &mut defaults);
+        let main = project.looks[0].id.clone();
+        let deleted = defaults.song.clone().unwrap();
+        for kind in [SlideKind::Song, SlideKind::Scripture, SlideKind::Generic] {
+            defaults.assign(&project, kind, Some(deleted.clone())).unwrap();
+        }
+        let fallback = project.remove_look_and_reassign(&deleted, Some(&main)).unwrap();
+        defaults.reassign_deleted(&deleted, fallback.as_deref());
+        for kind in [SlideKind::Song, SlideKind::Scripture, SlideKind::Generic] {
+            assert_eq!(defaults.for_kind(kind), Some(main.as_str()));
+        }
+    }
+
+    #[test]
+    fn legacy_projects_and_settings_keep_looks_and_have_no_kind_assignments() {
+        let project = Project::new("Legacy");
+        let mut raw = serde_json::to_value(&project).unwrap();
+        for look in raw["looks"].as_array_mut().unwrap() { look.as_object_mut().unwrap().remove("showBody"); }
+        let legacy: Project = serde_json::from_value(raw).unwrap();
+        assert_eq!(legacy.looks, project.looks);
+        let mut raw_settings = serde_json::to_value(Settings::default()).unwrap();
+        raw_settings.as_object_mut().unwrap().remove("defaultLooks");
+        let settings: Settings = serde_json::from_value(raw_settings).unwrap();
+        assert_eq!(settings.default_looks, DefaultLooks::default());
+        for kind in [SlideKind::Song, SlideKind::Scripture, SlideKind::Generic] {
+            let mut slide = test_slide("legacy", Some("item"), None);
+            slide.kind = kind;
+            assert_eq!(legacy.effective_background(&slide, &settings.default_looks), slide.background);
+            assert_eq!(legacy.effective_output_look_id(&slide, &settings.default_looks, Some(&legacy.looks[1].id)), Some(legacy.looks[1].id.clone()));
+        }
+    }
+
+    #[test]
     fn legacy_look_without_alignment_loads_with_unchanged_centered_styles() {
         let project = Project::new("Legacy alignment");
         let mut raw = serde_json::to_value(&project).unwrap();
@@ -1901,6 +2120,55 @@ mod tests {
         let ids: Vec<_> = reordered.iter().map(|slide| slide.id.as_str()).collect();
         assert_eq!(ids, vec!["a3", "a4", "a1", "a2", "b1"]);
         assert_eq!(reordered[0].item_id, reordered[1].item_id);
+    }
+
+    #[test]
+    fn copied_playlist_item_slides_join_target_group_and_keep_source() {
+        let mut project = Project::test();
+        let mut source_one = test_slide("source-one", Some("source"), Some("song"));
+        source_one.title = "Verse 1".into();
+        source_one.body = "Copied lyrics".into();
+        source_one.name = Some("Verse One".into());
+        source_one.library_slide_id = Some("library-verse".into());
+        source_one.auto_advance_secs = Some(12);
+        let source_two = test_slide("source-two", Some("source"), Some("song"));
+        let target_one = test_slide("target-one", Some("target"), None);
+        let target_two = test_slide("target-two", Some("target"), None);
+        let after = test_slide("after", Some("after"), None);
+        project.slides = vec![source_one, source_two, target_one, target_two, after];
+        project.slides[2].item_name = Some("Target group".into());
+
+        let copied = copy_slides_into_item(
+            &mut project,
+            &["source-one".into(), "source-two".into()],
+            "target-one",
+            3,
+        ).unwrap();
+
+        assert_eq!(project.slides.iter().map(|slide| slide.id.as_str()).collect::<Vec<_>>(), vec![
+            "source-one", "source-two", "target-one", copied[0].as_str(), copied[1].as_str(), "target-two", "after",
+        ]);
+        assert_eq!(project.slides.iter().filter(|slide| slide.item_id.as_deref() == Some("source")).count(), 2);
+        let first_copy = project.slides.iter().find(|slide| slide.id == copied[0]).unwrap();
+        assert_eq!(first_copy.item_id.as_deref(), Some("target"));
+        assert_eq!(first_copy.item_name.as_deref(), Some("Target group"));
+        assert_eq!(first_copy.title, "Verse 1");
+        assert_eq!(first_copy.body, "Copied lyrics");
+        assert_eq!(first_copy.library_slide_id.as_deref(), Some("library-verse"));
+        assert_eq!(first_copy.auto_advance_secs, Some(12));
+        assert_ne!(first_copy.id, "source-one");
+        assert_eq!(project.selected.as_deref(), Some(copied[0].as_str()));
+    }
+
+    #[test]
+    fn copying_playlist_slides_rejects_missing_sources_before_mutating() {
+        let mut project = Project::test();
+        project.slides = vec![test_slide("target", Some("target"), None)];
+        let before = project.slides.clone();
+        let result = copy_slides_into_item(&mut project, &["missing".into()], "target", 1);
+        assert!(result.is_err());
+        assert_eq!(project.slides.len(), before.len());
+        assert_eq!(project.slides[0].id, before[0].id);
     }
 
     #[test]
@@ -2113,6 +2381,20 @@ mod tests {
         assert_eq!(project.slides[0].kind, SlideKind::Generic);
         assert_eq!(project.slides[1].kind, SlideKind::Song);
         assert_eq!(project.slides[3].kind, SlideKind::Scripture);
+    }
+
+    #[test]
+    fn all_transition_styles_roundtrip_with_stable_names() {
+        for (transition, expected) in [
+            (Transition::Cut, "cut"),
+            (Transition::Fade, "fade"),
+            (Transition::Wipe, "wipe"),
+            (Transition::Push, "push"),
+        ] {
+            let encoded = serde_json::to_string(&transition).unwrap();
+            assert_eq!(encoded, format!("\"{expected}\""));
+            assert_eq!(serde_json::from_str::<Transition>(&encoded).unwrap(), transition);
+        }
     }
 
     #[test]

@@ -2,7 +2,7 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api } from "../lib/sync";
   import { addCachedMediaSlide } from "../lib/mediaSlide";
-  import type { Library, LyricsHit, MediaAsset, ScriptureMatch } from "../lib/types";
+  import type { BibleInfo, ChapterVerse, Library, LyricsHit, MediaAsset, ScriptureMatch } from "../lib/types";
   import { isMedia } from "../lib/types";
   import { surface, veil } from "../lib/motion";
 
@@ -18,6 +18,7 @@
   let query = $state("");
   let inputEl = $state<HTMLInputElement | null>(null);
   let scriptureResults = $state<ScriptureMatch[]>([]);
+  let scriptureTranslation = $state("KJV");
   let mediaResults = $state<MediaAsset[]>([]);
   let onlineSongs = $state<LyricsHit[]>([]);
   let onlineError = $state<string | null>(null);
@@ -26,6 +27,36 @@
   let errorMsg = $state<string | null>(null);
   let inserting = $state<string | null>(null);
   let seq = 0;
+  let scriptureBiblePromise: Promise<BibleInfo | null> | null = null;
+
+  function getSearchBible(): Promise<BibleInfo | null> {
+    if (!scriptureBiblePromise) {
+      scriptureBiblePromise = api.listBibles().then((bibles) => {
+        let rememberedId: string | null = null;
+        try { rememberedId = window.localStorage.getItem("makrstudio.scripture-bible-id"); } catch { /* use the first available Bible */ }
+        return bibles.find((bible) => bible.id === rememberedId) ?? bibles.find((bible) => bible.id === "kjv") ?? bibles[0] ?? null;
+      }).catch(() => null);
+    }
+    return scriptureBiblePromise;
+  }
+
+  async function labelMatchesForBible(matches: ScriptureMatch[]): Promise<ScriptureMatch[]> {
+    const bible = await getSearchBible();
+    const translation = bible?.shortName?.trim() || bible?.name?.trim() || "KJV";
+    scriptureTranslation = translation;
+    if (!bible) return matches.map((match) => ({ ...match, translation }));
+    const chapters = new Map<string, Promise<ChapterVerse[]>>();
+    for (const match of matches) {
+      const key = `${match.book}:${match.chapter}`;
+      if (!chapters.has(key)) chapters.set(key, api.getChapter(bible.id, match.book, match.chapter).catch(() => []));
+    }
+    const loaded = new Map<string, ChapterVerse[]>();
+    await Promise.all([...chapters].map(async ([key, promise]) => loaded.set(key, await promise)));
+    return matches.flatMap((match) => {
+      const verse = loaded.get(`${match.book}:${match.chapter}`)?.find((item) => item.verse === match.verse);
+      return verse ? [{ ...match, text: verse.text, translation }] : [];
+    });
+  }
 
   const libraryResults = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -65,6 +96,8 @@
       onlineLoading = false;
       errorMsg = null;
       loading = false;
+      scriptureBiblePromise = null;
+      void getSearchBible();
       seq++;
       requestAnimationFrame(() => {
         inputEl?.focus();
@@ -127,8 +160,11 @@
       api.searchMedia(trimmed),
     ]);
     if (cur !== seq) return;
-    if (scr.status === "fulfilled") scriptureResults = scr.value.slice(0, 8);
-    else scriptureResults = [];
+    if (scr.status === "fulfilled") {
+      const labelled = await labelMatchesForBible(scr.value.slice(0, 8));
+      if (cur !== seq) return;
+      scriptureResults = labelled;
+    } else scriptureResults = [];
     if (med.status === "fulfilled") mediaResults = med.value.slice(0, 8);
     else mediaResults = [];
     loading = false;
@@ -158,7 +194,8 @@
   async function insertScripture(m: ScriptureMatch): Promise<void> {
     inserting = `scr-${m.reference}`;
     try {
-      await api.addSlide(m.reference, m.text, undefined, "scripture");
+      const translation = m.translation?.trim() || "KJV";
+      await api.addSlide(`${m.reference} · ${translation}`, m.text, undefined, "scripture");
       onClose();
     } catch (e) {
       errorMsg = String(e);
@@ -283,7 +320,7 @@
 
         <!-- Scripture / Bibles -->
         <section class="category">
-          <h3>Scripture — All Bibles <span class="count">{scriptureResults.length}</span></h3>
+          <h3>Scripture — {scriptureTranslation} <span class="count">{scriptureResults.length}</span></h3>
           {#if query.trim() && scriptureResults.length === 0 && !loading}
             <p class="empty">No verses match “{query.trim()}”.</p>
           {:else if !query.trim()}
@@ -298,7 +335,7 @@
                     disabled={inserting === `scr-${m.reference}`}
                     title="Click to add as slide"
                   >
-                    <span class="result-title">{m.reference}</span>
+                    <span class="result-title">{m.reference} · {m.translation || "KJV"}</span>
                     <span class="result-preview">{m.text}</span>
                   </button>
                 </li>

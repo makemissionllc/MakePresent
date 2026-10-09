@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { cubicOut } from "svelte/easing";
-  import { crossfade, slide as slideTransition } from "svelte/transition";
+  import { crossfade, fade, slide as slideTransition } from "svelte/transition";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { api, subscribeAck, subscribeCountdown, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
-  import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, CountdownView, DisplayInfo, Library, LibrarySong, LyricsHit, MediaAsset, Overlay, PlaylistTemplate, ScriptureMatch, ServicePreset, Slide, PlaylistItem } from "../lib/types";
+import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, CountdownView, DisplayInfo, Library, LibrarySong, LyricsHit, MediaAsset, Overlay, PlaylistTemplate, RemoteBibleVersion, ScriptureMatch, ServicePreset, Slide, PlaylistItem, Transition } from "../lib/types";
   import { isMedia, isLiveCamera } from "../lib/types";
   import { addCachedMediaSlide } from "../lib/mediaSlide";
   import { beginPointerDrag, cancelPointerDrag, type PointerDragPoint } from "../lib/pointerDrag";
@@ -22,7 +22,7 @@
   import BrandLockup from "./BrandLockup.svelte";
   import Onboarding from "./Onboarding.svelte";
   import { prefersReducedMotion } from "../lib/motion";
-  import {
+import {
     dismissHint,
     dismissTour,
     dismissWelcome,
@@ -31,6 +31,26 @@
     resetTourDismissal,
     showHint,
   } from "../lib/onboarding";
+
+  interface ScriptureBookmark {
+    id: string;
+    bibleId: string;
+    reference: string;
+    version: string;
+    text: string;
+  }
+
+  const SCRIPTURE_BOOKMARKS_KEY = "makrstudio.scripture-bookmarks";
+
+  function readScriptureBookmarks(): ScriptureBookmark[] {
+    try {
+      const saved = window.localStorage.getItem(SCRIPTURE_BOOKMARKS_KEY);
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.id === "string" && typeof item.reference === "string" && typeof item.text === "string") : [];
+    } catch {
+      return [];
+    }
+  }
 
   const PALETTE = [
     "#1a1a24",
@@ -63,6 +83,8 @@
   ];
 
   let appState = $state<ClientState | null>(null);
+  let workspaceLoading = $state(true);
+  let workspaceRetry = $state<(() => void) | null>(null);
   let selectedId = $state<string | null>(null);
   let selectedItemId = $state<string | null>(null);
   let observedLiveId: string | null | undefined = undefined;
@@ -195,10 +217,33 @@
   let chapterNumbers = $state<number[]>([]);
   let selectedChapter = $state<number | null>(null);
   let chapterVerses = $state<ChapterVerse[]>([]);
+  let verseRangeStart = $state<number | null>(null);
+  let verseRangeEnd = $state<number | null>(null);
+  let verseRangeError = $state<string | null>(null);
+  let previewVerse = $state<ChapterVerse | null>(null);
+  let browseCopyStatus = $state<string | null>(null);
+  let scriptureBookmarks = $state<ScriptureBookmark[]>(readScriptureBookmarks());
+  let bookmarksOpen = $state(false);
+  let bookmarkStatus = $state<string | null>(null);
+  let selectedVerseNumbers = $state<number[]>([]);
+  let verseTextQuery = $state("");
+  let verseTextResults = $state<ScriptureMatch[]>([]);
+  let verseTextLoading = $state(false);
+  let verseTextError = $state<string | null>(null);
+  let verseTextTimer: ReturnType<typeof setTimeout> | null = null;
+  let verseTextSeq = 0;
   let browseCollapsed = $state(true);
   let browseLoading = $state(false);
   let browseError = $state<string | null>(null);
   let biblesFolder = $state<string>("");
+  let bibleDownloadOpen = $state(false);
+  let remoteBibles = $state<RemoteBibleVersion[]>([]);
+  let remoteBiblesLoading = $state(false);
+  let remoteBiblesLoaded = $state(false);
+  let remoteBibleSearch = $state("");
+  let downloadingBibleId = $state<string | null>(null);
+  let bibleDownloadError = $state<string | null>(null);
+  let bibleDownloadMessage = $state<string | null>(null);
 
   // Drag-and-drop state (native HTML5, no library)
   let draggedSlideId = $state<string | null>(null);
@@ -413,6 +458,9 @@
 
   // Central workspace view — slides (grid) vs looks (dedicated visual editor)
   let centralView = $state<"slides" | "looks">("slides");
+  let requestedLookId = $state<string | null>(null);
+  let itemLookUndo = $state<{ itemId: string; previous: string | null; message: string } | null>(null);
+  let itemLookBusy = $state(false);
 
   const project = $derived(appState?.project ?? null);
   // Older/stale native backends may still return a ClientState without the
@@ -450,6 +498,24 @@
       null,
   );
   const selectedEffectiveBackground = $derived(selected ? appState?.effectiveBackgrounds?.[selected.id] ?? selected.background : null);
+  // Consume Rust's resolved ids; never resolve kind/item precedence here.
+  function lookForSlide(slide: Slide | null) {
+    const looks = appState?.looks ?? [];
+    const id = slide?.itemId ? appState?.effectiveItemLookIds?.[slide.itemId] : null;
+    return looks.find((look) => look.id === id) ?? looks.find((look) => look.id === appState?.outputLookId) ?? looks.find((look) => look.name === "Main") ?? looks[0] ?? null;
+  }
+  const selectedLook = $derived(lookForSlide(selected));
+  const selectedSlideItem = $derived(items.find((item) => item.slideIds.includes(selected?.id ?? "")) ?? null);
+  const gridLook = $derived(lookForSlide(selectedItemSlides[0] ?? null));
+  function autoLookName(kind: Slide["kind"]): string {
+    const looks = appState?.looks ?? [];
+    return looks.find((look) => look.id === appState?.defaultLooks?.[kind ?? "generic"])?.name ?? looks.find((look) => look.id === appState?.outputLookId)?.name ?? looks.find((look) => look.name === "Main")?.name ?? "Output";
+  }
+  function editSlideLook(): void {
+    requestedLookId = selectedLook?.id ?? null;
+    centralView = "looks";
+    use("looks");
+  }
   const selectedPreviewSlide = $derived(
     selected
       ? {
@@ -618,6 +684,25 @@
     itemDropIndex = null;
   }
 
+  async function copyPlaylistItemIntoGroup(sourceItemId: string, targetSlideId: string, insertAt: number): Promise<void> {
+    const source = items.find((item) => item.id === sourceItemId);
+    const targetSlide = project?.slides.find((slide) => slide.id === targetSlideId);
+    if (!source || !targetSlide?.itemId) {
+      errorMsg = "Could not add that item here. Choose a slide inside a Playlist group and try again.";
+      return;
+    }
+    const oldSlideIds = new Set(project?.slides.map((slide) => slide.id) ?? []);
+    errorMsg = null;
+    try {
+      appState = await api.copyPlaylistItemIntoGroup(source.slideIds, targetSlideId, insertAt);
+      selectedItemId = targetSlide.itemId;
+      selectedId = appState.project.slides.find((slide) => !oldSlideIds.has(slide.id))?.id ?? targetSlideId;
+      gridScope = "item";
+    } catch (e) {
+      errorMsg = `Could not add ${source.name} to this slide group: ${String(e)}`;
+    }
+  }
+
   async function renameItem(item: PlaylistItem): Promise<void> {
     try {
       appState = await api.renameItem(item.id, renameDraft);
@@ -634,8 +719,21 @@
   }
 
   async function setItemLook(item: PlaylistItem, lookId: string): Promise<void> {
-    try { appState = await api.setItemLook(item.id, lookId || null); }
+    const previous = appState?.project.itemLooks?.[item.id] ?? null;
+    itemLookBusy = true;
+    try {
+      appState = await api.setItemLook(item.id, lookId || null);
+      itemLookUndo = { itemId: item.id, previous, message: `${item.name} now uses ${lookForSlide(appState.project.slides.find((slide) => slide.itemId === item.id) ?? null)?.name ?? "the Output Look"}.` };
+    }
     catch (e) { errorMsg = String(e); }
+    finally { itemLookBusy = false; }
+  }
+  async function undoItemLook(): Promise<void> {
+    if (!itemLookUndo) return;
+    itemLookBusy = true;
+    try { appState = await api.setItemLook(itemLookUndo.itemId, itemLookUndo.previous); itemLookUndo = null; }
+    catch (e) { errorMsg = String(e); }
+    finally { itemLookBusy = false; }
   }
 
   function goLive(slide: Slide): void {
@@ -702,7 +800,7 @@
       return;
     }
     try {
-      const matches = await api.searchScripture(q.trim());
+      const matches = await searchSelectedBible(q.trim());
       if (seq !== scriptureSeq) return;
       scriptureResults = matches;
       scriptureOpen = matches.length > 0;
@@ -717,6 +815,34 @@
     }
   }
 
+  async function searchSelectedBible(query: string): Promise<ScriptureMatch[]> {
+    const references = await api.searchScripture(query);
+    if (references.length === 0) return references;
+    const bibleId = selectedBibleId;
+    const bible = bibles.find((item) => item.id === bibleId);
+    const translation = bible?.shortName?.trim() || bible?.name?.trim() || "KJV";
+    if (!bibleId) return references.map((match) => ({ ...match, translation }));
+
+    const chapters = new Map<string, Promise<ChapterVerse[]>>();
+    for (const match of references) {
+      const key = `${match.book}:${match.chapter}`;
+      if (!chapters.has(key)) {
+        chapters.set(key, api.getChapter(bibleId, match.book, match.chapter).catch(() => []));
+      }
+    }
+    const loaded = new Map<string, ChapterVerse[]>();
+    await Promise.all([...chapters].map(async ([key, promise]) => loaded.set(key, await promise)));
+    return references.flatMap((match) => {
+      const verse = loaded.get(`${match.book}:${match.chapter}`)?.find((item) => item.verse === match.verse);
+      return verse ? [{ ...match, text: verse.text, translation }] : [];
+    });
+  }
+
+  function scriptureTitle(match: ScriptureMatch): string {
+    const translation = match.translation?.trim();
+    return translation ? `${match.reference} · ${translation}` : match.reference;
+  }
+
   function looksLikeReference(q: string): boolean {
     return /\d/.test(q.trim());
   }
@@ -726,7 +852,7 @@
     scriptureStatus = null;
     scriptureLoading = true;
     try {
-      const matches = await api.lookupApiScripture(q.trim());
+      const matches = (await api.lookupApiScripture(q.trim())).map((match) => ({ ...match, translation: "KJV" }));
       scriptureResults = matches;
       scriptureOpen = matches.length > 0;
       scriptureIdx = -1;
@@ -789,7 +915,7 @@
     scriptureResults = [];
     scriptureOpen = false;
     scriptureIdx = -1;
-    void run(() => api.addSlide(match.reference, match.text, undefined, "scripture"));
+    void run(() => api.addSlide(scriptureTitle(match), match.text, undefined, "scripture"));
   }
 
   function onScriptureKeydown(e: KeyboardEvent): void {
@@ -819,11 +945,59 @@
       const list = await api.listBibles();
       bibles = list;
       if (!selectedBibleId && list.length > 0) {
-        selectedBibleId = list[0].id;
+        let rememberedId: string | null = null;
+        try { rememberedId = window.localStorage.getItem("makrstudio.scripture-bible-id"); } catch { /* storage can be unavailable in previews */ }
+        selectedBibleId = list.find((item) => item.id === rememberedId)?.id ?? list[0].id;
+        try { window.localStorage.setItem("makrstudio.scripture-bible-id", selectedBibleId); } catch { /* keep the selection for this session */ }
         await loadBooks(selectedBibleId);
       }
     } catch (e) {
       browseError = String(e);
+    }
+  }
+
+  async function openBibleDownloads(): Promise<void> {
+    bibleDownloadOpen = !bibleDownloadOpen;
+    bibleDownloadError = null;
+    bibleDownloadMessage = null;
+    if (!bibleDownloadOpen || remoteBiblesLoaded || remoteBiblesLoading) return;
+    await loadRemoteBibleCatalog();
+  }
+
+  async function loadRemoteBibleCatalog(): Promise<void> {
+    remoteBiblesLoading = true;
+    bibleDownloadError = null;
+    try {
+      remoteBibles = await api.listRemoteBibleVersions();
+      remoteBiblesLoaded = true;
+    } catch (e) {
+      bibleDownloadError = `Could not load free Bible versions: ${String(e)}`;
+    } finally {
+      remoteBiblesLoading = false;
+    }
+  }
+
+  async function downloadBible(version: RemoteBibleVersion): Promise<void> {
+    if (downloadingBibleId) return;
+    downloadingBibleId = version.id;
+    bibleDownloadError = null;
+    bibleDownloadMessage = null;
+    try {
+      const saved = await api.downloadBibleVersion(version.id);
+      bibles = await api.listBibles();
+      selectedBibleId = saved.id;
+      try { window.localStorage.setItem("makrstudio.scripture-bible-id", saved.id); } catch { /* keep the selection for this session */ }
+      verseTextQuery = "";
+      verseTextResults = [];
+      verseTextError = null;
+      verseTextSeq++;
+      if (verseTextTimer) clearTimeout(verseTextTimer);
+      await loadBooks(saved.id);
+      bibleDownloadMessage = `${saved.name} is ready to browse offline.`;
+    } catch (e) {
+      bibleDownloadError = `Could not ${version.source === "bundled" ? "add" : "download"} ${version.englishName || version.name}: ${String(e)}`;
+    } finally {
+      downloadingBibleId = null;
     }
   }
 
@@ -836,6 +1010,10 @@
       chapterNumbers = [];
       selectedChapter = null;
       chapterVerses = [];
+      verseRangeStart = null;
+      verseRangeEnd = null;
+      previewVerse = null;
+      selectedVerseNumbers = [];
     } catch (e) {
       browseError = String(e);
     } finally {
@@ -847,6 +1025,10 @@
     selectedBook = book;
     selectedChapter = null;
     chapterVerses = [];
+    verseRangeStart = null;
+    verseRangeEnd = null;
+    previewVerse = null;
+    selectedVerseNumbers = [];
     browseLoading = true;
     browseError = null;
     try {
@@ -866,11 +1048,20 @@
       browseError = null;
       const verses = await api.getChapter(bibleId, book, chapter);
       chapterVerses = verses;
+      verseRangeStart = verses[0]?.verse ?? null;
+      verseRangeEnd = verses[Math.min(1, verses.length - 1)]?.verse ?? null;
+      verseRangeError = null;
+      previewVerse = null;
+      selectedVerseNumbers = [];
       selectedChapter = chapter;
       use("browse");
     } catch (e) {
       browseError = String(e);
       chapterVerses = [];
+      verseRangeStart = null;
+      verseRangeEnd = null;
+      previewVerse = null;
+      selectedVerseNumbers = [];
     } finally {
       browseLoading = false;
     }
@@ -879,6 +1070,12 @@
   function onBrowseBibleChange(e: Event): void {
     const id = (e.target as HTMLSelectElement).value;
     selectedBibleId = id;
+    try { window.localStorage.setItem("makrstudio.scripture-bible-id", id); } catch { /* keep the selection for this session */ }
+    verseTextQuery = "";
+    verseTextResults = [];
+    verseTextError = null;
+    verseTextSeq++;
+    if (verseTextTimer) clearTimeout(verseTextTimer);
     void loadBooks(id);
   }
 
@@ -894,8 +1091,197 @@
 
   function insertBrowseVerse(v: ChapterVerse): void {
     if (!selectedBook || selectedChapter == null) return;
-    const ref = `${selectedBook} ${selectedChapter}:${v.verse}`;
+    const bible = bibles.find((item) => item.id === selectedBibleId);
+    const version = bible?.shortName?.trim() || bible?.name?.trim();
+    const ref = `${selectedBook} ${selectedChapter}:${v.verse}${version ? ` · ${version}` : ""}`;
     void run(() => api.addSlide(ref, v.text, undefined, "scripture"));
+  }
+
+  function insertBrowseRange(): void {
+    const passage = getSelectedVerseRange();
+    if (!passage) return;
+    void run(() => api.addSlide(passage.reference, passage.body, undefined, "scripture"));
+  }
+
+  function getSelectedVerseRange(): { reference: string; body: string } | null {
+    verseRangeError = null;
+    if (!selectedBook || selectedChapter == null || verseRangeStart == null || verseRangeEnd == null) {
+      verseRangeError = "Choose the first and last verse in the range.";
+      return null;
+    }
+    if (verseRangeStart < 1 || verseRangeEnd < verseRangeStart) {
+      verseRangeError = "The end verse must be the same as or after the start verse.";
+      return null;
+    }
+    const lastAvailableVerse = chapterVerses.at(-1)?.verse ?? 0;
+    if (verseRangeStart > lastAvailableVerse || verseRangeEnd > lastAvailableVerse) {
+      verseRangeError = `Choose verses from 1 to ${lastAvailableVerse}.`;
+      return null;
+    }
+    const verses = chapterVerses.filter((verse) => verse.verse >= verseRangeStart! && verse.verse <= verseRangeEnd!);
+    if (verses.length === 0) {
+      verseRangeError = "That verse range is not available in this chapter.";
+      return null;
+    }
+    const bible = bibles.find((item) => item.id === selectedBibleId);
+    const version = bible?.shortName?.trim() || bible?.name?.trim();
+    const first = verses[0].verse;
+    const last = verses[verses.length - 1].verse;
+    const verseRef = first === last ? `${first}` : `${first}–${last}`;
+    const ref = `${selectedBook} ${selectedChapter}:${verseRef}${version ? ` · ${version}` : ""}`;
+    const body = verses.map((verse) => `${verse.verse}. ${verse.text}`).join("\n");
+    return { reference: ref, body };
+  }
+
+  function insertBrowseChapter(): void {
+    if (!selectedBook || selectedChapter == null || chapterVerses.length === 0) return;
+    const bible = bibles.find((item) => item.id === selectedBibleId);
+    const version = bible?.shortName?.trim() || bible?.name?.trim();
+    const ref = `${selectedBook} ${selectedChapter}${version ? ` · ${version}` : ""}`;
+    const body = chapterVerses.map((verse) => `${verse.verse}. ${verse.text}`).join("\n");
+    void run(() => api.addSlide(ref, body, undefined, "scripture"));
+  }
+
+  async function copyBrowseText(reference: string, body: string, successMessage: string): Promise<void> {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");
+      await navigator.clipboard.writeText(`${reference}\n${body}`);
+      browseCopyStatus = successMessage;
+    } catch {
+      browseCopyStatus = "Could not copy. Check clipboard permission and try again.";
+    }
+  }
+
+  function copyBrowseRange(): void {
+    const passage = getSelectedVerseRange();
+    if (passage) void copyBrowseText(passage.reference, passage.body, "Passage copied.");
+  }
+
+  function saveScriptureBookmarks(): void {
+    try { window.localStorage.setItem(SCRIPTURE_BOOKMARKS_KEY, JSON.stringify(scriptureBookmarks)); } catch { bookmarkStatus = "Could not save bookmarks on this device."; }
+  }
+
+  function addScriptureBookmark(reference: string, text: string): void {
+    const bible = bibles.find((item) => item.id === selectedBibleId);
+    const bibleId = selectedBibleId ?? "kjv";
+    const version = bible?.shortName?.trim() || bible?.name?.trim() || "KJV";
+    const id = `${bibleId}:${reference}`;
+    if (scriptureBookmarks.some((bookmark) => bookmark.id === id)) {
+      bookmarkStatus = "Already bookmarked.";
+      return;
+    }
+    scriptureBookmarks = [{ id, bibleId, reference, version, text }, ...scriptureBookmarks];
+    bookmarkStatus = "Bookmark saved.";
+    saveScriptureBookmarks();
+  }
+
+  function bookmarkBrowseRange(): void {
+    const passage = getSelectedVerseRange();
+    if (passage) addScriptureBookmark(passage.reference, passage.body);
+  }
+
+  function bookmarkSelectedVerses(): void {
+    const passage = getSelectedChapterPassage();
+    if (passage) addScriptureBookmark(passage.reference, passage.body);
+  }
+
+  function bookmarkPreviewVerse(): void {
+    if (!previewVerse || !selectedBook || selectedChapter == null) return;
+    const bible = bibles.find((item) => item.id === selectedBibleId);
+    const version = bible?.shortName?.trim() || bible?.name?.trim();
+    const reference = `${selectedBook} ${selectedChapter}:${previewVerse.verse}${version ? ` · ${version}` : ""}`;
+    addScriptureBookmark(reference, previewVerse.text);
+  }
+
+  function removeScriptureBookmark(id: string): void {
+    scriptureBookmarks = scriptureBookmarks.filter((bookmark) => bookmark.id !== id);
+    saveScriptureBookmarks();
+    bookmarkStatus = "Bookmark removed.";
+  }
+
+  function addBookmarkedPassage(bookmark: ScriptureBookmark): void {
+    void run(() => api.addSlide(bookmark.reference, bookmark.text, undefined, "scripture"));
+  }
+
+  function toggleVerseSelection(verse: number): void {
+    selectedVerseNumbers = selectedVerseNumbers.includes(verse)
+      ? selectedVerseNumbers.filter((number) => number !== verse)
+      : [...selectedVerseNumbers, verse].sort((a, b) => a - b);
+  }
+
+  function getSelectedChapterPassage(): { reference: string; body: string } | null {
+    if (!selectedBook || selectedChapter == null || selectedVerseNumbers.length === 0) return null;
+    const verses = chapterVerses.filter((verse) => selectedVerseNumbers.includes(verse.verse));
+    if (verses.length === 0) return null;
+    const bible = bibles.find((item) => item.id === selectedBibleId);
+    const version = bible?.shortName?.trim() || bible?.name?.trim();
+    const verseRef = verses.map((verse) => verse.verse).join(", ");
+    return {
+      reference: `${selectedBook} ${selectedChapter}:${verseRef}${version ? ` · ${version}` : ""}`,
+      body: verses.map((verse) => `${verse.verse}. ${verse.text}`).join("\n"),
+    };
+  }
+
+  function addSelectedVerses(): void {
+    const passage = getSelectedChapterPassage();
+    if (passage) void run(() => api.addSlide(passage.reference, passage.body, undefined, "scripture"));
+  }
+
+  function addVerseTextResult(match: ScriptureMatch): void {
+    const translation = match.translation?.trim() || "KJV";
+    void run(() => api.addSlide(`${match.reference} · ${translation}`, match.text, undefined, "scripture"));
+  }
+
+  function bookmarkVerseTextResult(match: ScriptureMatch): void {
+    const translation = match.translation?.trim() || "KJV";
+    addScriptureBookmark(`${match.reference} · ${translation}`, match.text);
+  }
+
+  function onVerseTextSearchInput(event: Event): void {
+    verseTextQuery = (event.currentTarget as HTMLInputElement).value;
+    verseTextSeq++;
+    if (verseTextTimer) clearTimeout(verseTextTimer);
+    verseTextResults = [];
+    verseTextError = null;
+    if (!verseTextQuery.trim()) {
+      verseTextLoading = false;
+      return;
+    }
+    verseTextLoading = true;
+    const query = verseTextQuery;
+    verseTextTimer = setTimeout(() => void searchVerseText(query), 250);
+  }
+
+  async function searchVerseText(query: string): Promise<void> {
+    const seq = ++verseTextSeq;
+    const bibleId = selectedBibleId;
+    if (!bibleId || !query.trim()) {
+      verseTextLoading = false;
+      return;
+    }
+    try {
+      const results = await api.searchBibleText(bibleId, query.trim(), 200);
+      if (seq !== verseTextSeq || bibleId !== selectedBibleId) return;
+      const bible = bibles.find((item) => item.id === bibleId);
+      const translation = bible?.shortName?.trim() || bible?.name?.trim() || "KJV";
+      verseTextResults = results.map((match) => ({ ...match, translation }));
+    } catch (error) {
+      if (seq === verseTextSeq) verseTextError = String(error);
+    } finally {
+      if (seq === verseTextSeq) verseTextLoading = false;
+    }
+  }
+
+  function addPreviewVerse(): void {
+    if (previewVerse) insertBrowseVerse(previewVerse);
+  }
+
+  function copyPreviewVerse(): void {
+    if (!previewVerse || !selectedBook || selectedChapter == null) return;
+    const bible = bibles.find((item) => item.id === selectedBibleId);
+    const version = bible?.shortName?.trim() || bible?.name?.trim();
+    const reference = `${selectedBook} ${selectedChapter}:${previewVerse.verse}${version ? ` · ${version}` : ""}`;
+    void copyBrowseText(reference, previewVerse.text, "Verse copied.");
   }
 
   function locateDropTarget(target: Element | null, point: PointerDragPoint): NonNullable<typeof pointerDropTarget> | null {
@@ -933,7 +1319,7 @@
         const horizontal = point.x < rect.left || point.x > rect.right;
         const before = horizontal ? point.x < rect.left + rect.width / 2 : point.y < rect.top + rect.height / 2;
         const index = Number(nearest.dataset.dropSlideIndex);
-        return { kind: "slide", index: index + (before ? 0 : 1) };
+        return { kind: "slide", index: index + (before ? 0 : 1), id: nearest.dataset.dropSlideId };
       }
     }
     if (target?.closest(".slide-list")) return { kind: "playlist", index: items.length };
@@ -1034,7 +1420,8 @@
     if (!located) { pointerDragCancel(); return; }
     if (payload.type === "item-reorder") {
       if (located.kind === "item" || located.kind === "playlist") void dropPlaylistItem(payload.itemId, Math.min(located.index ?? items.length, items.length - 1));
-      else pointerDragCancel();
+      else if (located.kind === "slide" && located.id) void copyPlaylistItemIntoGroup(payload.itemId, located.id, located.index ?? project?.slides.length ?? 0);
+      pointerDragCancel();
       return;
     }
     if (payload.type === "cached-media" && located.kind === "slide" && located.id) {
@@ -1680,7 +2067,7 @@
   }
 
   function onTransitionChange(e: Event): void {
-    const value = (e.target as HTMLSelectElement).value as "cut" | "fade";
+    const value = (e.target as HTMLSelectElement).value as Transition;
     void api
       .setTransition(value)
       .then((s) => (appState = s))
@@ -1946,6 +2333,11 @@
       if (globalSearchOpen) use("shortcuts");
       return;
     }
+    if (e.key === "?" && !isTextInputFocused()) {
+      e.preventDefault();
+      helpOpen = !helpOpen;
+      return;
+    }
     if (e.key === "Escape" && globalSearchOpen) {
       e.preventDefault();
       globalSearchOpen = false;
@@ -2095,6 +2487,14 @@
   }
 
   onMount(() => {
+    // Begin the workspace request before optional browser/native setup so an
+    // unrelated startup error cannot leave the editor on the loading screen.
+    let cancelled = false;
+    let workspaceLoadAttempt = 0;
+    let workspaceExtrasStarted = false;
+    workspaceRetry = () => { void loadWorkspaceState(); };
+    void loadWorkspaceState();
+
     const nextHour = new Date();
     nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
     countdownTargetTime = `${String(nextHour.getHours()).padStart(2, "0")}:${String(nextHour.getMinutes()).padStart(2, "0")}`;
@@ -2110,7 +2510,6 @@
     let unAck: () => void = () => {};
     let unCountdown: () => void = () => {};
     let unFileDrop: (() => void) | null = null;
-    let cancelled = false;
 
     // Native Tauri drag events preserve physical pointer coordinates. Map them
     // back to CSS pixels before hit testing so OS drops can target exact rows.
@@ -2217,70 +2616,89 @@
       }
     })();
 
-    void (async () => {
-      const sub = await subscribeState((s) => {
-        if (!cancelled) { appState = s; followLiveItem(s); }
-      });
-      if (cancelled) { sub(); return; }
-      unSub = sub;
-      try {
-        const timerSub = await subscribeCountdown((timer) => {
-          if (!cancelled) countdown = timer;
+    function applyWorkspaceState(s: ClientState): void {
+      const wasLoading = appState === null;
+      appState = s;
+      errorMsg = null;
+      workspaceLoading = false;
+      if (wasLoading) {
+        selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
+        observedLiveId = s.project.live;
+        const stateItems = Array.isArray(s.items) ? s.items : [];
+        selectedItemId = stateItems.find((item) => item.slideIds.includes(selectedId ?? ""))?.id ?? stateItems[0]?.id ?? null;
+        onboardingOpen = s.firstRun && !onboarding.welcomeDismissed;
+      } else {
+        followLiveItem(s);
+      }
+      if (!workspaceExtrasStarted) {
+        workspaceExtrasStarted = true;
+        void api.listPresets().then((items) => {
+          if (!cancelled) servicePresets = items;
+        }).catch((e: unknown) => {
+          if (!cancelled) errorMsg = `Could not load starting playlists: ${String(e)}`;
         });
-        if (cancelled) { timerSub(); return; }
-        unCountdown = timerSub;
-        countdown = await api.getCountdown();
-      } catch (e) {
-        if (!cancelled) countdownError = `Could not load countdown: ${String(e)}`;
-      }
-      const autoSub = await subscribeAutosave((e) => {
-        if (cancelled) return;
-        savedLabel =
-          e.status === "saved" ? `Saved ${formatAt(e.at)}` : `Autosave failed: ${e.message ?? "unknown"}`;
-      });
-      if (cancelled) { autoSub(); return; }
-      unAuto = autoSub;
-      const libSub = await subscribeLibrary((l) => {
-        if (!cancelled) library = l;
-      });
-      if (cancelled) { libSub(); return; }
-      unLib = libSub;
-      try {
-        const ackSub = await subscribeAck((u) => {
-          if (!cancelled) ack = u;
-        });
-        if (cancelled) { ackSub(); return; }
-        unAck = ackSub;
-      } catch {
-        // ack events unavailable (browser preview) — indicators stay idle.
-      }
-      try {
-        const s = await api.getState();
-        if (!cancelled) {
-          appState = s;
-          selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
-          observedLiveId = s.project.live;
-          const stateItems = Array.isArray(s.items) ? s.items : [];
-          selectedItemId = stateItems.find((item) => item.slideIds.includes(selectedId ?? ""))?.id ?? stateItems[0]?.id ?? null;
-          void api.listPresets().then((items) => {
-            if (!cancelled) servicePresets = items;
-          }).catch((e: unknown) => {
-            if (!cancelled) errorMsg = `Could not load starting playlists: ${String(e)}`;
-          });
-          // One welcome surface at a time; returning users resume their View.
-          onboardingOpen = s.firstRun && !onboarding.welcomeDismissed;
-          void refreshPlaylists();
-        }
-      } catch (e) {
-        if (!cancelled) errorMsg = String(e);
-      }
-      if (!cancelled) {
+        void refreshPlaylists();
         api.listDisplays().then((d) => { if (!cancelled) displays = d; }).catch((e: unknown) => { if (!cancelled) errorMsg = String(e); });
         api.getLibrary().then((l) => { if (!cancelled) library = l; }).catch((e: unknown) => { if (!cancelled) errorMsg = String(e); });
         void loadBibles();
         api.getBiblesFolder().then((p) => { if (!cancelled) biblesFolder = p; }).catch(() => {});
       }
+    }
+
+    async function loadWorkspaceState(): Promise<void> {
+      const attempt = ++workspaceLoadAttempt;
+      workspaceLoading = true;
+      errorMsg = null;
+      let timeoutId = 0;
+      try {
+        const timeout = new Promise<never>((_, reject) => {
+          timeoutId = window.setTimeout(() => reject(new Error("MakrStudio did not respond. Check that the app is still running, then retry.")), 12000);
+        });
+        const state = await Promise.race([api.getState(), timeout]);
+        if (!cancelled && attempt === workspaceLoadAttempt) applyWorkspaceState(state);
+      } catch (error) {
+        if (!cancelled && attempt === workspaceLoadAttempt && appState === null) {
+          errorMsg = String(error);
+          workspaceLoading = false;
+        }
+      } finally {
+        if (timeoutId) window.clearTimeout(timeoutId);
+      }
+    }
+
+    // Event listeners are optional live updates. Start them independently so a
+    // delayed listener handshake can never hold the initial workspace screen.
+    void subscribeState((s) => {
+      if (!cancelled) applyWorkspaceState(s);
+    }).then((sub) => {
+      if (cancelled) sub();
+      else unSub = sub;
+    }).catch(() => {});
+    void (async () => {
+      try {
+        const sub = await subscribeCountdown((timer) => { if (!cancelled) countdown = timer; });
+        if (cancelled) { sub(); return; }
+        unCountdown = sub;
+        countdown = await api.getCountdown();
+      } catch (e) {
+        if (!cancelled) countdownError = `Could not load countdown: ${String(e)}`;
+      }
     })();
+    void subscribeAutosave((e) => {
+      if (cancelled) return;
+      savedLabel = e.status === "saved" ? `Saved ${formatAt(e.at)}` : `Autosave failed: ${e.message ?? "unknown"}`;
+    }).then((sub) => {
+      if (cancelled) sub();
+      else unAuto = sub;
+    }).catch(() => {});
+    void subscribeLibrary((l) => { if (!cancelled) library = l; }).then((sub) => {
+      if (cancelled) sub();
+      else unLib = sub;
+    }).catch(() => {});
+    void subscribeAck((u) => { if (!cancelled) ack = u; }).then((sub) => {
+      if (cancelled) sub();
+      else unAck = sub;
+    }).catch(() => {});
 
     window.addEventListener("keydown", handleGlobalKeydown);
     // 1s ticker so "Confirmed Ns ago" ages live without new events.
@@ -2312,9 +2730,9 @@
 {#if appState === null}
   <div class="loading-shell">
     <BrandLockup large />
-    {#if errorMsg}
+    {#if !workspaceLoading && errorMsg}
       <p class="loading-error" role="alert">Could not open your workspace: {errorMsg}</p>
-      <button class="ghost" onclick={() => window.location.reload()}>Try again</button>
+      <button class="ghost" onclick={() => workspaceRetry?.()}>Try again</button>
     {:else}
       <div class="spinner" aria-hidden="true"></div>
       <p role="status">Opening your workspace…</p>
@@ -2430,21 +2848,23 @@
                 <span class="slide-label">{item.name}</span><small>{item.slideIds.length}</small>
                 {#if item.slideIds.includes(project?.live ?? "")}<span class="live-dot"></span>{/if}
               </button>
+              <details class="item-look-menu">
+                <summary title="Item options" aria-label={`Options for ${item.name}`}>⋯</summary>
+                <div class="item-look-options">
               {#if renamingItemId === item.id}
                 <form class="item-rename" onsubmit={(e) => { e.preventDefault(); void renameItem(item); }}><input bind:value={renameDraft} aria-label="Item name" /><button class="ghost" type="submit">Save</button></form>
               {:else}
-                <button class="delete" title="Rename item" aria-label="Rename item" onclick={() => { renamingItemId=item.id; renameDraft=item.name; }}>✎</button>
-                <button class="delete" title="Delete item" aria-label="Delete item" onclick={() => void deleteItem(item)}>×</button>
+                <button class="ghost" title="Rename item" aria-label="Rename item" onclick={() => { renamingItemId=item.id; renameDraft=item.name; }}>Rename</button>
+                <button class="ghost" title="Delete item" aria-label="Delete item" onclick={() => void deleteItem(item)}>Delete</button>
               {/if}
-              <details class="item-look-menu">
-                <summary title="Item Look">⋯</summary>
-                <label>Use a different Look for this item
-                  <select value={appState?.project.itemLooks?.[item.id] ?? ""} onchange={(e) => void setItemLook(item, (e.currentTarget as HTMLSelectElement).value)}>
-                    <option value="">Automatic</option>
+                <label>Look
+                  <select aria-label={`Look for ${item.name}`} disabled={itemLookBusy} value={appState?.project.itemLooks?.[item.id] ?? ""} onchange={(e) => void setItemLook(item, (e.currentTarget as HTMLSelectElement).value)}>
+                    <option value="">Auto ({autoLookName(item.kind)})</option>
                     {#each appState?.looks ?? [] as look (look.id)}<option value={look.id}>{look.name}</option>{/each}
                   </select>
                 </label>
                 <small>Slides use {appState?.looks.find((look) => look.id === usedLookId)?.name ?? "the default Look"}.</small>
+                </div>
               </details>
             </li>
           {/each}
@@ -2454,7 +2874,7 @@
         </ul>
         <button class="add" onclick={() => addSlide(false, true)}>+ Add slide</button>
         {#if showHint(onboarding, "dragdrop")}
-          <p class="hint-line">Drag songs, verses, or images here — or click to add. Drag slides to reorder.<button class="hint-x" title="Dismiss" aria-label="Dismiss drag-and-drop hint" onclick={() => dismiss("dragdrop")}>×</button></p>
+          <p class="hint-line">Drag a Playlist item onto a slide to copy it into that slide group. Drag items here to reorder them.<button class="hint-x" title="Dismiss" aria-label="Dismiss drag-and-drop hint" onclick={() => dismiss("dragdrop")}>×</button></p>
         {/if}
         {#if showHint(onboarding, "shortcuts")}
           <p class="hint-line"><kbd>←</kbd> <kbd>→</kbd> advance live slides · <kbd>Ctrl+K</kbd> searches everything.<button class="hint-x" title="Dismiss" aria-label="Dismiss shortcuts hint" onclick={() => dismiss("shortcuts")}>×</button></p>
@@ -2507,14 +2927,15 @@
         </div>
         <div class="workspace-switch" class:looks-active={centralView === "looks"} aria-label="Workspace view">
           <button class="ws-btn" class:active={centralView === "slides"} aria-pressed={centralView === "slides"} onclick={() => (centralView = "slides")} aria-label="Open slide workspace"><span aria-hidden="true">▦</span> Slides</button>
-          <button class="ws-btn" class:active={centralView === "looks"} aria-pressed={centralView === "looks"} onclick={(e) => { centralView = "looks"; use("looks"); const content = e.currentTarget.closest(".editor-content"); if (content) content.scrollTop = 0; }} aria-label="Open Look editor"><span aria-hidden="true">◉</span> Looks</button>
+          <button class="ws-btn" class:active={centralView === "looks"} aria-pressed={centralView === "looks"} onclick={(e) => { requestedLookId = null; centralView = "looks"; use("looks"); const content = e.currentTarget.closest(".editor-content"); if (content) content.scrollTop = 0; }} aria-label="Open Look editor"><span aria-hidden="true">◉</span> Looks</button>
         </div>
       </div>
+      {#if itemLookUndo}<p class="hint-line" role="status">{itemLookUndo.message} <button class="ghost" disabled={itemLookBusy} onclick={undoItemLook}>Undo</button></p>{/if}
       {#if centralView === "slides" && showHint(onboarding, "looks")}
         <p class="hint-line looks-hint">Looks control fonts and layout on each screen — open the Looks view to style them.<button class="hint-x" title="Dismiss" aria-label="Dismiss Looks hint" onclick={() => dismiss("looks")}>×</button></p>
       {/if}
       {#if centralView === "looks"}
-        <LookEditorView appState={appState} dropBackground={lookBackgroundDrop} nativeDropActive={nativeDropTarget === "look-canvas"} onUpdate={(s: ClientState) => (appState = s)} onError={(m: string) => (errorMsg = m)} />
+        <LookEditorView appState={appState} {requestedLookId} dropBackground={lookBackgroundDrop} nativeDropActive={nativeDropTarget === "look-canvas"} onUpdate={(s: ClientState) => (appState = s)} onError={(m: string) => (errorMsg = m)} />
       {:else if showDetail && selected}
         <div class="detail-header">
           <button class="ghost" onclick={() => closeDetail()} title="Back to grid">← Grid</button>
@@ -2727,11 +3148,11 @@
             <span class="detail-preview-number">{String((project?.slides.findIndex((s) => s.id === selected.id) ?? 0) + 1).padStart(2, "0")}</span>
           </div>
           <div class="detail-preview-canvas" in:receivePreview|global={{ key: selected.id }} out:sendPreview|global={{ key: selected.id }}>
-            {#if selectedPreviewSlide && outputPreviewLook}
+            {#if selectedPreviewSlide && selectedLook}
               <SlideThumbnail
                 slide={selectedPreviewSlide}
                 effectiveBackground={appState?.effectiveBackgrounds?.[selectedPreviewSlide.id] ?? selectedPreviewSlide.background}
-                look={outputPreviewLook}
+                look={selectedLook}
                 showText={true}
                 showBackground={true}
                 aspectRatio={project?.aspectRatio ?? "16:9"}
@@ -2741,8 +3162,9 @@
             {/if}
           </div>
           <div class="detail-preview-foot">
-            <span>Updates as you type</span>
-            <button class="ghost" onclick={() => { centralView = "looks"; use("looks"); }}>Edit Look →</button>
+            {#if selectedSlideItem}<label>Look<select aria-label="Look for this item" disabled={itemLookBusy} value={project?.itemLooks?.[selectedSlideItem.id] ?? ""} onchange={(e) => selectedSlideItem && void setItemLook(selectedSlideItem, e.currentTarget.value)}><option value="">Auto ({autoLookName(selected.kind)})</option>{#each appState?.looks ?? [] as look (look.id)}<option value={look.id}>{look.name}</option>{/each}</select></label>{/if}
+            <span>Look: {selectedLook?.name ?? "Output"}</span>
+            <button class="ghost" onclick={editSlideLook}>Edit Look →</button>
           </div>
         </aside>
         </div>
@@ -2757,6 +3179,7 @@
             <output>{thumbnailSize}</output>
           </label>
           <div class="item-background-control">
+            <span class="field-hint">Look: {gridLook?.name ?? "Output"}</span>
             <button
               class="item-background-chip"
               class:active={backgroundPopoverOpen}
@@ -2774,7 +3197,7 @@
               {:else if selectedItemBackground?.type === "live_camera"}
                 <span class="item-background-chip-camera" aria-hidden="true">🎥</span>
               {:else}
-                <span class="item-background-chip-default">Default</span>
+                <span class="item-background-chip-default" aria-hidden="true">◇</span>
               {/if}
               <span>Background</span>
             </button>
@@ -2855,6 +3278,7 @@
             class:thumb-medium={thumbnailSize === "medium"}
             class:thumb-large={thumbnailSize === "large"}
             class:native-file-drop-active={nativeDropTarget?.startsWith("grid:")}
+            class:playlist-item-drop-active={isDragging && dragType === "item-reorder" && pointerDropTarget?.kind === "slide"}
             role="region"
             aria-label="Slides grid"
             ondragover={(e) => {
@@ -2869,13 +3293,21 @@
               }
             }}
           >
+            {#if isDragging && dragType === "item-reorder" && pointerDropTarget?.kind === "slide"}
+              {@const dragSource = items.find((item) => item.id === draggedItemId)}
+              {@const dropSlide = project?.slides.find((slide) => slide.id === pointerDropTarget?.id)}
+              {@const dropGroup = items.find((item) => item.id === dropSlide?.itemId)}
+              <div class="playlist-item-drop-hint" aria-live="polite">{dragSource && dropGroup ? `Add ${dragSource.name} to ${dropGroup.name}` : "Drop into this slide group"}</div>
+            {/if}
             {#each gridSlides as slide, i (slide.id)}
+              {@const slideLook = lookForSlide(slide)}
               {@const slideProjectIndex = project?.slides.findIndex((s) => s.id === slide.id) ?? i}
               {#if dragOverIndex === slideProjectIndex || nativeDropTarget === `gap:${slideProjectIndex}`}
                 <div class="grid-drop-indicator" aria-hidden="true"></div>
               {/if}
               <div
                 class="grid-cell"
+                transition:fade={{ duration: prefersReducedMotion() ? 0 : 180 }}
                 data-drop-slide-index={project?.slides.findIndex((s) => s.id === slide.id) ?? i}
                 data-drop-slide-id={slide.id}
                 style={`--item-index: ${Math.min(i, 8)}; --section-color: ${sectionColor(slide.title)}`}
@@ -2901,11 +3333,11 @@
                   aria-label={`Edit ${slideDisplayName(slide)}; Alt plus Up or Down moves this slide`}
                 >
                   <div class="grid-thumb-inner" in:receivePreview|global={{ key: slide.id }} out:sendPreview|global={{ key: slide.id }}>
-                    {#if outputPreviewLook}
+                    {#if slideLook}
                       <SlideThumbnail
                         slide={slide}
                         effectiveBackground={appState?.effectiveBackgrounds?.[slide.id] ?? slide.background}
-                        look={outputPreviewLook}
+                        look={slideLook}
                         showText={true}
                         showBackground={true}
                         overlay={null}
@@ -2979,6 +3411,8 @@
           >
             <option value="cut">Cut</option>
             <option value="fade">Fade</option>
+            <option value="wipe">Wipe</option>
+            <option value="push">Push</option>
           </select>
         </label>
 
@@ -3493,14 +3927,15 @@
                           <button
                             class:active={i === scriptureIdx}
                             class="scripture-entry"
-                            onpointerdown={(e) => startPointerDrag(e, { type: "scripture", reference: match.reference, text: match.text })}
+                            onpointerdown={(e) => startPointerDrag(e, { type: "scripture", reference: scriptureTitle(match), text: match.text })}
                             onmousedown={(e) => {
                               e.preventDefault();
                               selectScripture(match);
                             }}
-                            aria-label={`Add ${match.reference} as a slide; drag to playlist to place it`}
+                            aria-label={`Add ${scriptureTitle(match)} as a slide; drag to playlist to place it`}
                           >
                             <span class="scripture-ref">{match.reference}</span>
+                            {#if match.translation}<span class="scripture-version">{match.translation}</span>{/if}
                             <span class="scripture-preview">{match.text}</span>
                           </button>
                         </li>
@@ -3553,10 +3988,77 @@
                     Translation
                     <select value={selectedBibleId ?? ""} onchange={onBrowseBibleChange} disabled={bibles.length === 0}>
                       {#each bibles as b}
-                        <option value={b.id}>{b.name} ({b.bookCount})</option>
+                        <option value={b.id}>{b.name}{b.shortName ? ` · ${b.shortName}` : ""} ({b.bookCount} books)</option>
                       {/each}
                     </select>
                   </label>
+                  <section class="scripture-bookmarks" aria-label="Saved Scripture bookmarks">
+                    <button class="scripture-bookmarks-toggle" aria-expanded={bookmarksOpen} onclick={() => (bookmarksOpen = !bookmarksOpen)}>
+                      <span>{bookmarksOpen ? "▾" : "▸"} Bookmarks</span><span>{scriptureBookmarks.length}</span>
+                    </button>
+                    {#if bookmarksOpen}
+                      {#if scriptureBookmarks.length === 0}
+                        <p class="bookmark-empty">Save a verse or passage to keep it here.</p>
+                      {:else}
+                        <div class="scripture-bookmark-list">
+                          {#each scriptureBookmarks as bookmark (bookmark.id)}
+                            <article class="scripture-bookmark">
+                              <strong>{bookmark.reference}</strong>
+                              <p>{bookmark.text}</p>
+                              <div>
+                                <button class="bookmark-add" onclick={() => addBookmarkedPassage(bookmark)}>Add slide</button>
+                                <button class="bookmark-remove" aria-label={`Remove ${bookmark.reference} bookmark`} onclick={() => removeScriptureBookmark(bookmark.id)}>Remove</button>
+                              </div>
+                            </article>
+                          {/each}
+                        </div>
+                      {/if}
+                    {/if}
+                  </section>
+                  <section class="bible-downloads" aria-label="Download Bible versions">
+                    <button class="bible-download-toggle" onclick={openBibleDownloads} aria-expanded={bibleDownloadOpen}>
+                      <span>{bibleDownloadOpen ? "▾" : "▸"} Get more Bible versions</span>
+                      <span class="bible-download-caption">Online + included · offline</span>
+                    </button>
+                    {#if bibleDownloadOpen}
+                      <div class="bible-download-panel">
+                        <p>Choose a translation to download to this device. Check its license before using it publicly.</p>
+                        <input class="bible-version-search" type="search" bind:value={remoteBibleSearch} placeholder="Search by name or language" aria-label="Search Bible versions" />
+                        {#if remoteBiblesLoading}
+                          <p class="bible-download-state" role="status">Connecting to the free Bible catalog…</p>
+                        {:else if bibleDownloadError}
+                          <p class="browse-error" role="alert">{bibleDownloadError}</p>
+                          <button class="bible-retry" onclick={() => { remoteBiblesLoaded = false; void loadRemoteBibleCatalog(); }}>Try again</button>
+                        {:else if !remoteBiblesLoaded}
+                          <button class="bible-retry" onclick={() => { remoteBiblesLoaded = false; void loadRemoteBibleCatalog(); }}>Try again</button>
+                        {:else if remoteBibles.length === 0}
+                          <p class="bible-download-state" role="status">The catalog returned no downloadable versions. Check your connection and try again.</p>
+                          <button class="bible-retry" onclick={() => { remoteBiblesLoaded = false; void loadRemoteBibleCatalog(); }}>Refresh catalog</button>
+                        {:else if remoteBibles.filter((version) => `${version.englishName ?? ""} ${version.name} ${version.shortName ?? ""} ${version.languageEnglishName ?? version.languageName ?? version.language ?? ""}`.toLowerCase().includes(remoteBibleSearch.trim().toLowerCase())).length === 0}
+                          <p class="bible-download-state">No versions match that search.</p>
+                        {:else}
+                          <div class="bible-version-list">
+                            {#each remoteBibles.filter((version) => `${version.englishName ?? ""} ${version.name} ${version.shortName ?? ""} ${version.languageEnglishName ?? version.languageName ?? version.language ?? ""}`.toLowerCase().includes(remoteBibleSearch.trim().toLowerCase())) as version (version.id)}
+                              {@const installed = bibles.some((bible) => bible.id === `downloaded:${version.id}`)}
+                              <article class="bible-version-row">
+                                <div class="bible-version-copy">
+                                  <strong>{version.englishName || version.name}</strong>
+                                  <span>{version.source === "bundled" ? "Included · " : ""}{version.shortName ? `${version.shortName} · ` : ""}{version.languageEnglishName || version.languageName || version.language || "Language not listed"}</span>
+                                  {#if version.licenseUrl}
+                                    <a href={version.licenseUrl} target="_blank" rel="noreferrer">View license ↗</a>
+                                  {/if}
+                                </div>
+                                <button class="bible-version-action" disabled={installed || downloadingBibleId !== null} onclick={() => void downloadBible(version)}>
+                                  {downloadingBibleId === version.id ? (version.source === "bundled" ? "Adding…" : "Downloading…") : installed ? "Downloaded" : version.source === "bundled" ? "Add" : "Download"}
+                                </button>
+                              </article>
+                            {/each}
+                          </div>
+                        {/if}
+                        {#if bibleDownloadMessage}<p class="bible-download-success" role="status">{bibleDownloadMessage}</p>{/if}
+                      </div>
+                    {/if}
+                  </section>
                   {#if browseError}
                     <p class="browse-error">{browseError}</p>
                   {/if}
@@ -3584,18 +4086,87 @@
                   {/if}
                 </div>
                 <div class="browse-dock-right">
-                  {#if chapterVerses.length > 0}
+                  <label class="verse-text-search">
+                    Search this Bible’s verse text
+                    <input type="search" value={verseTextQuery} oninput={onVerseTextSearchInput} placeholder="Search a phrase or word" aria-label="Search this Bible's verse text" />
+                  </label>
+                  {#if bookmarkStatus}<p class="bookmark-status-inline" role="status">{bookmarkStatus}</p>{/if}
+                  {#if verseTextQuery.trim()}
+                    {#if verseTextLoading}
+                      <p class="browse-placeholder">Searching {bibles.find((item) => item.id === selectedBibleId)?.shortName || "Bible"}…</p>
+                    {:else if verseTextError}
+                      <p class="browse-error" role="alert">{verseTextError}</p>
+                    {:else if verseTextResults.length > 0}
+                      <ul class="verse-text-search-results">
+                        {#each verseTextResults as match (`${match.reference}:${match.translation}:${match.text}`)}
+                          <li>
+                            <strong>{match.reference} · {match.translation}</strong>
+                            <p>{match.text}</p>
+                            <div>
+                              <button class="browse-range-add" onclick={() => addVerseTextResult(match)}>Add slide</button>
+                              <button class="browse-range-add" onclick={() => bookmarkVerseTextResult(match)}>Bookmark</button>
+                            </div>
+                          </li>
+                        {/each}
+                      </ul>
+                    {:else}
+                      <p class="browse-placeholder">No verses contain “{verseTextQuery.trim()}”.</p>
+                    {/if}
+                  {:else if chapterVerses.length > 0}
+                    <div class="browse-range-tools">
+                      <label>From <input type="number" min="1" max={chapterVerses.at(-1)?.verse ?? 1} bind:value={verseRangeStart} aria-label="First verse in range" /></label>
+                      <label>To <input type="number" min="1" max={chapterVerses.at(-1)?.verse ?? 1} bind:value={verseRangeEnd} aria-label="Last verse in range" /></label>
+                      <button class="browse-range-add" onclick={insertBrowseRange}>Add range</button>
+                      <button class="browse-range-add" onclick={copyBrowseRange}>Copy range</button>
+                      <button class="browse-range-add" onclick={bookmarkBrowseRange}>Bookmark range</button>
+                      <button class="browse-range-add" onclick={insertBrowseChapter}>Add chapter</button>
+                      {#if selectedVerseNumbers.length > 0}
+                        <button class="browse-range-add" onclick={addSelectedVerses}>Add selected ({selectedVerseNumbers.length})</button>
+                        <button class="browse-range-add" onclick={bookmarkSelectedVerses}>Bookmark selected</button>
+                      {/if}
+                    </div>
+                    {#if verseRangeError}<p class="browse-range-error" role="alert">{verseRangeError}</p>{/if}
+                    {#if browseCopyStatus}<p class="browse-copy-status" role="status">{browseCopyStatus}</p>{/if}
+                    {#if previewVerse}
+                      {@const previewBible = bibles.find((item) => item.id === selectedBibleId)}
+                      {@const previewVersion = previewBible?.shortName?.trim() || previewBible?.name?.trim()}
+                      <section class="browse-verse-preview" aria-label="Verse preview">
+                        <header>
+                          <strong>{selectedBook} {selectedChapter}:{previewVerse.verse}{previewVersion ? ` · ${previewVersion}` : ""}</strong>
+                          <button class="browse-preview-close" aria-label="Close verse preview" onclick={() => (previewVerse = null)}>×</button>
+                        </header>
+                        <p>{previewVerse.text}</p>
+                        <div>
+                          <button class="browse-range-add" onclick={addPreviewVerse}>Add as slide</button>
+                          <button class="browse-range-add" onclick={copyPreviewVerse}>Copy verse</button>
+                          <button class="browse-range-add" onclick={bookmarkPreviewVerse}>Bookmark</button>
+                        </div>
+                      </section>
+                    {/if}
                     <ul class="browse-verses">
                       {#each chapterVerses as v}
-                        <li>
+                        <li class="browse-verse-row">
+                          <input
+                            class="browse-verse-select"
+                            type="checkbox"
+                            checked={selectedVerseNumbers.includes(v.verse)}
+                            onchange={() => toggleVerseSelection(v.verse)}
+                            aria-label={`Select ${selectedBook} ${selectedChapter}:${v.verse}`}
+                          />
                           <button
                             class="browse-verse"
-                            onpointerdown={(e) => startPointerDrag(e, { type: "scripture", reference: `${selectedBook} ${selectedChapter}:${v.verse}`, text: v.text })}
+                            onpointerdown={(e) => {
+                              const bible = bibles.find((item) => item.id === selectedBibleId);
+                              const version = bible?.shortName?.trim() || bible?.name?.trim();
+                              const reference = `${selectedBook} ${selectedChapter}:${v.verse}${version ? ` · ${version}` : ""}`;
+                              startPointerDrag(e, { type: "scripture", reference, text: v.text });
+                            }}
                             onclick={() => insertBrowseVerse(v)}
                           >
                             <span class="verse-num">{v.verse}</span>
                             <span class="verse-text">{v.text}</span>
                           </button>
+                          <button class="verse-preview-action" aria-label={`Preview ${selectedBook} ${selectedChapter}:${v.verse}`} onclick={() => { previewVerse = v; browseCopyStatus = null; }}>Preview</button>
                         </li>
                       {/each}
                     </ul>
@@ -3664,7 +4235,7 @@
 {/if}
 
 {#if settingsOpen}
-  <SettingsPanel app={appState} onclose={() => (settingsOpen = false)} />
+  <SettingsPanel app={appState} onUpdate={(s) => appState = s} onclose={() => (settingsOpen = false)} onBrowseMedia={() => openSourceTab("media")} />
 {/if}
 
 <SongEditorModal
@@ -4242,7 +4813,22 @@
     display: flex;
     align-items: stretch;
     gap: 4px;
+    position: relative;
+    flex-wrap: wrap;
   }
+
+  .item-look-menu { flex: none; width: 28px; }
+  .item-look-menu summary { display: grid; place-items: center; width: 28px; min-height: 42px; border-radius: 7px; cursor: pointer; list-style: none; }
+  .item-look-menu summary::-webkit-details-marker { display: none; }
+  .item-look-menu summary:hover, .item-look-menu[open] summary { background: var(--panel-2); }
+  .item-look-menu summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .item-look-menu[open] { width: 100%; }
+  .item-look-menu[open] summary { position: absolute; top: 0; right: 0; }
+  .slide-list li:has(.item-look-menu[open]) > .slide-entry { margin-right: 32px; }
+  .item-look-options { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+  .item-look-options label, .item-look-options small, .item-rename { width: 100%; min-width: 0; }
+  .item-look-options small { color: var(--text-dim); overflow-wrap: anywhere; }
+  .item-look-options select { width: 100%; min-width: 0; }
 
   .slide-entry {
     flex: 1;
@@ -4555,6 +5141,15 @@
     font-size: 12px;
   }
 
+  .scripture-version {
+    align-self: flex-start;
+    padding: 1px 5px;
+    border-radius: 999px;
+    color: var(--text-dim);
+    background: var(--panel);
+    font-size: 10px;
+  }
+
   .scripture-preview {
     font-size: 12px;
     color: var(--text-dim);
@@ -4780,7 +5375,7 @@
     background: var(--bg);
     z-index: 1;
   }
-  .item-background-control { position: relative; flex: 0 0 auto; }
+  .item-background-control { position: relative; flex: 0 0 auto; display:flex; align-items:center; gap:8px; }
   .item-background-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 5px 10px 5px 6px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); color: var(--text); font-size: 11px; font-weight: 650; cursor: pointer; }
   .item-background-chip:hover, .item-background-chip.active { border-color: var(--accent); }
   .item-background-chip > img, .item-background-chip-color, .item-background-chip-camera, .item-background-chip-default { display: grid; place-items: center; width: 23px; height: 23px; border: 1px solid var(--border); border-radius: 5px; object-fit: cover; }
@@ -4805,12 +5400,15 @@
   .inherited-background-option.active { border-color: var(--accent); background: var(--semantic-live-bg); }
   .inherited-background-option small { color: var(--text-dim); font-size: 10px; }
   .slide-grid {
+    position: relative;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 14px;
     align-content: start;
     padding: 4px 2px 20px;
   }
+  .slide-grid.playlist-item-drop-active::after { content: ""; position: absolute; inset: 0; z-index: 4; border: 2px dashed var(--accent); border-radius: 10px; background: rgba(21, 25, 26, .68); pointer-events: none; }
+  .playlist-item-drop-hint { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 24px; color: var(--text); font-size: 16px; font-weight: 600; text-align: center; pointer-events: none; }
   .grid-empty {
     text-align: center;
     padding: 40px 20px;
@@ -4911,16 +5509,23 @@
     padding: 2px 4px;
   }
   .grid-actions {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 6px;
     justify-content: center;
   }
   .grid-go-live {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    white-space: nowrap;
     font-size: 11px;
     padding: 4px 8px;
     flex: 1;
   }
   .grid-delete {
+    grid-column: 2;
+    grid-row: 1;
     font-size: 14px;
     padding: 4px 8px;
     line-height: 1;
@@ -5107,6 +5712,87 @@
     color: var(--danger);
     font-size: 12px;
   }
+
+  .bible-downloads {
+    /* Keep the download controls at their full content height. The book list
+       below is flexible; shrinking this section clips the search/status/results
+       because the section itself intentionally hides overflow for its border. */
+    flex: 0 0 auto;
+    margin: 8px 0 10px;
+    border: 1px solid var(--border, #303943);
+    border-radius: 9px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--panel, #171d22) 92%, transparent);
+  }
+
+  .bible-download-toggle {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    border: 0;
+    color: var(--text, #e8edf0);
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+  }
+
+  .bible-download-toggle:hover { background: var(--hover, #222a30); }
+  .bible-download-caption { color: var(--muted, #97a3aa); font-size: 10px; white-space: nowrap; }
+
+  .bible-download-panel {
+    padding: 0 9px 9px;
+    border-top: 1px solid var(--border, #303943);
+  }
+
+  .bible-download-panel > p:first-child {
+    margin: 8px 1px;
+    color: var(--muted, #aab4ba);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .bible-version-search {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 2px 0 7px;
+    padding: 7px 9px;
+    border: 1px solid var(--border, #303943);
+    border-radius: 7px;
+    color: var(--text, #e8edf0);
+    background: var(--surface, #11171b);
+    font: inherit;
+    font-size: 12px;
+  }
+
+  .bible-version-list { max-height: 250px; overflow: auto; }
+  .bible-version-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 2px; border-top: 1px solid color-mix(in srgb, var(--border, #303943) 70%, transparent); }
+  .bible-version-copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .bible-version-copy strong { color: var(--text, #e8edf0); font-size: 11px; line-height: 1.35; }
+  .bible-version-copy span, .bible-version-copy a { color: var(--muted, #9aa6ae); font-size: 10px; }
+  .bible-version-copy a { color: var(--accent, #83cbb0); width: fit-content; }
+  .bible-version-action, .bible-retry { flex: 0 0 auto; padding: 6px 8px; border: 1px solid var(--border, #303943); border-radius: 7px; color: var(--text, #e8edf0); background: var(--surface, #11171b); font: inherit; font-size: 10px; cursor: pointer; }
+  .bible-version-action:not(:disabled):hover, .bible-retry:hover { border-color: var(--accent, #83cbb0); }
+  .bible-version-action:disabled { color: var(--muted, #8d989f); cursor: default; opacity: .8; }
+  .bible-download-state { color: var(--muted, #9aa6ae); font-size: 11px; }
+  .bible-download-success { color: var(--accent, #83cbb0); font-size: 11px; }
+  .scripture-bookmarks { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
+  .scripture-bookmarks-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 9px; border: 0; color: var(--text); background: transparent; font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
+  .scripture-bookmarks-toggle:hover { background: var(--panel-2); }
+  .bookmark-empty { margin: 6px 9px; color: var(--text-dim); font-size: 10px; }
+  .bookmark-status-inline { margin: 0; color: var(--accent); font-size: 10px; }
+  .scripture-bookmark-list { max-height: 170px; overflow-y: auto; border-top: 1px solid var(--border); }
+  .scripture-bookmark { padding: 8px 9px; border-bottom: 1px solid var(--border); }
+  .scripture-bookmark:last-child { border-bottom: 0; }
+  .scripture-bookmark strong { color: var(--accent); font-size: 10px; }
+  .scripture-bookmark p { max-height: 50px; margin: 4px 0 6px; overflow: hidden; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
+  .scripture-bookmark > div { display: flex; gap: 6px; }
+  .bookmark-add, .bookmark-remove { padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px; color: var(--text); background: var(--panel-2); font-size: 10px; cursor: pointer; }
+  .bookmark-remove { color: var(--text-dim); }
   .browse-books {
     display: flex;
     flex-direction: column;
@@ -5172,20 +5858,109 @@
     background: var(--panel);
     padding: 4px;
   }
+  .verse-text-search { display: flex; flex-direction: column; gap: 5px; color: var(--text-dim); font-size: 11px; }
+  .verse-text-search input { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel); font: inherit; }
+  .verse-text-search-results { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+  .verse-text-search-results > li { padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
+  .verse-text-search-results strong { color: var(--accent); font-size: 11px; }
+  .verse-text-search-results p { margin: 5px 0 7px; color: var(--text); font-size: 11px; line-height: 1.45; }
+  .verse-text-search-results > li > div { display: flex; gap: 6px; }
   .browse-verse {
     display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
     gap: 8px;
     text-align: left;
     background: transparent;
     border: 1px solid transparent;
     border-radius: 4px;
     padding: 6px 8px;
-    width: 100%;
+    width: auto;
   }
+  .browse-verse-select { flex: 0 0 auto; align-self: center; margin: 0 2px 0 4px; accent-color: var(--accent); }
   .browse-verse:hover {
     background: var(--panel-2);
     border-color: var(--border);
   }
+  .browse-range-tools {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .browse-range-tools label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-dim);
+    font-size: 11px;
+  }
+  .browse-range-tools input {
+    width: 54px;
+    padding: 5px 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    background: var(--panel);
+    font: inherit;
+  }
+  .browse-range-add {
+    padding: 6px 9px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    background: var(--panel-2);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .browse-range-add:hover { border-color: var(--accent); }
+  .browse-range-error {
+    margin: 0;
+    color: var(--danger-text, #fda4af);
+    font-size: 11px;
+  }
+  .browse-copy-status {
+    margin: 0;
+    color: var(--accent);
+    font-size: 11px;
+  }
+  .browse-verse-preview {
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--panel-2);
+  }
+  .browse-verse-preview header,
+  .browse-verse-preview > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .browse-verse-preview header strong { color: var(--accent); font-size: 11px; }
+  .browse-verse-preview p { margin: 7px 0 9px; color: var(--text); font-size: 12px; line-height: 1.5; }
+  .browse-preview-close {
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-dim);
+    background: transparent;
+    cursor: pointer;
+  }
+  .browse-verse-row { display: flex; align-items: stretch; gap: 4px; }
+  .verse-preview-action {
+    flex: 0 0 auto;
+    align-self: center;
+    padding: 4px 7px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text-dim);
+    background: transparent;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .verse-preview-action:hover { color: var(--text); border-color: var(--accent); }
   .verse-num {
     font-weight: 700;
     color: var(--accent);
@@ -5370,7 +6145,7 @@
     cursor: grab;
   }
   .grid-custom-background-badge { position: absolute; top: 7px; left: 7px; z-index: 2; padding: 4px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--text); font-size: 9px; font-weight: 750; letter-spacing: .04em; }
-  .grid-inherit-background { flex: 0 0 auto; padding: 4px 7px; font-size: 10px; white-space: nowrap; }
+  .grid-inherit-background { grid-column: 1 / -1; grid-row: 2; min-width: 0; padding: 4px 7px; font-size: 10px; white-space: normal; }
   .song-entry:active,
   .scripture-entry:active,
   .browse-verse:active,
@@ -5998,7 +6773,7 @@
     line-height: 1.35;
   }
   .song-count { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
-  .song-list .delete, .slide-list .delete { align-self: center; flex: none; padding: 6px; }
+  .song-list .delete { align-self: center; flex: none; padding: 6px; }
   .sidebar-section .add { margin-top: 0; padding: 8px 10px; border: 1px solid rgba(129,170,149,.17); border-radius: 7px; }
   .external-drop-zone, .library-drop-zone { margin-top: 2px; padding: 13px 10px; line-height: 1.45; }
   .browse-panel { flex: 0 0 auto; margin-top: 0; }
@@ -6055,7 +6830,7 @@
     background: #000;
     box-shadow: 0 8px 24px rgba(0,0,0,.28);
   }
-  .detail-preview-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-dim); font-size: 11px; }
+  .detail-preview-foot { display: flex; flex-wrap:wrap; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-dim); font-size: 11px; }
   .detail-preview-foot button { flex: none; color: #b9d9c8; font-size: 11px; }
   .slide-grid { gap: 20px; }
 

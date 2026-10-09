@@ -59,6 +59,7 @@
         Replay guided tour
       </button>
       <div class="section-title">Backgrounds</div>
+      <p class="muted">Pick a Look for Songs, Scripture and Text in Looks, or choose one for a single item from the item menu.</p>
       <p class="muted">
         Inheriting text slides use the playlist item's background, then the default Look for their kind. A slide with its own custom background keeps it. Open Background in the slide grid to choose a color or imported media for an item.
       </p>
@@ -69,6 +70,7 @@
       <ul class="shortcuts">
         <li><span class="keys"><kbd>←</kbd> <kbd>→</kbd></span> Previous / next slide (when not typing)</li>
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span> Search songs, Bibles &amp; media <span class="muted">(⌘K on Mac)</span></li>
+        <li><span class="keys"><kbd>?</kbd></span> Open or close this shortcut guide</li>
         <li><span class="keys"><kbd>Esc</kbd></span> Close search, tour, or dialog</li>
         <li><span class="keys"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></span> Pick a Scripture suggestion</li>
         <li><span class="keys"><kbd>Enter</kbd> / <kbd>Esc</kbd></span> Confirm / cancel a dialog</li>

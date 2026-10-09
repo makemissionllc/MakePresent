@@ -5,7 +5,6 @@ use serde::Serialize;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -91,7 +90,6 @@ pub struct AudioPlayer {
     state: Arc<Mutex<AudioStateView>>,
     tx: Mutex<Option<mpsc::Sender<Command>>>,
     handle: Mutex<Option<JoinHandle<()>>>,
-    is_active: AtomicBool,
 }
 
 impl Default for AudioPlayer {
@@ -107,7 +105,6 @@ impl Default for AudioPlayer {
             })),
             tx: Mutex::new(None),
             handle: Mutex::new(None),
-            is_active: AtomicBool::new(false),
         }
     }
 }
@@ -401,7 +398,6 @@ impl AudioPlayer {
         });
         *self.handle.lock().unwrap() = Some(handle);
         *guard = Some(tx);
-        self.is_active.store(true, Ordering::SeqCst);
     }
 
     fn send(&self, cmd: Command) -> Result<(), String> {
@@ -489,11 +485,6 @@ impl AudioPlayer {
         if let Some(handle) = self.handle.lock().unwrap().take() {
             let _ = handle.join();
         }
-        self.is_active.store(false, Ordering::SeqCst);
-    }
-
-    pub fn is_active(&self) -> bool {
-        self.is_active.load(Ordering::SeqCst)
     }
 }
 

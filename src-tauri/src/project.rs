@@ -888,6 +888,35 @@ pub fn derive_items(project: &Project, library: &Library) -> Vec<PlaylistItem> {
     items
 }
 
+/// Each contiguous playlist group needs its own identity. Inserting or moving
+/// a slide can split an existing group; preserve slide order and appearance by
+/// giving later runs new ids and copying their item-level settings.
+pub fn normalize_playlist_items(project: &mut Project) {
+    ensure_item_ids(&mut project.slides);
+    let mut seen = std::collections::HashSet::new();
+    let mut previous_source: Option<String> = None;
+    let mut current_id = String::new();
+    for slide in &mut project.slides {
+        let source = slide.item_id.clone().unwrap();
+        if previous_source.as_ref() != Some(&source) {
+            current_id = if seen.insert(source.clone()) {
+                source.clone()
+            } else {
+                let id = Uuid::new_v4().to_string();
+                if let Some(background) = project.item_backgrounds.get(&source).cloned() {
+                    project.item_backgrounds.insert(id.clone(), background);
+                }
+                if let Some(look) = project.item_looks.get(&source).cloned() {
+                    project.item_looks.insert(id.clone(), look);
+                }
+                id
+            };
+            previous_source = Some(source);
+        }
+        slide.item_id = Some(current_id.clone());
+    }
+}
+
 pub fn reorder_item_slides(slides: Vec<Slide>, item_id: &str, new_index: usize) -> Result<Vec<Slide>, String> {
     let mut groups: Vec<(String, Vec<Slide>)> = Vec::new();
     for slide in slides {
@@ -2577,7 +2606,7 @@ pub fn recover_or_seed(data_dir: &Path) -> (Project, Option<Notice>) {
         Project::test()
     });
     project.ensure_default_looks();
-    ensure_item_ids(&mut project.slides);
+    normalize_playlist_items(&mut project);
 
     let recovered = recovering || loaded_from_snapshot;
     let notice = if recovered {

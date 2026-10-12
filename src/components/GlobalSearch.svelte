@@ -5,6 +5,7 @@
   import type { BibleInfo, ChapterVerse, Library, LyricsHit, MediaAsset, ScriptureMatch } from "../lib/types";
   import { isMedia } from "../lib/types";
   import { surface, veil } from "../lib/motion";
+  import { withTimeout } from "../lib/withTimeout";
 
   interface Props {
     open: boolean;
@@ -31,7 +32,7 @@
 
   function getSearchBible(): Promise<BibleInfo | null> {
     if (!scriptureBiblePromise) {
-      scriptureBiblePromise = api.listBibles().then((bibles) => {
+      scriptureBiblePromise = withTimeout(api.listBibles(), 15000, "Bible list did not respond.").then((bibles) => {
         let rememberedId: string | null = null;
         try { rememberedId = window.localStorage.getItem("makrstudio.scripture-bible-id"); } catch { /* use the first available Bible */ }
         return bibles.find((bible) => bible.id === rememberedId) ?? bibles.find((bible) => bible.id === "kjv") ?? bibles[0] ?? null;
@@ -40,15 +41,16 @@
     return scriptureBiblePromise;
   }
 
-  async function labelMatchesForBible(matches: ScriptureMatch[]): Promise<ScriptureMatch[]> {
+  async function labelMatchesForBible(matches: ScriptureMatch[], request: number): Promise<ScriptureMatch[]> {
     const bible = await getSearchBible();
+    if (request !== seq) return [];
     const translation = bible?.shortName?.trim() || bible?.name?.trim() || "KJV";
     scriptureTranslation = translation;
     if (!bible) return matches.map((match) => ({ ...match, translation }));
     const chapters = new Map<string, Promise<ChapterVerse[]>>();
     for (const match of matches) {
       const key = `${match.book}:${match.chapter}`;
-      if (!chapters.has(key)) chapters.set(key, api.getChapter(bible.id, match.book, match.chapter).catch(() => []));
+      if (!chapters.has(key)) chapters.set(key, withTimeout(api.getChapter(bible.id, match.book, match.chapter), 15000, "Bible chapter did not respond.").catch(() => []));
     }
     const loaded = new Map<string, ChapterVerse[]>();
     await Promise.all([...chapters].map(async ([key, promise]) => loaded.set(key, await promise)));
@@ -87,6 +89,7 @@
 
   // Focus when opened
   $effect(() => {
+    let focusFrame = 0;
     if (open) {
       query = "";
       scriptureResults = [];
@@ -99,7 +102,7 @@
       scriptureBiblePromise = null;
       void getSearchBible();
       seq++;
-      requestAnimationFrame(() => {
+      focusFrame = requestAnimationFrame(() => {
         inputEl?.focus();
         inputEl?.select();
       });
@@ -110,6 +113,12 @@
         debounce = null;
       }
     }
+    return () => {
+      seq++;
+      if (debounce) clearTimeout(debounce);
+      debounce = null;
+      if (focusFrame) cancelAnimationFrame(focusFrame);
+    };
   });
 
   let debounce: ReturnType<typeof setTimeout> | null = null;
@@ -135,13 +144,13 @@
       onlineError = null;
       onlineLoading = false;
       try {
-        const all = await api.listMedia();
+        const all = await withTimeout(api.listMedia(), 15000, "Media list did not respond.");
         if (cur !== seq) return;
         mediaResults = all.slice(0, 6);
       } catch {
-        mediaResults = [];
+        if (cur === seq) mediaResults = [];
       }
-      loading = false;
+      if (cur === seq) loading = false;
       return;
     }
     loading = true;
@@ -150,23 +159,25 @@
     // outage never interferes with Scripture or cached media search.
     if (trimmed.length >= 3) {
       onlineLoading = true;
-      void api.searchLyrics(trimmed)
+      void withTimeout(api.searchLyrics(trimmed), 15000, "Online lyrics search timed out. Try again.")
         .then((found) => { if (cur === seq) onlineSongs = found.filter((hit) => hit.hasLyrics).slice(0, 6); })
         .catch((e: unknown) => { if (cur === seq) onlineError = String(e); })
         .finally(() => { if (cur === seq) onlineLoading = false; });
     }
     const [scr, med] = await Promise.allSettled([
-      api.searchScripture(trimmed),
-      api.searchMedia(trimmed),
+      withTimeout(api.searchScripture(trimmed), 15000, "Scripture search timed out. Try again."),
+      withTimeout(api.searchMedia(trimmed), 15000, "Media search timed out. Try again."),
     ]);
     if (cur !== seq) return;
     if (scr.status === "fulfilled") {
-      const labelled = await labelMatchesForBible(scr.value.slice(0, 8));
+      const labelled = await labelMatchesForBible(scr.value.slice(0, 8), cur);
       if (cur !== seq) return;
       scriptureResults = labelled;
     } else scriptureResults = [];
     if (med.status === "fulfilled") mediaResults = med.value.slice(0, 8);
     else mediaResults = [];
+    const failures = [scr, med].flatMap((result) => result.status === "rejected" ? [String(result.reason)] : []);
+    if (failures.length) errorMsg = failures.join(" ");
     loading = false;
   }
 

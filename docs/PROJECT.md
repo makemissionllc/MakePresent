@@ -1,5 +1,15 @@
 # MakrStudio (formerly MakePresent) — Living Project Doc
 
+## Changed (2026-10-12) — Scripture and workflow update
+
+- Diagnosed the native startup freeze as a Svelte duplicate-key error from noncontiguous playlist groups sharing an ID. Startup recovery and subsequent playlist edits now split those groups into unique identities while preserving slide order and item backgrounds/Looks. Added an editor error boundary and local frontend diagnostics. Native renderer logs confirmed the workspace rendered after recovery.
+- Added Copy selected/Clear selection in Scripture. Bible catalog search now has a result count and empty-search reset. Failed chapter requests retain the displayed passage; failed downloads keep the catalog visible with version-specific retry. A shared timeout helper bounds Bible library/book/chapter loading at 15 seconds, with retry controls and existing request sequencing to ignore late results.
+- Added bounded Previous/Next chapter navigation in the Scripture reading pane. Fixed Help dialog keyboard handling so `?` closes the open guide even though the dialog stops global key events.
+- Added translation-aware Scripture slides/search, selected-translation text search with direct insertion, verse preview, multi-verse/range/chapter insertion, copy actions, and local bookmarks. The Bible browser remembers the selected translation.
+- Added Settings → What’s New and `CHANGELOG.md` to summarize all recent Bible, Scripture, onboarding/help, recovery, and startup features.
+- Settings restores its last-used tab. Startup requests workspace state before optional setup and provides a retry on timeout. Scripture browsing uses request sequencing so delayed book/chapter responses cannot overwrite a newer selection.
+- Verification: `npm run check` passed with 0 errors/0 warnings and `npm run build` passed. Runtime assertions for the timeout helper covered successful responses, request rejection, and stalled requests. The feature flow was not manually exercised in the native desktop UI.
+
 ## Changed (2026-10-07) — Downloadable Bible versions
 
 - Browse Scripture now combines the no-key HelloAO Free Use Bible API catalog with included NIV, NKJV, NLT, MSG, ESV, NIRV, NASB, and AMP translations. Catalog versions download from HelloAO; included versions install from the app bundle for offline book/chapter/verse browsing.

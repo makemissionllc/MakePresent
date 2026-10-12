@@ -673,6 +673,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::report_frontend_status,
             commands::get_state,
             commands::get_countdown,
             commands::start_countdown,

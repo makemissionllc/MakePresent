@@ -23,7 +23,8 @@
   });
 
   function onKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape") {
+    if (e.key === "Escape" || (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey)) {
+      e.preventDefault();
       e.stopPropagation();
       onClose();
     }

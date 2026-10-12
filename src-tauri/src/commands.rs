@@ -391,6 +391,7 @@ fn mutate<R>(
     {
         let mut project = state.project.write().unwrap();
         f(&mut project)?;
+        crate::project::normalize_playlist_items(&mut project);
         project.modified_at = now_iso();
     }
     state.request_save();
@@ -401,6 +402,7 @@ fn mutate<R>(
 
 fn replace_project(app: &AppHandle, mut project: Project) -> Result<ClientState, String> {
     project.ensure_default_looks();
+    crate::project::normalize_playlist_items(&mut project);
     let state = app.state::<AppState>();
     *state.project.write().unwrap() = project;
     state.set_notice(None);
@@ -413,7 +415,16 @@ fn replace_project(app: &AppHandle, mut project: Project) -> Result<ClientState,
 
 #[tauri::command]
 pub fn get_state(app: AppHandle) -> ClientState {
-    snapshot(&app)
+    log(&app, Level::Info, "editor: workspace snapshot requested");
+    let state = snapshot(&app);
+    log(&app, Level::Info, "editor: workspace snapshot ready");
+    state
+}
+
+#[tauri::command]
+pub fn report_frontend_status(app: AppHandle, message: String) {
+    let message: String = message.chars().take(4000).collect();
+    log(&app, Level::Info, &format!("frontend: {message}"));
 }
 
 #[tauri::command]
@@ -1651,10 +1662,14 @@ pub fn add_slide(
     };
     let slide_title = slide.title.clone();
     mutate(&app, |project| {
-        project.slides.push(slide);
-        if let Some(created) = project.slides.last() {
-            project.selected = Some(created.id.clone());
-        }
+        // Adding to an earlier item must keep that group contiguous rather
+        // than appending a second run with the same item identity.
+        let insertion = project.slides.iter()
+            .rposition(|existing| existing.item_id == slide.item_id)
+            .map(|index| index + 1)
+            .unwrap_or(project.slides.len());
+        project.selected = Some(slide.id.clone());
+        project.slides.insert(insertion, slide);
         Ok(())
     })
     .map(|s| {

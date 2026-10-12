@@ -1,5 +1,14 @@
 # MakrStudio (formerly MakePresent)
 
+## Changed (2026-10-12) — Scripture tools and workflow updates
+
+- Fixed the editor startup freeze caused by separated playlist groups sharing an ID. Recovery preserves every slide, its order, backgrounds, and Looks. Playlist edits maintain unique group identities, and rendering errors show recovery controls and write local diagnostics.
+- Added Copy selected/Clear selection actions, polished Bible catalog search counts and empty results, and added bounded Scripture loading with retry controls. Failed chapter loads preserve the current passage; failed downloads keep the catalog visible and allow retrying the same version. These updates are recorded in Settings → What’s New and the change log.
+- Added Previous/Next chapter buttons in the Scripture reading pane and fixed the `?` shortcut so it closes the open help guide.
+- Added translation labels to Scripture slides and search results, in-Bible text search with direct insertion, verse previews, multi-verse/range and chapter insertion, copy actions, and local passage bookmarks. The Bible browser remembers its selected translation.
+- Added a Settings “What’s New” page and a full [change log](CHANGELOG.md) covering the Bible downloads, Scripture quality-of-life features, keyboard guide, project recovery, and startup improvements requested in this update.
+- Settings returns to the last-used tab. Workspace loading now starts before optional setup and shows a retry on timeout. Scripture browser requests ignore stale responses after rapid Bible/book/chapter changes.
+
 ## Changed (2026-10-07) — Downloadable Bible versions
 
 - Added a searchable “Get more Bible versions” panel to Browse Scripture. It combines translations from the free, no-key [HelloAO Free Use Bible API](https://bible.helloao.org/docs/reference/translations/) with included NIV, NKJV, NLT, MSG, ESV, NIRV, NASB, and AMP versions. Catalog versions download from HelloAO; included versions install offline from the app bundle.

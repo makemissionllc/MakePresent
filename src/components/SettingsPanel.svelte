@@ -32,6 +32,21 @@
   } from "../lib/types";
   import { DEFAULT_BODY_STYLE, DEFAULT_TITLE_STYLE } from "../lib/types";
   import LookStyleFields from "./LookStyleFields.svelte";
+  import { CHANGELOG } from "../lib/changelog";
+  import { withTimeout } from "../lib/withTimeout";
+
+  type SettingsTab = "plugins" | "general" | "looks" | "triggers" | "network" | "audio" | "logs" | "whats-new";
+  const SETTINGS_TAB_KEY = "makrstudio.settings.last-tab";
+  const SETTINGS_TABS: SettingsTab[] = ["plugins", "general", "looks", "triggers", "network", "audio", "logs", "whats-new"];
+
+  function readLastSettingsTab(): SettingsTab {
+    try {
+      const stored = window.localStorage.getItem(SETTINGS_TAB_KEY);
+      return SETTINGS_TABS.includes(stored as SettingsTab) ? stored as SettingsTab : "general";
+    } catch {
+      return "general";
+    }
+  }
 
   interface Props {
     app: ClientState | null;
@@ -42,11 +57,21 @@
 
   let { app: appState, onclose, onBrowseMedia = () => {}, onUpdate = () => {} }: Props = $props();
 
-  let tab = $state<"plugins" | "general" | "looks" | "triggers" | "network" | "audio" | "logs">("general");
+  let tab = $state<SettingsTab>(readLastSettingsTab());
   let status = $state<{ kind: "ok" | "err"; text: string } | null>(null);
   let logs = $state<LogEntry[]>([]);
   let logsMsg = $state<string | null>(null);
   let lookErr = $state<string | null>(null);
+
+  $effect(() => {
+    try { window.localStorage.setItem(SETTINGS_TAB_KEY, tab); } catch { /* preferences are optional */ }
+  });
+
+  $effect(() => {
+    if (tab !== "audio") return;
+    audioVolumeDraft = audioView.volume;
+    void refreshAudioDevices();
+  });
 
   // Trigger (MIDI/OSC) panel state.
   let midiDevices = $state<MidiDeviceInfo[]>([]);
@@ -84,8 +109,8 @@
   }
 
   function selectLook(id: string): void {
+    flushLookCommit();
     activeLookId = id;
-    if (commitTimer) clearTimeout(commitTimer);
   }
 
   function setDraft(field: keyof Look, value: unknown): void {
@@ -106,6 +131,25 @@
   }
 
   let commitTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingLookCommit: { id: string; patch: LookPatch } | null = null;
+  let panelDestroyed = false;
+
+  function flushLookCommit(): void {
+    if (commitTimer) clearTimeout(commitTimer);
+    commitTimer = null;
+    const pending = pendingLookCommit;
+    pendingLookCommit = null;
+    if (pending) {
+      void api.upsertLook(pending.id, pending.patch).catch((e: unknown) => {
+        if (!panelDestroyed) lookErr = String(e);
+      });
+    }
+  }
+
+  onDestroy(() => {
+    panelDestroyed = true;
+    flushLookCommit();
+  });
   /** Merge one per-element style patch into the optimistic draft. */
   function setStyle(role: "title" | "body", patch: TextStylePatch): void {
     if (!draft) return;
@@ -130,10 +174,10 @@
       bodyBox: updated.bodyBox,
       background: updated.background ?? null,
     };
+    if (pendingLookCommit && pendingLookCommit.id !== updated.id) flushLookCommit();
+    pendingLookCommit = { id: updated.id, patch };
     if (commitTimer) clearTimeout(commitTimer);
-    commitTimer = setTimeout(() => {
-      void api.upsertLook(updated.id, patch).catch((e: unknown) => (lookErr = String(e)));
-    }, 200);
+    commitTimer = setTimeout(flushLookCommit, 200);
   }
 
   function addLook(): void {
@@ -317,6 +361,8 @@
   let ndiMonErr = $state<string | null>(null);
   let ndiMonUnlisten: Array<() => void> = [];
   let ndiMonPoll: ReturnType<typeof setInterval> | null = null;
+  let ndiMonGeneration = 0;
+  let ndiMonOwned = false;
   const ndiMonBadge = $derived(
     ndiMonStatus.state === "live"
       ? "LIVE"
@@ -331,42 +377,71 @@
       stopNdiMonitor();
       return;
     }
+    if (ndiMonOn || panelDestroyed) return;
+    const generation = ++ndiMonGeneration;
+    const current = () => generation === ndiMonGeneration && !panelDestroyed;
+    ndiMonOn = true;
+    ndiMonOwned = true;
+    ndiMonStatus = { state: "scanning", source: null, message: "Starting monitor…" };
+    async function retain(subscription: Promise<() => void>): Promise<void> {
+      // A registration that completes after close/timeout still needs releasing.
+      await withTimeout(subscription.then((unlisten) => {
+        if (current()) ndiMonUnlisten.push(unlisten);
+        else unlisten();
+      }), 15000, "The monitor listener did not respond. Try enabling the monitor again.");
+    }
     try {
-      ndiMonSources = await api.startNdiScan();
-      ndiMonStatus = await api.ndiMonitorStatus();
-      ndiMonUnlisten.push(await subscribeNdiSources((s) => (ndiMonSources = s)));
-      ndiMonUnlisten.push(
-        await subscribeNdiMonitorStatus((s) => (ndiMonStatus = s)),
-      );
-      ndiMonUnlisten.push(await subscribeNdiPreview((f) => (ndiMonFrame = f)));
+      const sources = await withTimeout(api.startNdiScan().then((sources) => {
+        if (!current() && !ndiMonOwned) void api.stopNdiScan().catch(() => {});
+        return sources;
+      }), 15000, "NDI discovery did not respond. Try enabling the monitor again.");
+      if (!current()) return;
+      ndiMonSources = sources;
+      const status = await withTimeout(api.ndiMonitorStatus(), 15000, "NDI status did not respond.");
+      if (!current()) return;
+      ndiMonStatus = status;
+      await retain(subscribeNdiSources((s) => { if (current()) ndiMonSources = s; }));
+      if (!current()) return;
+      await retain(subscribeNdiMonitorStatus((s) => { if (current()) ndiMonStatus = s; }));
+      if (!current()) return;
+      await retain(subscribeNdiPreview((f) => { if (current()) ndiMonFrame = f; }));
+      if (!current()) return;
       // Event-driven updates are primary; a slow poll is the backstop so a
       // missed event can never leave the picker permanently empty.
       if (ndiMonPoll) clearInterval(ndiMonPoll);
+      let polling = false;
       ndiMonPoll = setInterval(() => {
+        if (polling || !current()) return;
+        polling = true;
         void api
           .listNdiSources()
-          .then((s) => (ndiMonSources = s))
-          .catch(() => {});
+          .then((s) => { if (current()) ndiMonSources = s; })
+          .catch(() => {})
+          .finally(() => { polling = false; });
       }, 2500);
-      ndiMonOn = true;
     } catch (e: unknown) {
-      stopNdiMonitor();
-      ndiMonErr = String(e);
+      if (current()) {
+        stopNdiMonitor();
+        ndiMonErr = String(e);
+      }
     }
   }
 
   function connectNdiSource(name: string): void {
+    if (!ndiMonOn || panelDestroyed) return;
+    const generation = ndiMonGeneration;
     ndiMonErr = null;
     // Drop the previous source's frame immediately — it must never read as
     // the newly selected source's picture while connecting.
     ndiMonFrame = null;
     void api
       .connectNdiSource(name)
-      .then((s) => (ndiMonStatus = s))
-      .catch((e: unknown) => (ndiMonErr = String(e)));
+      .then((s) => { if (!panelDestroyed && generation === ndiMonGeneration) ndiMonStatus = s; })
+      .catch((e: unknown) => { if (!panelDestroyed && generation === ndiMonGeneration) ndiMonErr = String(e); });
   }
 
   function stopNdiMonitor(): void {
+    ++ndiMonGeneration;
     for (const u of ndiMonUnlisten) {
       try {
         u();
@@ -381,10 +456,13 @@
     }
     // Fully independent teardown: receiver, then the finder thread. The NDI
     // *broadcast* above is untouched by either call.
-    void api.disconnectNdiSource().catch(() => {});
-    void api.stopNdiScan().catch(() => {});
+    if (ndiMonOwned) {
+      ndiMonOwned = false;
+      void api.stopNdiScan().catch(() => {});
+    }
     ndiMonOn = false;
     ndiMonFrame = null;
+    ndiMonSources = [];
     ndiMonStatus = { state: "off", source: null, message: "Monitor off." };
   }
 
@@ -516,8 +594,6 @@
 
   // --- Triggers (MIDI + OSC) panel logic ---
 
-  let unSubscribeMidi: (() => void) | null = null;
-
   $effect(() => {
     if (tab !== "triggers") return;
     void refreshMidiDevices();
@@ -525,14 +601,19 @@
   });
 
   $effect(() => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
     void subscribeMidiMessage((msg) => {
-      midiMsgs = [...midiMsgs.slice(-19), msg];
+      if (!cancelled) midiMsgs = [...midiMsgs.slice(-19), msg];
     }).then((un) => {
-      unSubscribeMidi = un;
+      if (cancelled) un();
+      else unsubscribe = un;
+    }).catch((error: unknown) => {
+      if (!cancelled) midiDevicesMsg = `Could not listen for MIDI messages: ${String(error)}`;
     });
     return () => {
-      unSubscribeMidi?.();
-      unSubscribeMidi = null;
+      cancelled = true;
+      unsubscribe?.();
     };
   });
 
@@ -910,16 +991,43 @@
       <button class="tab" class:active={tab === "network"} onclick={() => (tab = "network")}>
         Network
       </button>
-      <button class="tab" class:active={tab === "audio"} onclick={() => { tab = "audio"; audioVolumeDraft = audioView.volume; void refreshAudioDevices(); }}>
+      <button class="tab" class:active={tab === "audio"} onclick={() => (tab = "audio")}>
         Audio
       </button>
       <button class="tab" class:active={tab === "logs"} onclick={() => (tab = "logs")}>
         Logs
       </button>
+      <button class="tab" class:active={tab === "whats-new"} onclick={() => (tab = "whats-new")}>
+        What’s New
+      </button>
     </nav>
 
     <div class="content">
-      {#if tab === "plugins"}
+      {#if tab === "whats-new"}
+        <div class="whats-new">
+          <div class="whats-new-intro">
+            <span class="plugin-kicker">MAKRSTUDIO UPDATES</span>
+            <h3>What’s new</h3>
+            <p>Recent features and fixes, collected in one place.</p>
+          </div>
+          {#each CHANGELOG as release (release.date)}
+            <article class="release-card">
+              <header>
+                <span class="release-date">{release.date}</span>
+                <h4>{release.title}</h4>
+              </header>
+              <ul>
+                {#each release.items as item (`${release.date}:${item.kind}:${item.text}`)}
+                  <li>
+                    <span class="change-kind" class:new={item.kind === "New"} class:improved={item.kind === "Improved"} class:fixed={item.kind === "Fixed"}>{item.kind}</span>
+                    <p>{item.text}</p>
+                  </li>
+                {/each}
+              </ul>
+            </article>
+          {/each}
+        </div>
+      {:else if tab === "plugins"}
         <div class="plugin-hub">
           <div class="plugin-intro">
             <span class="plugin-kicker">MAKRSTUDIO TOOLS</span>
@@ -1904,6 +2012,21 @@
   }
 
   .plugin-hub { max-width: 980px; margin: 0 auto; }
+  .whats-new { max-width: 820px; margin: 0 auto; }
+  .whats-new-intro { margin: 4px 0 18px; }
+  .whats-new-intro h3 { margin: 6px 0; color: var(--text); font-size: 20px; }
+  .whats-new-intro p { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
+  .release-card { margin: 0 0 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+  .release-card header { display: grid; gap: 3px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .release-date { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .release-card h4 { margin: 0; color: var(--text); font-size: 14px; }
+  .release-card ul { display: grid; gap: 10px; margin: 11px 0 0; padding: 0; list-style: none; }
+  .release-card li { display: grid; grid-template-columns: 68px minmax(0, 1fr); align-items: start; gap: 9px; }
+  .change-kind { display: inline-flex; justify-content: center; padding: 3px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); font-size: 9px; font-weight: 700; }
+  .change-kind.new { border-color: var(--semantic-live-border); background: var(--semantic-live-bg); color: var(--accent); }
+  .change-kind.improved { color: var(--text); }
+  .change-kind.fixed { border-color: rgba(232, 174, 113, .4); background: rgba(232, 174, 113, .08); color: #e8ae71; }
+  .release-card li p { margin: 1px 0 0; color: var(--text-dim); font-size: 11px; line-height: 1.5; }
   .plugin-intro { margin: 4px 0 20px; }
   .plugin-kicker { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
   .plugin-intro h3 { margin: 6px 0; color: var(--text); font-size: 20px; }

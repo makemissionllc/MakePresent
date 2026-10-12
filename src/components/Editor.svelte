@@ -1,14 +1,15 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { crossfade, fade, slide as slideTransition } from "svelte/transition";
-  import { convertFileSrc } from "@tauri-apps/api/core";
+  import { convertFileSrc, invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { api, subscribeAck, subscribeCountdown, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
 import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, CountdownView, DisplayInfo, Library, LibrarySong, LyricsHit, MediaAsset, Overlay, PlaylistTemplate, RemoteBibleVersion, ScriptureMatch, ServicePreset, Slide, PlaylistItem, Transition } from "../lib/types";
   import { isMedia, isLiveCamera } from "../lib/types";
   import { addCachedMediaSlide } from "../lib/mediaSlide";
+  import { withTimeout } from "../lib/withTimeout";
   import { beginPointerDrag, cancelPointerDrag, type PointerDragPoint } from "../lib/pointerDrag";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
@@ -85,6 +86,13 @@ import {
   let appState = $state<ClientState | null>(null);
   let workspaceLoading = $state(true);
   let workspaceRetry = $state<(() => void) | null>(null);
+  function workspaceReady(node: HTMLElement): void {
+    void tick().then(() => {
+      if (node.isConnected && node.querySelector(".topbar")) {
+        void invoke("report_frontend_status", { message: "editor workspace rendered" }).catch(() => {});
+      }
+    });
+  }
   let selectedId = $state<string | null>(null);
   let selectedItemId = $state<string | null>(null);
   let observedLiveId: string | null | undefined = undefined;
@@ -223,6 +231,13 @@ import {
   let previewVerse = $state<ChapterVerse | null>(null);
   let browseCopyStatus = $state<string | null>(null);
   let scriptureBookmarks = $state<ScriptureBookmark[]>(readScriptureBookmarks());
+  let bookmarkQuery = $state("");
+  const visibleBookmarks = $derived.by(() => {
+    const query = bookmarkQuery.trim().toLocaleLowerCase();
+    return query ? scriptureBookmarks.filter((bookmark) =>
+      `${bookmark.reference} ${bookmark.version ?? ""} ${bookmark.text}`.toLocaleLowerCase().includes(query)
+    ) : scriptureBookmarks;
+  });
   let bookmarksOpen = $state(false);
   let bookmarkStatus = $state<string | null>(null);
   let selectedVerseNumbers = $state<number[]>([]);
@@ -235,6 +250,8 @@ import {
   let browseCollapsed = $state(true);
   let browseLoading = $state(false);
   let browseError = $state<string | null>(null);
+  let browseRetry = $state<(() => void) | null>(null);
+  let browseRequestSeq = 0;
   let biblesFolder = $state<string>("");
   let bibleDownloadOpen = $state(false);
   let remoteBibles = $state<RemoteBibleVersion[]>([]);
@@ -242,8 +259,12 @@ import {
   let remoteBiblesLoaded = $state(false);
   let remoteBibleSearch = $state("");
   let downloadingBibleId = $state<string | null>(null);
+  let failedBibleDownload = $state<RemoteBibleVersion | null>(null);
   let bibleDownloadError = $state<string | null>(null);
   let bibleDownloadMessage = $state<string | null>(null);
+  const visibleRemoteBibles = $derived(remoteBibles.filter((version) =>
+    `${version.englishName ?? ""} ${version.name} ${version.shortName ?? ""} ${version.languageEnglishName ?? version.languageName ?? version.language ?? ""}`
+      .toLowerCase().includes(remoteBibleSearch.trim().toLowerCase())));
 
   // Drag-and-drop state (native HTML5, no library)
   let draggedSlideId = $state<string | null>(null);
@@ -940,9 +961,10 @@ import {
 
   // Scripture browse — FreeShow-inspired full panel
   async function loadBibles(): Promise<void> {
+    browseRetry = () => { void loadBibles(); };
     try {
       browseError = null;
-      const list = await api.listBibles();
+      const list = await withTimeout(api.listBibles(), 15000, "Loading your Bible library took too long. Try again.");
       bibles = list;
       if (!selectedBibleId && list.length > 0) {
         let rememberedId: string | null = null;
@@ -981,6 +1003,7 @@ import {
     if (downloadingBibleId) return;
     downloadingBibleId = version.id;
     bibleDownloadError = null;
+    failedBibleDownload = null;
     bibleDownloadMessage = null;
     try {
       const saved = await api.downloadBibleVersion(version.id);
@@ -995,6 +1018,7 @@ import {
       await loadBooks(saved.id);
       bibleDownloadMessage = `${saved.name} is ready to browse offline.`;
     } catch (e) {
+      failedBibleDownload = version;
       bibleDownloadError = `Could not ${version.source === "bundled" ? "add" : "download"} ${version.englishName || version.name}: ${String(e)}`;
     } finally {
       downloadingBibleId = null;
@@ -1002,28 +1026,36 @@ import {
   }
 
   async function loadBooks(bibleId: string): Promise<void> {
+    const request = ++browseRequestSeq;
+    browseRetry = () => { void loadBooks(bibleId); };
+    bibleBooks = [];
+    selectedBook = null;
+    chapterNumbers = [];
+    selectedChapter = null;
+    chapterVerses = [];
+    verseRangeStart = null;
+    verseRangeEnd = null;
+    previewVerse = null;
+    selectedVerseNumbers = [];
     try {
       browseLoading = true;
       browseError = null;
-      bibleBooks = await api.getBookList(bibleId);
-      selectedBook = null;
-      chapterNumbers = [];
-      selectedChapter = null;
-      chapterVerses = [];
-      verseRangeStart = null;
-      verseRangeEnd = null;
-      previewVerse = null;
-      selectedVerseNumbers = [];
+      const books = await withTimeout(api.getBookList(bibleId), 15000, "Loading Bible books took too long. Try again.");
+      if (request !== browseRequestSeq) return;
+      bibleBooks = books;
     } catch (e) {
-      browseError = String(e);
+      if (request === browseRequestSeq) browseError = String(e);
     } finally {
-      browseLoading = false;
+      if (request === browseRequestSeq) browseLoading = false;
     }
   }
 
   async function loadChaptersForBook(bibleId: string, book: string): Promise<void> {
+    const request = ++browseRequestSeq;
+    browseRetry = () => { void loadChaptersForBook(bibleId, book); };
     selectedBook = book;
     selectedChapter = null;
+    chapterNumbers = [];
     chapterVerses = [];
     verseRangeStart = null;
     verseRangeEnd = null;
@@ -1032,21 +1064,27 @@ import {
     browseLoading = true;
     browseError = null;
     try {
-      const nums = await api.listChapters(bibleId, book);
+      const nums = await withTimeout(api.listChapters(bibleId, book), 15000, "Loading chapters took too long. Try again.");
+      if (request !== browseRequestSeq) return;
       chapterNumbers = nums;
     } catch (e) {
-      browseError = String(e);
-      chapterNumbers = [];
+      if (request === browseRequestSeq) {
+        browseError = String(e);
+        chapterNumbers = [];
+      }
     } finally {
-      browseLoading = false;
+      if (request === browseRequestSeq) browseLoading = false;
     }
   }
 
   async function loadChapterVerses(bibleId: string, book: string, chapter: number): Promise<void> {
+    const request = ++browseRequestSeq;
+    browseRetry = () => { void loadChapterVerses(bibleId, book, chapter); };
     try {
       browseLoading = true;
       browseError = null;
-      const verses = await api.getChapter(bibleId, book, chapter);
+      const verses = await withTimeout(api.getChapter(bibleId, book, chapter), 15000, "Loading this chapter took too long. Try again.");
+      if (request !== browseRequestSeq) return;
       chapterVerses = verses;
       verseRangeStart = verses[0]?.verse ?? null;
       verseRangeEnd = verses[Math.min(1, verses.length - 1)]?.verse ?? null;
@@ -1056,14 +1094,11 @@ import {
       selectedChapter = chapter;
       use("browse");
     } catch (e) {
-      browseError = String(e);
-      chapterVerses = [];
-      verseRangeStart = null;
-      verseRangeEnd = null;
-      previewVerse = null;
-      selectedVerseNumbers = [];
+      if (request === browseRequestSeq) {
+        browseError = String(e);
+      }
     } finally {
-      browseLoading = false;
+      if (request === browseRequestSeq) browseLoading = false;
     }
   }
 
@@ -1087,6 +1122,14 @@ import {
   function onBrowseChapterSelect(ch: number): void {
     if (!selectedBibleId || !selectedBook) return;
     void loadChapterVerses(selectedBibleId, selectedBook, ch);
+  }
+
+  function navigateBrowseChapter(direction: -1 | 1): void {
+    if (browseLoading || selectedChapter == null) return;
+    const index = chapterNumbers.indexOf(selectedChapter);
+    if (index < 0) return;
+    const chapter = chapterNumbers[index + direction];
+    if (chapter != null) onBrowseChapterSelect(chapter);
   }
 
   function insertBrowseVerse(v: ChapterVerse): void {
@@ -1215,7 +1258,14 @@ import {
     if (verses.length === 0) return null;
     const bible = bibles.find((item) => item.id === selectedBibleId);
     const version = bible?.shortName?.trim() || bible?.name?.trim();
-    const verseRef = verses.map((verse) => verse.verse).join(", ");
+    const groups: string[] = [];
+    for (let i = 0; i < verses.length; i++) {
+      const start = verses[i].verse;
+      let end = start;
+      while (i + 1 < verses.length && verses[i + 1].verse === end + 1) end = verses[++i].verse;
+      groups.push(start === end ? String(start) : `${start}–${end}`);
+    }
+    const verseRef = groups.join(", ");
     return {
       reference: `${selectedBook} ${selectedChapter}:${verseRef}${version ? ` · ${version}` : ""}`,
       body: verses.map((verse) => `${verse.verse}. ${verse.text}`).join("\n"),
@@ -1225,6 +1275,11 @@ import {
   function addSelectedVerses(): void {
     const passage = getSelectedChapterPassage();
     if (passage) void run(() => api.addSlide(passage.reference, passage.body, undefined, "scripture"));
+  }
+
+  function copySelectedVerses(): void {
+    const passage = getSelectedChapterPassage();
+    if (passage) void copyBrowseText(passage.reference, passage.body, "Selected verses copied.");
   }
 
   function addVerseTextResult(match: ScriptureMatch): void {
@@ -2717,6 +2772,10 @@ import {
       cancelPointerDrag();
       window.removeEventListener("keydown", handleGlobalKeydown);
       if (scriptureTimer) clearTimeout(scriptureTimer);
+      if (verseTextTimer) clearTimeout(verseTextTimer);
+      verseTextSeq++;
+      scriptureSeq++;
+      browseRequestSeq++;
       if (nameTimer) clearTimeout(nameTimer);
       if (titleTimer) clearTimeout(titleTimer);
       if (bodyTimer) clearTimeout(bodyTimer);
@@ -2739,7 +2798,7 @@ import {
     {/if}
   </div>
 {:else}
-<div class="shell">
+<div class="shell" use:workspaceReady>
   <header class="topbar">
     <h1><BrandLockup /></h1>
     <span class="project-name">{project?.name ?? "No view"}</span>
@@ -4000,8 +4059,14 @@ import {
                       {#if scriptureBookmarks.length === 0}
                         <p class="bookmark-empty">Save a verse or passage to keep it here.</p>
                       {:else}
+                        <input class="bookmark-search" type="search" bind:value={bookmarkQuery} aria-label="Search Scripture bookmarks" placeholder="Find a reference, translation, or phrase" />
+                        <p class="bookmark-empty" role="status">{visibleBookmarks.length} of {scriptureBookmarks.length} bookmarks</p>
+                        {#if visibleBookmarks.length === 0}
+                          <p class="bookmark-empty">No bookmarks match “{bookmarkQuery.trim()}”.</p>
+                          <button class="bookmark-remove" onclick={() => (bookmarkQuery = "")}>Clear search</button>
+                        {/if}
                         <div class="scripture-bookmark-list">
-                          {#each scriptureBookmarks as bookmark (bookmark.id)}
+                          {#each visibleBookmarks as bookmark (bookmark.id)}
                             <article class="scripture-bookmark">
                               <strong>{bookmark.reference}</strong>
                               <p>{bookmark.text}</p>
@@ -4024,9 +4089,15 @@ import {
                       <div class="bible-download-panel">
                         <p>Choose a translation to download to this device. Check its license before using it publicly.</p>
                         <input class="bible-version-search" type="search" bind:value={remoteBibleSearch} placeholder="Search by name or language" aria-label="Search Bible versions" />
+                        {#if bibleDownloadError && remoteBiblesLoaded}
+                          <p class="browse-error" role="alert">{bibleDownloadError}</p>
+                          {#if failedBibleDownload}
+                            <button class="bible-retry" disabled={downloadingBibleId !== null} onclick={() => { if (failedBibleDownload) void downloadBible(failedBibleDownload); }}>Retry this version</button>
+                          {/if}
+                        {/if}
                         {#if remoteBiblesLoading}
                           <p class="bible-download-state" role="status">Connecting to the free Bible catalog…</p>
-                        {:else if bibleDownloadError}
+                        {:else if bibleDownloadError && !remoteBiblesLoaded}
                           <p class="browse-error" role="alert">{bibleDownloadError}</p>
                           <button class="bible-retry" onclick={() => { remoteBiblesLoaded = false; void loadRemoteBibleCatalog(); }}>Try again</button>
                         {:else if !remoteBiblesLoaded}
@@ -4034,11 +4105,13 @@ import {
                         {:else if remoteBibles.length === 0}
                           <p class="bible-download-state" role="status">The catalog returned no downloadable versions. Check your connection and try again.</p>
                           <button class="bible-retry" onclick={() => { remoteBiblesLoaded = false; void loadRemoteBibleCatalog(); }}>Refresh catalog</button>
-                        {:else if remoteBibles.filter((version) => `${version.englishName ?? ""} ${version.name} ${version.shortName ?? ""} ${version.languageEnglishName ?? version.languageName ?? version.language ?? ""}`.toLowerCase().includes(remoteBibleSearch.trim().toLowerCase())).length === 0}
+                        {:else if visibleRemoteBibles.length === 0}
                           <p class="bible-download-state">No versions match that search.</p>
+                          <button class="bible-retry" onclick={() => (remoteBibleSearch = "")}>Clear search</button>
                         {:else}
+                          <p class="bible-download-state" role="status">{visibleRemoteBibles.length} {visibleRemoteBibles.length === 1 ? "version" : "versions"}{remoteBibleSearch.trim() ? " matching your search" : " available"}</p>
                           <div class="bible-version-list">
-                            {#each remoteBibles.filter((version) => `${version.englishName ?? ""} ${version.name} ${version.shortName ?? ""} ${version.languageEnglishName ?? version.languageName ?? version.language ?? ""}`.toLowerCase().includes(remoteBibleSearch.trim().toLowerCase())) as version (version.id)}
+                            {#each visibleRemoteBibles as version (version.id)}
                               {@const installed = bibles.some((bible) => bible.id === `downloaded:${version.id}`)}
                               <article class="bible-version-row">
                                 <div class="bible-version-copy">
@@ -4060,7 +4133,10 @@ import {
                     {/if}
                   </section>
                   {#if browseError}
-                    <p class="browse-error">{browseError}</p>
+                    <p class="browse-error" role="alert">{browseError}</p>
+                    {#if browseRetry}
+                      <button class="bible-retry" disabled={browseLoading} onclick={() => browseRetry?.()}>Retry Scripture loading</button>
+                    {/if}
                   {/if}
                   <div class="browse-books">
                     {#each bibleBooks as book}
@@ -4114,6 +4190,8 @@ import {
                     {/if}
                   {:else if chapterVerses.length > 0}
                     <div class="browse-range-tools">
+                      <button class="browse-range-add" disabled={browseLoading || selectedChapter === chapterNumbers[0]} onclick={() => navigateBrowseChapter(-1)} aria-label="Previous Scripture chapter">← Previous chapter</button>
+                      <button class="browse-range-add" disabled={browseLoading || selectedChapter === chapterNumbers.at(-1)} onclick={() => navigateBrowseChapter(1)} aria-label="Next Scripture chapter">Next chapter →</button>
                       <label>From <input type="number" min="1" max={chapterVerses.at(-1)?.verse ?? 1} bind:value={verseRangeStart} aria-label="First verse in range" /></label>
                       <label>To <input type="number" min="1" max={chapterVerses.at(-1)?.verse ?? 1} bind:value={verseRangeEnd} aria-label="Last verse in range" /></label>
                       <button class="browse-range-add" onclick={insertBrowseRange}>Add range</button>
@@ -4122,7 +4200,9 @@ import {
                       <button class="browse-range-add" onclick={insertBrowseChapter}>Add chapter</button>
                       {#if selectedVerseNumbers.length > 0}
                         <button class="browse-range-add" onclick={addSelectedVerses}>Add selected ({selectedVerseNumbers.length})</button>
+                        <button class="browse-range-add" onclick={copySelectedVerses}>Copy selected</button>
                         <button class="browse-range-add" onclick={bookmarkSelectedVerses}>Bookmark selected</button>
+                        <button class="browse-range-add" onclick={() => (selectedVerseNumbers = [])}>Clear selection</button>
                       {/if}
                     </div>
                     {#if verseRangeError}<p class="browse-range-error" role="alert">{verseRangeError}</p>{/if}
@@ -5786,6 +5866,7 @@ import {
   .bookmark-empty { margin: 6px 9px; color: var(--text-dim); font-size: 10px; }
   .bookmark-status-inline { margin: 0; color: var(--accent); font-size: 10px; }
   .scripture-bookmark-list { max-height: 170px; overflow-y: auto; border-top: 1px solid var(--border); }
+  .bookmark-search { width: calc(100% - 18px); margin: 8px 9px 0; padding: 8px; box-sizing: border-box; font: inherit; font-size: 11px; }
   .scripture-bookmark { padding: 8px 9px; border-bottom: 1px solid var(--border); }
   .scripture-bookmark:last-child { border-bottom: 0; }
   .scripture-bookmark strong { color: var(--accent); font-size: 10px; }

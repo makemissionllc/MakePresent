@@ -44,6 +44,7 @@
   function useQuery(value: string): void {
     if (debounce) clearTimeout(debounce);
     debounce = null;
+    activeIndex = -1;
     query = value;
     scriptureResults = [];
     mediaResults = [];
@@ -54,6 +55,8 @@
     inputEl?.focus();
   }
   let inputEl = $state<HTMLInputElement | null>(null);
+  let paletteEl = $state<HTMLDivElement | null>(null);
+  let activeIndex = $state(-1);
   let scriptureResults = $state<ScriptureMatch[]>([]);
   let scriptureTranslation = $state("KJV");
   let mediaResults = $state<MediaAsset[]>([]);
@@ -95,7 +98,15 @@
       if (!chapters.has(key)) chapters.set(key, withTimeout(api.getChapter(bible.id, match.book, match.chapter), 15000, "The selected Bible chapter could not be loaded. Retry search or choose another translation in Scripture."));
     }
     const loaded = new Map<string, ChapterVerse[]>();
-    await Promise.all([...chapters].map(async ([key, promise]) => loaded.set(key, await promise)));
+    // Fault tolerance: one slow/failing chapter must not discard the other
+    // matches, so each chapter settles independently.
+    await Promise.all([...chapters].map(async ([key, promise]) => {
+      try {
+        loaded.set(key, await promise);
+      } catch {
+        loaded.set(key, []);
+      }
+    }));
     return matches.flatMap((match) => {
       const verse = loaded.get(`${match.book}:${match.chapter}`)?.find((item) => item.verse === match.verse);
       return verse ? [{ ...match, text: verse.text, translation }] : [];
@@ -152,6 +163,7 @@
   function onInput(e: Event): void {
     const v = (e.target as HTMLInputElement).value;
     query = v;
+    activeIndex = -1;
     seq++;
     errorMsg = null;
     scriptureResults = [];
@@ -282,6 +294,27 @@
     if (e.key === "Escape") {
       e.preventDefault();
       onClose();
+      return;
+    }
+    // Quality of life: move through every visible result with the keyboard.
+    if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter") {
+      const buttons = paletteEl
+        ? Array.from(paletteEl.querySelectorAll<HTMLButtonElement>(".result-list .result:not(:disabled)"))
+        : [];
+      if (!buttons.length) return;
+      if (e.key === "Enter") {
+        if (document.activeElement === inputEl && activeIndex >= 0 && activeIndex < buttons.length) {
+          e.preventDefault();
+          buttons[activeIndex]?.click();
+        }
+        return;
+      }
+      e.preventDefault();
+      activeIndex =
+        e.key === "ArrowDown"
+          ? (activeIndex + 1) % buttons.length
+          : (activeIndex - 1 + buttons.length) % buttons.length;
+      buttons[activeIndex]?.focus();
     }
   }
 
@@ -294,6 +327,7 @@
   <div class="overlay" role="presentation" transition:veil={{ duration: 170 }}>
     <button class="backdrop" aria-label="Close search" tabindex="-1" onclick={onBackdropClick}></button>
     <div
+      bind:this={paletteEl}
       class="palette"
       role="dialog"
       aria-modal="true"
@@ -455,6 +489,7 @@
       </div>
 
       <footer class="palette-foot">
+        <span>↑↓ Navigate results</span>
         <span>↵ Insert into playlist</span>
         <span>Esc Close</span>
         <span>Ctrl+K Reopen</span>

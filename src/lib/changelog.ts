@@ -13,6 +13,18 @@ export interface ChangeLogRelease {
 export const CHANGELOG: ChangeLogRelease[] = [
   {
     date: "October 12, 2026",
+    title: "Faster search navigation and steadier renderers",
+    items: [
+      { kind: "New", text: "Move through every search result with ↑ and ↓, then press Enter to add the highlighted song, verse, or media. The search footer lists the keys." },
+      { kind: "New", text: "Scripture suggestions rank intelligently: exact references first, then prefix and word matches with tolerance for small typos, then verse-text matches." },
+      { kind: "Fixed", text: "Output and Stage cancel their pending transition frames on close and ignore late callbacks, so teardown never touches released state." },
+      { kind: "Fixed", text: "Scripture lookups fetch at most six chapters with a 15-second limit each, and one failing chapter no longer discards the other matches." },
+      { kind: "Improved", text: "Settings opens search directly instead of simulating a Ctrl+K keypress, removing a fragile timed step. The Stage next-slide text announces politely for screen readers." },
+      { kind: "Fixed", text: "Playlist drag's click suppressor releases automatically even if its cleanup timer never runs." },
+    ],
+  },
+  {
+    date: "October 12, 2026",
     title: "Smarter song layout and safer arrangement editing",
     items: [
       { kind: "New", text: "Song Editor has Undo for the last arrangement change: layout, reorder, duplicate, remove, or alignment. Undo keeps only one snapshot and clears when lyrics or the line limit change." },

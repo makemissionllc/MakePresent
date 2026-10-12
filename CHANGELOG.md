@@ -2,6 +2,24 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
+## 2026-10-12 — Faster search navigation and steadier renderers
+
+### Added
+
+- Global search keyboard navigation: `↑`/`↓` moves through every result, `Enter` adds the highlighted song, verse, or media.
+- Intelligent Scripture ranking: exact references first, then prefix and word matches with tolerance for small typos, then verse-text matches.
+
+### Improved
+
+- Settings opens search directly instead of simulating a `Ctrl+K` keypress after a timeout.
+- Stage next-slide text announces politely for screen readers.
+
+### Fixed
+
+- Output and Stage cancel pending transition frames on teardown and ignore late callbacks.
+- Scripture chapter fan-out is bounded to six chapters with a 15-second limit each; one failing chapter no longer discards the other matches. Global search chapter failures are isolated per chapter.
+- Playlist drag click suppression auto-releases via `once`, even if its fallback timer never runs.
+
 ## 2026-10-12 — Smarter song layout and safer arrangement editing
 
 ### Added

@@ -51,6 +51,8 @@
   let currentTransitionStarted = $state(false);
   let currentCrossfading = $state(false);
   let currentFadeTimer: number | undefined;
+  let currentFrame: number | undefined;
+  let stageDisposed = false;
 
   $effect(() => {
     const incoming = current;
@@ -71,7 +73,10 @@
       currentInOpacity = selectedTransition === "fade" ? 0 : 1;
       currentCrossfading = true;
       void document.body.offsetWidth;
-      requestAnimationFrame(() => {
+      if (currentFrame !== undefined) cancelAnimationFrame(currentFrame);
+      currentFrame = requestAnimationFrame(() => {
+        currentFrame = undefined;
+        if (stageDisposed) return;
         currentTransitionStarted = true;
         if (currentTransition === "fade") {
           currentOutOpacity = 0;
@@ -152,8 +157,11 @@
     ackTimer = window.setInterval(ack, ACK_MS);
 
     return () => {
+      stageDisposed = true;
       listeners.dispose();
       window.clearTimeout(currentFadeTimer);
+      if (currentFrame !== undefined) cancelAnimationFrame(currentFrame);
+      currentFrame = undefined;
       if (clock !== undefined) window.clearInterval(clock);
       if (ackTimer !== undefined) window.clearInterval(ackTimer);
     };
@@ -189,7 +197,7 @@
       {#if next}
         {#key next.id}
           <div class="next-body-wrap" use:fitText transition:fade={{ duration: prefersReducedMotion() ? 0 : 180 }}>
-            <p class="next-body" data-role="body">{stripChords(next.body) || stripChords(next.title)}</p>
+            <p class="next-body" data-role="body" aria-live="polite">{stripChords(next.body) || stripChords(next.title)}</p>
           </div>
         {/key}
       {:else}

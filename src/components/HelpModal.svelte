@@ -70,8 +70,8 @@
       <div class="section-title">Scripture bookmarks</div>
       <p class="muted">In Scripture, open Browse Scripture → Bookmarks. Search by reference, translation, or words from the passage, then choose Add slide. Selected verses use compact references such as John 3:16–18, 20.</p>
       <div class="section-title">Find content faster</div>
-      <p class="muted">Press Ctrl+K (⌘K on Mac). Song results put matching titles first, tolerate small spelling mistakes, and also find lyric phrases. The match label explains each result. Choose a result to add it; searches used to add content appear under Recent searches next time. Clear history removes the saved list from this device.</p>
-      <p class="muted">Use Clear to start another search, or Escape to close search from any control. If a Bible cannot be read, Retry search or choose a different translation in Scripture; library songs and available media stay usable.</p>
+      <p class="muted">Press Ctrl+K (⌘K on Mac). Song results put matching titles first, tolerate small spelling mistakes, and also find lyric phrases. Scripture suggestions rank exact references first, then prefix and word matches, tolerating small typos before falling back to verse text.</p>
+      <p class="muted">In the search window, press ↑ and ↓ to move through every result and Enter to add the highlighted one. Use Clear to start another search, or Escape to close search from any control. If a Bible cannot be read, Retry search or choose a different translation in Scripture; library songs and available media stay usable.</p>
       <div class="section-title">Prepare a song</div>
       <p class="muted">In Song Editor, paste or find lyrics, choose Lines/slide, then try Smart layout. It balances text length and favors phrase endings while keeping lyric order and section groups. Review the preview before Add Song. Undo restores the last layout, reorder, duplicate, removal, or alignment change.</p>
       <p class="muted">Renaming the song keeps your arrangement. All slides alignment controls apply to every slide; the buttons on each preview card adjust just that slide. Editing the lyrics or line limit rebuilds the preview and clears arrangement Undo.</p>
@@ -81,7 +81,7 @@
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span> Search songs, Bibles &amp; media <span class="muted">(⌘K on Mac)</span></li>
         <li><span class="keys"><kbd>?</kbd></span> Open or close this shortcut guide</li>
         <li><span class="keys"><kbd>Esc</kbd></span> Close search, tour, or dialog</li>
-        <li><span class="keys"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></span> Pick a Scripture suggestion</li>
+        <li><span class="keys"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></span> Pick a Scripture suggestion or a search result</li>
         <li><span class="keys"><kbd>Enter</kbd> / <kbd>Esc</kbd></span> Confirm / cancel a dialog</li>
       </ul>
       <p class="muted">

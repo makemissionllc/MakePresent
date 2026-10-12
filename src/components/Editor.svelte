@@ -10,6 +10,7 @@ import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, Count
   import { isMedia, isLiveCamera } from "../lib/types";
   import { addCachedMediaSlide } from "../lib/mediaSlide";
   import { withTimeout } from "../lib/withTimeout";
+  import { rankScriptureMatches } from "../lib/scriptureRank";
   import { beginPointerDrag, cancelPointerDrag, type PointerDragPoint } from "../lib/pointerDrag";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
@@ -863,18 +864,31 @@ import {
     const bibleId = selectedBibleId;
     const bible = bibles.find((item) => item.id === bibleId);
     const translation = bible?.shortName?.trim() || bible?.name?.trim() || "KJV";
-    if (!bibleId) return references.map((match) => ({ ...match, translation }));
-
+    if (!bibleId) return rankScriptureMatches(references.map((match) => ({ ...match, translation })), query);
+    // Fault tolerance: bound the chapter fan-out and time-box each fetch so
+    // one slow book cannot stall the whole suggestion list.
+    const ranked = rankScriptureMatches(references, query, 24);
     const chapters = new Map<string, Promise<ChapterVerse[]>>();
-    for (const match of references) {
+    for (const match of ranked) {
       const key = `${match.book}:${match.chapter}`;
       if (!chapters.has(key)) {
-        chapters.set(key, api.getChapter(bibleId, match.book, match.chapter).catch(() => []));
+        if (chapters.size >= 6) break;
+        chapters.set(key, withTimeout(
+          api.getChapter(bibleId, match.book, match.chapter),
+          15000,
+          "The selected Bible chapter could not be loaded. Retry search or choose another translation in Scripture.",
+        ).catch(() => [] as ChapterVerse[]));
       }
     }
     const loaded = new Map<string, ChapterVerse[]>();
-    await Promise.all([...chapters].map(async ([key, promise]) => loaded.set(key, await promise)));
-    return references.flatMap((match) => {
+    await Promise.all([...chapters].map(async ([key, promise]) => {
+      try {
+        loaded.set(key, await promise);
+      } catch {
+        loaded.set(key, []);
+      }
+    }));
+    return ranked.flatMap((match) => {
       const verse = loaded.get(`${match.book}:${match.chapter}`)?.find((item) => item.verse === match.verse);
       return verse ? [{ ...match, text: verse.text, translation }] : [];
     });
@@ -4336,7 +4350,7 @@ import {
 {/if}
 
 {#if settingsOpen}
-  <SettingsPanel app={appState} onUpdate={(s) => appState = s} onclose={() => (settingsOpen = false)} onBrowseMedia={() => openSourceTab("media")} />
+  <SettingsPanel app={appState} onUpdate={(s) => appState = s} onclose={() => (settingsOpen = false)} onBrowseMedia={() => openSourceTab("media")} onOpenSearch={() => (globalSearchOpen = true)} />
 {/if}
 
 <SongEditorModal

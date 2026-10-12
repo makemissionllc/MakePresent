@@ -27,6 +27,8 @@
   let appState = $state<ClientState | null>(null);
   let countdown = $state<CountdownView>({ active: false, running: false, remainingSeconds: 0, outputVisible: false, mode: null, targetTime: null });
   let timer: number | undefined;
+  let frame: number | undefined;
+  let rendererDisposed = false;
   // Exit/outro animation (real Quit only): full-bleed video URL once the
   // backend emits `exit-outro`. Null = normal rendering. The backend's hard
   // cap guarantees shutdown, so this overlay can never stall the exit — and
@@ -123,7 +125,10 @@
       crossfading = true;
       // Force style recompute so both transitions start from a clean state.
       void document.body.offsetWidth;
-      requestAnimationFrame(() => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        if (rendererDisposed) return;
         transitionStarted = true;
         if (activeTransition === "fade") {
           outOpacity = 0;
@@ -183,8 +188,11 @@
     })();
     ackTimer = window.setInterval(ack, ACK_MS);
     return () => {
+      rendererDisposed = true;
       listeners.dispose();
       window.clearTimeout(timer);
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = undefined;
       if (ackTimer !== undefined) window.clearInterval(ackTimer);
       leaving = null;
       inOpacity = 1;

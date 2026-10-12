@@ -70,10 +70,11 @@ function finish(event: PointerEvent): void {
     const suppressClick = (click: MouseEvent) => {
       click.preventDefault();
       click.stopImmediatePropagation();
-      drag.source.removeEventListener("click", suppressClick, true);
     };
-    drag.source.addEventListener("click", suppressClick, true);
-    window.setTimeout(() => drag.source.removeEventListener("click", suppressClick, true), 0);
+    // `once` lets the browser release the listener even if the fallback
+    // timer below never runs (teardown/unload), fixing a listener leak.
+    drag.source.addEventListener("click", suppressClick, { capture: true, once: true });
+    window.setTimeout(() => drag.source.removeEventListener("click", suppressClick, true), 50);
     const point = { x: event.clientX, y: event.clientY };
     drag.callbacks.onDrop(drag.payload, point, document.elementFromPoint(point.x, point.y));
   }

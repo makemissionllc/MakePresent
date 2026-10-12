@@ -52,10 +52,11 @@
     app: ClientState | null;
     onclose: () => void;
     onBrowseMedia?: () => void;
+    onOpenSearch?: () => void;
     onUpdate?: (s: ClientState) => void;
   }
 
-  let { app: appState, onclose, onBrowseMedia = () => {}, onUpdate = () => {} }: Props = $props();
+  let { app: appState, onclose, onBrowseMedia = () => {}, onOpenSearch, onUpdate = () => {} }: Props = $props();
 
   let tab = $state<SettingsTab>(readLastSettingsTab());
   let status = $state<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -967,10 +968,12 @@
   }
 
   function openGlobalSearch(): void {
+    // Simplified workflow: open search directly instead of synthesizing a
+    // Ctrl+K keypress after a timeout (no stray timer, no missed shortcut).
+    const openSearch = onOpenSearch;
     onclose();
-    window.setTimeout(() => window.dispatchEvent(new KeyboardEvent("keydown", {
-      key: "k", ctrlKey: true, bubbles: true,
-    })), 0);
+    if (openSearch) openSearch();
+    else window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
   }
 
 </script>

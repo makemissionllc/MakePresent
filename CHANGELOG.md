@@ -2,6 +2,23 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
+## 2026-10-12 — Duplicate warnings and steadier downloads
+
+### Added
+
+- Song Editor duplicate guard: adding a song whose title closely matches one already in the library shows the closest match and asks for a second press to add it anyway.
+- Intelligent duplicate comparison: exact and overlapping titles first, then same-word, typo-tolerant, and mostly-shared-word matches.
+
+### Improved
+
+- Settings → Audio shows a scanning state while listing outputs; the MIDI empty state explains how to get a device listed.
+- Camera picker empty state needs one press (`Enable camera access & find cameras`) instead of two, and camera buttons disable while busy.
+
+### Fixed
+
+- Renaming a Look cancels its pending focus callback on teardown instead of focusing a removed input.
+- Bible catalog loads are bounded at 15 seconds and downloads at 2 minutes with retry guidance; a frozen audio track position surfaces a reconnect hint after repeated failures.
+
 ## 2026-10-12 — Faster search navigation and steadier renderers
 
 ### Added

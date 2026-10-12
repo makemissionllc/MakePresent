@@ -5,6 +5,7 @@
   import { smartSongLayout } from "../lib/smartSongLayout";
   import { api } from "../lib/sync";
   import { formatImportedLyrics } from "../lib/lyrics";
+  import { findDuplicateSongs } from "../lib/duplicateSongs";
   import type { LyricsHit, LyricsRecord } from "../lib/types";
   import { parseToSongSlides, type SongSlide, type VAlign, type HAlign } from "../lib/parser";
 
@@ -13,11 +14,12 @@
     initialTitle?: string;
     initialBody?: string;
     initialLyricsId?: number | null;
+    existingTitles?: string[];
     onConfirm: (title: string, slides: { title: string; body: string; positioning?: { vAlign: VAlign; hAlign: HAlign }; groupId?: string; groupLabel?: string }[], raw: string, details: { author: string; copyright: string; ccliNumber: string; showCreditLine: boolean }) => void;
     onCancel: () => void;
   }
 
-  let { open, initialTitle = "", initialBody = "", initialLyricsId = null, onConfirm, onCancel }: Props = $props();
+  let { open, initialTitle = "", initialBody = "", initialLyricsId = null, existingTitles = [], onConfirm, onCancel }: Props = $props();
 
   const TAGS = [
     "Verse",
@@ -231,6 +233,15 @@
   const effectiveTitle = $derived(parsedMeta.metadata.title || songTitle || "Untitled");
   const hasTitle = $derived(Boolean(songTitle.trim() || parsedMeta.metadata.title?.trim()));
 
+  // Intelligent duplicate guard: warn when the title closely matches a song
+  // already in the library. First confirm arms the warning; second adds anyway.
+  const duplicateHits = $derived(hasTitle ? findDuplicateSongs(effectiveTitle, existingTitles) : []);
+  let duplicateAck = $state(false);
+  $effect(() => {
+    effectiveTitle;
+    duplicateAck = false;
+  });
+
   // Opening a session or changing source lyrics regenerates the preview.
   $effect(() => {
     if (!open) return;
@@ -350,6 +361,11 @@
 
   function handleConfirm(): void {
     if (!hasTitle || editableSlides.length === 0) return;
+    if (duplicateHits.length > 0 && !duplicateAck) {
+      duplicateAck = true;
+      arrangementStatus = null;
+      return;
+    }
     const title = effectiveTitle.trim() || "Untitled";
     const payload = editableSlides.map((s, idx) => {
       const run = groups.find((g) => idx >= g.startIdx && idx < g.startIdx + g.slides.length)!;
@@ -536,8 +552,11 @@
 
       <div class="actions">
         <span class="spacer"></span>
+        {#if duplicateAck && duplicateHits.length > 0}
+          <span class="duplicate-warn" role="alert">Possible duplicate of “{duplicateHits[0].title}” ({duplicateHits[0].reason}). Press Add Song again to add anyway.</span>
+        {/if}
         <button class="ghost" onclick={onCancel}>Cancel</button>
-        <button class="primary" onclick={handleConfirm} disabled={editableSlides.length===0 || !hasTitle}>Add Song · {editableSlides.length} slides</button>
+        <button class="primary" onclick={handleConfirm} disabled={editableSlides.length===0 || !hasTitle}>{duplicateAck && duplicateHits.length > 0 ? "Add Anyway" : `Add Song · ${editableSlides.length} slides`}</button>
       </div>
     </div>
   </div>
@@ -633,7 +652,8 @@
   .align-row button.selected{background:var(--accent); color:white; border-color:var(--accent);}
   .sep{width:1px; height:14px; background:var(--border); margin:0 2px;}
   .drop-line{height:3px; background:var(--accent); border-radius:999px; margin:2px 0;}
-  .actions{display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--border); background:var(--panel); flex-shrink:0;}
+  .actions{display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--border); background:var(--panel); flex-shrink:0; align-items:center;}
+  .duplicate-warn{flex:1; min-width:0; font-size:11px; line-height:1.4; color:var(--semantic-warning, #f7b538);}
   .spacer{flex:1;}
   button{border:1px solid var(--border); border-radius:6px; background:var(--panel-2); color:var(--text); padding:7px 14px; font-size:13px; font-weight:500;}
   button.ghost{background:transparent;}

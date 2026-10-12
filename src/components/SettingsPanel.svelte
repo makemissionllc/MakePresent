@@ -768,6 +768,7 @@
   // --- Audio (backing track) ---
   let audioDevices = $state<AudioDeviceInfo[]>([]);
   let audioDevicesMsg = $state<string | null>(null);
+  let audioDevicesLoading = $state(false);
   let audioVolumeDraft = $state<number>(1.0);
   let audioView = $state<AudioStateView>({
     status: "stopped",
@@ -791,12 +792,22 @@
     if (tab !== "audio" || audioView.status !== "playing") return;
     let cancelled = false;
     let polling = false;
+    let failures = 0;
     const poll = window.setInterval(() => {
       if (polling) return;
       polling = true;
       void api.getAudioState().then((state) => {
-        if (!cancelled) audioView = state;
-      }).catch(() => {}).finally(() => { polling = false; });
+        if (cancelled) return;
+        audioView = state;
+        failures = 0;
+        audioErr = null;
+      }).catch(() => {
+        // Fault tolerance: a frozen position used to fail silently forever.
+        // Surface it after repeated failures instead of spinning quietly.
+        if (cancelled) return;
+        failures++;
+        if (failures >= 3) audioErr = "Could not refresh the track position. Pause and Play to reconnect.";
+      }).finally(() => { polling = false; });
     }, 500);
     return () => {
       cancelled = true;
@@ -880,10 +891,13 @@
   // --- Audio (single backing track, not tied to slides) ---
   async function refreshAudioDevices(): Promise<void> {
     audioDevicesMsg = null;
+    audioDevicesLoading = true;
     try {
       audioDevices = await api.listAudioDevices();
     } catch (e) {
       audioDevicesMsg = String(e);
+    } finally {
+      audioDevicesLoading = false;
     }
   }
 
@@ -1608,7 +1622,7 @@
                 <p class="status err">{midiDevicesMsg}</p>
               {/if}
               {#if !midiDevices.length}
-                <p class="hint">No MIDI input devices detected.</p>
+                <p class="hint">No MIDI input devices detected — plug in a controller, enable MIDI above, then press Refresh.</p>
               {/if}
 
               <div class="monitor">
@@ -1874,8 +1888,10 @@
             {#if audioDevicesMsg}
               <p class="status err">{audioDevicesMsg}</p>
             {/if}
-            {#if audioDevices.length === 0}
-              <p class="hint">No output devices found — check system audio.</p>
+            {#if audioDevicesLoading}
+              <p class="hint" role="status">Scanning for audio outputs…</p>
+            {:else if audioDevices.length === 0}
+              <p class="hint">No output devices found — check system audio, then press Refresh.</p>
             {/if}
           </section>
 

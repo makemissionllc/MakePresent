@@ -74,7 +74,9 @@
       <p class="muted">In the search window, press ↑ and ↓ to move through every result and Enter to add the highlighted one. Use Clear to start another search, or Escape to close search from any control. If a Bible cannot be read, Retry search or choose a different translation in Scripture; library songs and available media stay usable.</p>
       <div class="section-title">Prepare a song</div>
       <p class="muted">In Song Editor, paste or find lyrics, choose Lines/slide, then try Smart layout. It balances text length and favors phrase endings while keeping lyric order and section groups. Review the preview before Add Song. Undo restores the last layout, reorder, duplicate, removal, or alignment change.</p>
-      <p class="muted">Renaming the song keeps your arrangement. All slides alignment controls apply to every slide; the buttons on each preview card adjust just that slide. Editing the lyrics or line limit rebuilds the preview and clears arrangement Undo.</p>
+      <p class="muted">Renaming the song keeps your arrangement. All slides alignment controls apply to every slide; the buttons on each preview card adjust just that slide. Editing the lyrics or line limit rebuilds the preview and clears arrangement Undo. If the title closely matches a song already in your library, the editor warns you and asks for a second Add Song press to add it anyway.</p>
+      <div class="section-title">Bible downloads &amp; audio</div>
+      <p class="muted">Bible catalog loads and downloads have bounded waits: a stalled catalog or download reports an error with Retry instead of spinning forever. In Settings → Audio, the device list shows when it is scanning, and a frozen track position surfaces a reconnect hint after repeated failures.</p>
       <div class="section-title">Keyboard shortcuts</div>
       <ul class="shortcuts">
         <li><span class="keys"><kbd>←</kbd> <kbd>→</kbd></span> Previous / next slide (when not typing)</li>

@@ -83,6 +83,8 @@
   let commitTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingLook: Look | null = null;
   let commitQueue: Promise<void> = Promise.resolve();
+  let renameFrame: number | undefined;
+  let viewDestroyed = false;
 
   function scheduleCommit(updated: Look): void {
     const patch: LookPatch = {
@@ -123,7 +125,12 @@
     pendingLook = null;
     commitLook(updated);
   }
-  onDestroy(flushCommit);
+  onDestroy(() => {
+    viewDestroyed = true;
+    if (renameFrame !== undefined) cancelAnimationFrame(renameFrame);
+    renameFrame = undefined;
+    flushCommit();
+  });
 
   function setDraft(field: keyof Look, value: unknown): void {
     lookErr = null;
@@ -225,7 +232,10 @@
   }
   function focusRename(): void {
     selectedElement = null;
-    requestAnimationFrame(() => {
+    if (renameFrame !== undefined) cancelAnimationFrame(renameFrame);
+    renameFrame = requestAnimationFrame(() => {
+      renameFrame = undefined;
+      if (viewDestroyed) return;
       const input = document.getElementById("look-name-input") as HTMLInputElement | null;
       input?.focus();
       input?.select();

@@ -13,6 +13,17 @@ export interface ChangeLogRelease {
 export const CHANGELOG: ChangeLogRelease[] = [
   {
     date: "October 12, 2026",
+    title: "Duplicate warnings and steadier downloads",
+    items: [
+      { kind: "New", text: "Song Editor warns when a title closely matches a song already in your library, showing the closest match. Press Add Song again to add it anyway." },
+      { kind: "New", text: "Song titles are compared intelligently: exact and overlapping titles first, then same-word and typo-tolerant matches." },
+      { kind: "Fixed", text: "Renaming a Look releases its pending focus callback on close, so teardown never touches a removed input." },
+      { kind: "Improved", text: "Settings → Audio shows when it is scanning for outputs instead of a premature empty message, and MIDI explains how to get a device listed. The camera picker needs one press instead of two when no camera is listed yet." },
+      { kind: "Fixed", text: "Bible catalog loads have a 15-second limit and downloads a 2-minute limit with retry guidance, instead of waiting indefinitely. A frozen audio track position surfaces a reconnect hint." },
+    ],
+  },
+  {
+    date: "October 12, 2026",
     title: "Faster search navigation and steadier renderers",
     items: [
       { kind: "New", text: "Move through every search result with ↑ and ↓, then press Enter to add the highlighted song, verse, or media. The search footer lists the keys." },

@@ -1025,7 +1025,7 @@ import {
     remoteBiblesLoading = true;
     bibleDownloadError = null;
     try {
-      remoteBibles = await api.listRemoteBibleVersions();
+      remoteBibles = await withTimeout(api.listRemoteBibleVersions(), 15000, "Loading free Bible versions took too long. Try again.");
       remoteBiblesLoaded = true;
     } catch (e) {
       bibleDownloadError = `Could not load free Bible versions: ${String(e)}`;
@@ -1041,8 +1041,14 @@ import {
     failedBibleDownload = null;
     bibleDownloadMessage = null;
     try {
-      const saved = await api.downloadBibleVersion(version.id);
-      bibles = await api.listBibles();
+      // Fault tolerance: large downloads get a longer bounded wait instead of
+      // hanging the panel forever; failure still offers Retry this version.
+      const saved = await withTimeout(
+        api.downloadBibleVersion(version.id),
+        120000,
+        `Adding ${version.englishName || version.name} took too long. Check your connection and try again.`,
+      );
+      bibles = await withTimeout(api.listBibles(), 15000, "The Bible library did not respond. Reopen Scripture to refresh.");
       selectedBibleId = saved.id;
       try { window.localStorage.setItem("makrstudio.scripture-bible-id", saved.id); } catch { /* keep the selection for this session */ }
       verseTextQuery = "";
@@ -2090,9 +2096,13 @@ import {
   // Browsers hide device labels until camera permission is granted — one
   // explicit gesture triggers the prompt, then we re-enumerate for names.
   async function enableCameraAccess(): Promise<void> {
+    if (cameraLoading) return;
     cameraLoading = true;
     cameraError = null;
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("unsupported");
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: false,
@@ -2101,7 +2111,7 @@ import {
       await refreshCameras();
     } catch {
       cameraError =
-        "Camera access denied — allow camera access for MakrStudio, then try again.";
+        "Camera access unavailable or denied — allow camera access for MakrStudio, then try again.";
     } finally {
       cameraLoading = false;
     }
@@ -3205,13 +3215,12 @@ import {
                     {/each}
                   </ul>
                   {#if cameraDevices.every((d) => !d.label)}
-                    <button class="ghost" onclick={() => void enableCameraAccess()}>Enable camera access (shows device names)</button>
+                    <button class="ghost" disabled={cameraLoading} onclick={() => void enableCameraAccess()}>Enable camera access (shows device names)</button>
                   {/if}
-                  <button class="ghost" onclick={() => void refreshCameras()}>Refresh</button>
+                  <button class="ghost" disabled={cameraLoading} onclick={() => void refreshCameras()}>Refresh</button>
                 {:else}
                   <div class="camera-actions">
-                    <button class="ghost" onclick={() => void enableCameraAccess()}>Enable camera access</button>
-                    <button class="ghost" onclick={() => void refreshCameras()}>Refresh</button>
+                    <button class="ghost" disabled={cameraLoading} onclick={() => void enableCameraAccess()}>Enable camera access &amp; find cameras</button>
                   </div>
                 {/if}
                 {#if cameraError}
@@ -4358,6 +4367,7 @@ import {
   initialTitle={pendingSongTitle}
   initialBody={pendingSongBody}
   initialLyricsId={pendingLyricsId}
+  existingTitles={library?.songs.map((s) => s.title) ?? []}
   onConfirm={handleSongEditorConfirm}
   onCancel={handleAddSongCancel}
 />

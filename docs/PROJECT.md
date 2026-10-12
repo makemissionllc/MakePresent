@@ -1,5 +1,20 @@
 # MakrStudio (formerly MakePresent) — Living Project Doc
 
+## Changed (2026-10-12) — Smarter search and simpler content selection
+
+- Added `src/lib/songSearch.ts`: a derived local index and deterministic ranking for normalized exact/prefix/title-token, bounded single-edit typo, and lyric matches, with stable ties and explanatory labels. Global Search retains at most eight successful/reviewed queries locally and exposes rerun/clear controls.
+- Fixed dialog-wide Escape handling, duplicate/concurrent search insertions, stale insertion callbacks, silently dropped Bible chapter failures, and permanently cached Bible-list failures. Metadata requests are deferred until needed.
+- Camera startup now checks a shared cancellation signal after discovery and before fallback, captures device identity, and only falls back for missing/unsupported exact devices. Late streams are stopped. Naming dialog focus callbacks are cancelled on teardown.
+- Help, Settings → What’s New, README, and CHANGELOG document this update and retain earlier Scripture, startup recovery, and resource cleanup notes.
+
+## Changed (2026-10-12) — Bookmark search and resource cleanup
+
+- Added bookmark filtering by reference/translation/text with counts and empty-search reset, and compact selected-verse references. Help and Settings → What’s New describe the changes; `CHANGELOG.md` retains all previous feature notes.
+- Fixed pending Look edits being discarded when changing Looks; teardown flushes the pending edit and cancels its timer. Deleting a Look cancels its pending patch.
+- MIDI/NDI registrations use lifecycle cancellation and dispose late listener handles. NDI setup has bounded waits; teardown invalidates setup, stops owned discovery/receiver work, clears polling and preview buffers. Audio/NDI polling prevents overlapping requests.
+- Global search cleans up debounce/focus callbacks and ignores stale responses, with bounded requests and retry feedback. Editor teardown clears verse-search and transient UI timers. Saved bookmark loading rejects invalid/duplicate entries.
+- Output/Stage use a shared listener scope that releases late registrations and ignores post-teardown state responses; startup listeners register independently from initial state loading.
+
 ## Changed (2026-10-12) — Scripture and workflow update
 
 - Diagnosed the native startup freeze as a Svelte duplicate-key error from noncontiguous playlist groups sharing an ID. Startup recovery and subsequent playlist edits now split those groups into unique identities while preserving slide order and item backgrounds/Looks. Added an editor error boundary and local frontend diagnostics. Native renderer logs confirmed the workspace rendered after recovery.

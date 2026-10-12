@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { crossfade, fade, slide as slideTransition } from "svelte/transition";
   import { convertFileSrc, invoke } from "@tauri-apps/api/core";
@@ -47,7 +47,12 @@ import {
     try {
       const saved = window.localStorage.getItem(SCRIPTURE_BOOKMARKS_KEY);
       const parsed = saved ? JSON.parse(saved) : [];
-      return Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.id === "string" && typeof item.reference === "string" && typeof item.text === "string") : [];
+      const seen = new Set<string>();
+      return Array.isArray(parsed) ? parsed.filter((item) => {
+        if (!item || typeof item.id !== "string" || typeof item.reference !== "string" || typeof item.text !== "string" || seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      }) : [];
     } catch {
       return [];
     }
@@ -63,6 +68,22 @@ import {
     "#2b2b3d",
     "#000000",
   ];
+
+  const transientTimers = new Set<ReturnType<typeof setTimeout>>();
+  let editorDisposed = false;
+  function deferUi(callback: () => void, delay: number): void {
+    if (editorDisposed) return;
+    const timer = setTimeout(() => {
+      transientTimers.delete(timer);
+      callback();
+    }, delay);
+    transientTimers.add(timer);
+  }
+  onDestroy(() => {
+    editorDisposed = true;
+    for (const timer of transientTimers) clearTimeout(timer);
+    transientTimers.clear();
+  });
 
   // Pair only the same slide between its grid thumbnail and edit canvas.
   // Unmatched cards stay still; the output window has its own transitions.
@@ -1680,7 +1701,7 @@ import {
       const msg = `Unsupported file type: ${unsupported.join(", ")}. Supported: ${Array.from(ALLOWED_EXTS).join(", ")}`;
       errorMsg = msg;
       externalDragError = msg;
-      setTimeout(() => (externalDragError = null), 6000);
+      deferUi(() => (externalDragError = null), 6000);
       if (paths.length === 0) return;
     } else {
       externalDragError = null;
@@ -1810,7 +1831,7 @@ import {
       const msg = `Unsupported file type: ${unsupported.join(", ")}. Supported: ${Array.from(SONG_EXTS).join(", ")} (ProPresenter .pro, ChordPro .cho, CCLI USR .usr/.txt)`;
       errorMsg = msg;
       libraryDragError = msg;
-      setTimeout(() => (libraryDragError = null), 6000);
+      deferUi(() => (libraryDragError = null), 6000);
       if (songPaths.length === 0) {
         libraryDragActive = false;
         return;
@@ -1834,7 +1855,7 @@ import {
         const msg = String(err);
         errorMsg = msg;
         libraryDragError = msg;
-        setTimeout(() => (libraryDragError = null), 6000);
+        deferUi(() => (libraryDragError = null), 6000);
       }
     }
     libraryDragActive = false;
@@ -3969,7 +3990,7 @@ import {
                       if (scriptureResults.length > 0) scriptureOpen = true;
                     }}
                     onblur={() => {
-                      setTimeout(() => {
+                      deferUi(() => {
                         scriptureOpen = false;
                       }, 150);
                     }}

@@ -13,6 +13,32 @@ export interface ChangeLogRelease {
 export const CHANGELOG: ChangeLogRelease[] = [
   {
     date: "October 12, 2026",
+    title: "Smarter search and simpler content selection",
+    items: [
+      { kind: "New", text: "Recent searches remember up to eight queries used to add content or review lyrics. Choose one to search again, or clear the local history." },
+      { kind: "New", text: "Song search ranks exact titles, title prefixes, matching words, small spelling mistakes, and lyric matches. Accents and punctuation are normalized; match labels explain the results." },
+      { kind: "Improved", text: "Clear resets a search in one click. Song titles are ranked above lyric matches, and local song search works immediately while other sources load." },
+      { kind: "Fixed", text: "Escape closes search and naming dialogs even when focus is on a result or button. Search cannot add multiple items concurrently, and old insertion responses cannot close a newer search." },
+      { kind: "Fixed", text: "A selected Bible read failure now explains the problem and offers Retry search instead of silently showing no verses. Failed Bible-list lookups can be retried." },
+      { kind: "Fixed", text: "Closing a camera preview cancels pending discovery and prevents fallback capture from starting afterward. Permission failures no longer trigger a second camera request. Closing a naming dialog cancels scheduled focus work." },
+    ],
+  },
+  {
+    date: "October 12, 2026",
+    title: "Bookmark search and resource cleanup",
+    items: [
+      { kind: "New", text: "Search saved Scripture bookmarks by reference, translation, or passage text. The list shows matching counts and a Clear search action." },
+      { kind: "Improved", text: "Selected Scripture verses use compact references such as John 3:16–18, 20 when adding, copying, or bookmarking a passage." },
+      { kind: "Fixed", text: "Switching Looks or closing Settings saves the pending style edit instead of silently dropping it. Deleting a Look cancels its pending edit." },
+      { kind: "Fixed", text: "MIDI and NDI listeners that finish connecting after Settings closes are released. Monitor startup can be cancelled, and its polling and preview frames are cleared on close." },
+      { kind: "Fixed", text: "Output and Stage release late event registrations during renderer teardown, and optional listener setup no longer blocks their initial state request." },
+      { kind: "Improved", text: "NDI startup and global search have loading limits. Failed searches offer Retry search, and audio/NDI polling avoids overlapping requests." },
+      { kind: "Fixed", text: "Closing search or rebuilding the editor cancels pending search and interface timers, releases scheduled focus work, and ignores stale responses." },
+      { kind: "Fixed", text: "Duplicate or malformed saved bookmark entries are skipped on load so they cannot crash the bookmark list." },
+    ],
+  },
+  {
+    date: "October 12, 2026",
     title: "Scripture and workspace improvements",
     items: [
       { kind: "Fixed", text: "Recovered playlists with separated groups sharing an ID now open correctly. Moving or adding slides preserves unique groups and their backgrounds and Looks." },

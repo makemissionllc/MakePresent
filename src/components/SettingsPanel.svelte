@@ -208,6 +208,11 @@
 
   function deleteLook(): void {
     if (!activeLook) return;
+    if (pendingLookCommit?.id === activeLook.id) {
+      if (commitTimer) clearTimeout(commitTimer);
+      commitTimer = null;
+      pendingLookCommit = null;
+    }
     lookErr = null;
     void api
       .deleteLook(activeLook.id)
@@ -784,10 +789,13 @@
   $effect(() => {
     if (tab !== "audio" || audioView.status !== "playing") return;
     let cancelled = false;
+    let polling = false;
     const poll = window.setInterval(() => {
+      if (polling) return;
+      polling = true;
       void api.getAudioState().then((state) => {
         if (!cancelled) audioView = state;
-      }).catch(() => {});
+      }).catch(() => {}).finally(() => { polling = false; });
     }, 500);
     return () => {
       cancelled = true;
@@ -1010,7 +1018,7 @@
             <h3>What’s new</h3>
             <p>Recent features and fixes, collected in one place.</p>
           </div>
-          {#each CHANGELOG as release (release.date)}
+          {#each CHANGELOG as release (`${release.date}:${release.title}`)}
             <article class="release-card">
               <header>
                 <span class="release-date">{release.date}</span>

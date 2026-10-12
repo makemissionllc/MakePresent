@@ -32,7 +32,7 @@
     return `Camera unavailable (${name}): ${err?.message ?? String(e)}`;
   }
 
-  async function openStream(signal: { cancelled: boolean }): Promise<MediaStream> {
+  async function openStream(signal: { cancelled: boolean }, id: string | null | undefined, name: string): Promise<MediaStream> {
     if (!navigator.mediaDevices?.getUserMedia || !navigator.mediaDevices?.enumerateDevices)
       throw { name: "NotSupportedError", message: "this window cannot capture cameras" };
     // Prefer the exact device id; fall back to label (ids can rotate across
@@ -41,11 +41,12 @@
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const cams = devices.filter((d) => d.kind === "videoinput");
-      if (deviceId && cams.some((c) => c.deviceId === deviceId)) exact = deviceId;
-      else if (label) exact = cams.find((c) => c.label === label)?.deviceId;
+      if (id && cams.some((c) => c.deviceId === id)) exact = id;
+      else if (name) exact = cams.find((c) => c.label === name)?.deviceId;
     } catch {
       // Enumeration failed — still try the default camera below.
     }
+    if (signal.cancelled) throw new DOMException("Camera request cancelled", "AbortError");
     const constraints = (id: string | undefined): MediaStreamConstraints =>
       id
         ? { video: { deviceId: { exact: id } }, audio: false }
@@ -55,7 +56,10 @@
     } catch (e) {
       // Exact match failed (device unplugged since selection) — one retry on
       // the default camera before surfacing an error.
-      if (exact) return await navigator.mediaDevices.getUserMedia(constraints(undefined));
+      const errorName = (e as { name?: string })?.name;
+      if (!signal.cancelled && exact && (errorName === "NotFoundError" || errorName === "OverconstrainedError")) {
+        return await navigator.mediaDevices.getUserMedia(constraints(undefined));
+      }
       throw e;
     }
   }
@@ -64,16 +68,14 @@
     // Track device identity so re-selecting a camera restarts the stream.
     const id = deviceId;
     const name = label;
-    void id;
-    void name;
-    let cancelled = false;
+    const signal = { cancelled: false };
     let stream: MediaStream | null = null;
     live = false;
     error = null;
     void (async () => {
       try {
-        stream = await openStream({ cancelled });
-        if (cancelled) {
+        stream = await openStream(signal, id, name);
+        if (signal.cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
@@ -81,13 +83,13 @@
           videoEl.srcObject = stream;
           await videoEl.play().catch(() => {});
         }
-        if (!cancelled) live = true;
+        if (!signal.cancelled) live = true;
       } catch (e) {
-        if (!cancelled) error = describe(e);
+        if (!signal.cancelled) error = describe(e);
       }
     })();
     return () => {
-      cancelled = true;
+      signal.cancelled = true;
       stream?.getTracks().forEach((t) => t.stop());
       if (videoEl) videoEl.srcObject = null;
     };

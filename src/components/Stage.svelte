@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { createListenerScope } from "../lib/listenerScope";
   import { fade } from "svelte/transition";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api, emitOutroDone, emitRenderAck, subscribeCountdown, subscribeExitOutro, subscribeState } from "../lib/sync";
@@ -114,9 +115,7 @@
   const stageMessage = $derived(appState?.stageMessage ?? null);
 
   onMount(() => {
-    let un: () => void = () => {};
-    let unCountdown: () => void = () => {};
-    let unOutro: () => void = () => {};
+    const listeners = createListenerScope();
     let clock: number | undefined;
     let ackTimer: number | undefined;
 
@@ -125,21 +124,25 @@
     };
     const ack = () => emitRenderAck("stage", current?.id ?? null);
 
-    void (async () => {
-      un = await subscribeState((s) => {
+    listeners.add(subscribeState((s) => {
+      if (listeners.active) {
         appState = s;
         ack();
-      });
-      unCountdown = await subscribeCountdown((timer) => (countdown = timer));
-      unOutro = await subscribeExitOutro((path) => playOutro(path));
+      }
+    }));
+    listeners.add(subscribeCountdown((timer) => { if (listeners.active) countdown = timer; }));
+    listeners.add(subscribeExitOutro((path) => { if (listeners.active) playOutro(path); }));
+    void (async () => {
       try {
-        appState = await api.getState();
-        ack();
+        const state = await api.getState();
+        if (listeners.active) { appState = state; ack(); }
       } catch (e) {
         console.error("Failed to fetch initial appState", e);
       }
       try {
-        countdown = await api.getCountdown();
+        if (!listeners.active) return;
+        const timer = await api.getCountdown();
+        if (listeners.active) countdown = timer;
       } catch (e) {
         console.error("Failed to fetch initial countdown", e);
       }
@@ -149,9 +152,7 @@
     ackTimer = window.setInterval(ack, ACK_MS);
 
     return () => {
-      un();
-      unCountdown();
-      unOutro();
+      listeners.dispose();
       window.clearTimeout(currentFadeTimer);
       if (clock !== undefined) window.clearInterval(clock);
       if (ackTimer !== undefined) window.clearInterval(ackTimer);

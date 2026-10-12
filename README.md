@@ -1,5 +1,13 @@
 # MakrStudio (formerly MakePresent)
 
+## Changed (2026-10-12) — Smarter search and simpler content selection
+
+- Added bounded recent searches and local song ranking with title priority, accent/punctuation normalization, small-typo tolerance, and match labels. Clear search and consistent Escape handling simplify content selection. Bible read failures show retry feedback; duplicate add actions and stale insertion callbacks are guarded. Camera cancellation and dialog focus cleanup prevent unnecessary work after close. All recent features are listed in Settings → What’s New, Help, and [CHANGELOG.md](CHANGELOG.md).
+
+## Changed (2026-10-12) — Bookmark search and resource cleanup
+
+- Added searchable Scripture bookmarks, compact selected-verse references, pending Look edit preservation, bounded global search/NDI startup, and cleanup for late MIDI/NDI listeners, search timers, and interface callbacks. Audio/NDI polls no longer overlap. Duplicate bookmark entries cannot crash the list. Find release notes in Settings → What’s New and bookmark instructions in Help.
+
 ## Changed (2026-10-12) — Scripture tools and workflow updates
 
 - Fixed the editor startup freeze caused by separated playlist groups sharing an ID. Recovery preserves every slide, its order, backgrounds, and Looks. Playlist edits maintain unique group identities, and rendering errors show recovery controls and write local diagnostics.

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { createListenerScope } from "../lib/listenerScope";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api, emitOutroDone, emitRenderAck, subscribeCountdown, subscribeExitOutro, subscribeState } from "../lib/sync";
   import type { ClientState, CountdownView, Look, Slide, Transition } from "../lib/types";
@@ -151,38 +152,38 @@
   });
 
   onMount(() => {
-    let un: () => void = () => {};
-    let unCountdown: () => void = () => {};
-    let unOutro: () => void = () => {};
+    const listeners = createListenerScope();
     let ackTimer: number | undefined;
     // One-way ack: confirm each applied state + a slow heartbeat so a
     // frozen-but-not-updating window is still detectable. Fire-and-forget —
     // never awaits anything, so a stalled backend can't hang this window.
     const ack = () => emitRenderAck("output", live?.id ?? null);
-    void (async () => {
-      un = await subscribeState((s) => {
+    listeners.add(subscribeState((s) => {
+      if (listeners.active) {
         appState = s;
         ack();
-      });
-      unCountdown = await subscribeCountdown((value) => (countdown = value));
-      unOutro = await subscribeExitOutro((path) => playOutro(path));
+      }
+    }));
+    listeners.add(subscribeCountdown((value) => { if (listeners.active) countdown = value; }));
+    listeners.add(subscribeExitOutro((path) => { if (listeners.active) playOutro(path); }));
+    void (async () => {
       try {
-        appState = await api.getState();
-        ack();
+        const state = await api.getState();
+        if (listeners.active) { appState = state; ack(); }
       } catch (e) {
         console.error("Failed to fetch initial appState", e);
       }
       try {
-        countdown = await api.getCountdown();
+        if (!listeners.active) return;
+        const value = await api.getCountdown();
+        if (listeners.active) countdown = value;
       } catch (e) {
         console.error("Failed to fetch initial countdown", e);
       }
     })();
     ackTimer = window.setInterval(ack, ACK_MS);
     return () => {
-      un();
-      unCountdown();
-      unOutro();
+      listeners.dispose();
       window.clearTimeout(timer);
       if (ackTimer !== undefined) window.clearInterval(ackTimer);
       leaving = null;

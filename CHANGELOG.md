@@ -2,6 +2,45 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
+## 2026-10-12 — Smarter search and simpler content selection
+
+### Added
+
+- Recent searches: up to eight queries used successfully to add content or open lyric review are stored on this device. Select one to rerun it, or Clear history to remove the list. Invalid stored data and unavailable local storage do not prevent searching.
+- Local song ranking algorithm: normalize accents/punctuation, prioritize exact titles and prefixes, then title tokens, single-edit title typos (including swapped adjacent letters), then lyric matches. Results explain whether they matched the title, a similar title, or lyrics. A derived index avoids normalizing the whole library on each keystroke; typo comparisons and history are bounded.
+
+### Improved
+
+- One-click Clear resets search. Local library matches appear immediately, and matching titles rank above lyric-only matches. Help explains the simplified search/reuse/add workflow.
+- Search has an explicit accessible label, loading announcements, and consistent busy states across add actions.
+
+### Fixed
+
+- Escape closes search/naming dialogs from any control, not just their input. Search add operations prevent concurrent duplicate clicks; late results cannot close a newly opened search or overwrite its errors.
+- Selected-Bible read failures now surface a retryable error rather than disappearing as empty results. Failed Bible-list requests are not cached permanently, and Bible metadata loads only when Scripture results need it.
+- Camera discovery uses a shared cancellation signal and captured device identity. Closing/replacing a preview prevents new capture or fallback requests after cancellation; streams resolving late are stopped. Permission/busy errors do not reopen the default camera.
+- Naming dialogs cancel scheduled focus animation frames on close/destruction.
+
+## 2026-10-12 — Bookmark search and resource cleanup
+
+### Added
+
+- Search saved Scripture bookmarks by reference, translation, or passage text, with matching counts and Clear search. Help explains where to find it.
+
+### Improved
+
+- Selected passages use compact verse references (for example, `John 3:16–18, 20`) when adding slides, copying, or saving bookmarks.
+- Global Scripture/media/lyrics search and NDI monitor startup use bounded waits. Search failures offer Retry search; available media results render before Scripture chapter lookups finish.
+- Audio and NDI source polling allow only one request at a time, avoiding accumulating requests when the backend is slow.
+
+### Fixed
+
+- Pending Look edits are saved when switching Looks or closing Settings; deleting a Look cancels its pending debounce.
+- Late MIDI/NDI listener registrations are released after Settings closes or monitor startup is cancelled. Monitor teardown releases listeners, polling, frames, and its owned discovery/receiver resources.
+- Output and Stage release event listeners even when registration finishes after renderer teardown. Independent listener setup allows initial state loading to begin immediately and handles registration errors.
+- Search debounces and focus animation frames are cancelled on close/destroy; editor verse-search and transient interface timers are cleared on teardown. Stale responses cannot change a newer search's translation or loading state.
+- Duplicate and malformed saved bookmark entries are skipped during loading to prevent list rendering failures.
+
 ## 2026-10-12 — Scripture and workspace improvements
 
 ### Added

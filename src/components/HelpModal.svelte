@@ -67,6 +67,11 @@
       <p class="muted">
         You can drag an image or video onto a slide to change that slide's background, or onto the item Background chip to share it across the item.
       </p>
+      <div class="section-title">Scripture bookmarks</div>
+      <p class="muted">In Scripture, open Browse Scripture → Bookmarks. Search by reference, translation, or words from the passage, then choose Add slide. Selected verses use compact references such as John 3:16–18, 20.</p>
+      <div class="section-title">Find content faster</div>
+      <p class="muted">Press Ctrl+K (⌘K on Mac). Song results put matching titles first, tolerate small spelling mistakes, and also find lyric phrases. The match label explains each result. Choose a result to add it; searches used to add content appear under Recent searches next time. Clear history removes the saved list from this device.</p>
+      <p class="muted">Use Clear to start another search, or Escape to close search from any control. If a Bible cannot be read, Retry search or choose a different translation in Scripture; library songs and available media stay usable.</p>
       <div class="section-title">Keyboard shortcuts</div>
       <ul class="shortcuts">
         <li><span class="keys"><kbd>←</kbd> <kbd>→</kbd></span> Previous / next slide (when not typing)</li>

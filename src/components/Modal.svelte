@@ -32,10 +32,11 @@
     if (open) {
       value = initialValue;
       // Focus after render
-      requestAnimationFrame(() => {
+      const frame = requestAnimationFrame(() => {
         inputEl?.focus();
         inputEl?.select();
       });
+      return () => cancelAnimationFrame(frame);
     }
   });
 
@@ -72,7 +73,10 @@
       tabindex="-1"
       in:surface={{ duration: 250, distance: 12 }}
       onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
+      onkeydown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); handleCancel(); }
+      }}
     >
       <header class="dialog-head">
         <h2>{title}</h2>

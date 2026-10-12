@@ -6,6 +6,7 @@
   import { isMedia } from "../lib/types";
   import { surface, veil } from "../lib/motion";
   import { withTimeout } from "../lib/withTimeout";
+  import { indexSongs, rankSongs } from "../lib/songSearch";
 
   interface Props {
     open: boolean;
@@ -17,6 +18,41 @@
   let { open, library, onClose, onImportLyrics }: Props = $props();
 
   let query = $state("");
+  const HISTORY_KEY = "makrstudio.search.recent.v1";
+  function readRecentQueries(): string[] {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]");
+      if (!Array.isArray(saved)) return [];
+      return [...new Set(saved.filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim().slice(0, 120)).filter(Boolean))].slice(0, 8);
+    } catch { return []; }
+  }
+  let recentQueries = $state<string[]>(readRecentQueries());
+  let historyStatus = $state<string | null>(null);
+  function saveRecentQueries(): void {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(recentQueries));
+      historyStatus = null;
+    } catch { historyStatus = "Search history is available for this session, but could not be saved on this device."; }
+  }
+  function rememberQuery(value: string): void {
+    const term = value.trim().slice(0, 120);
+    if (!term) return;
+    recentQueries = [term, ...recentQueries.filter((item) => item.toLocaleLowerCase() !== term.toLocaleLowerCase())].slice(0, 8);
+    saveRecentQueries();
+  }
+  function useQuery(value: string): void {
+    if (debounce) clearTimeout(debounce);
+    debounce = null;
+    query = value;
+    scriptureResults = [];
+    mediaResults = [];
+    onlineSongs = [];
+    onlineError = null;
+    onlineLoading = false;
+    void doSearch(value);
+    inputEl?.focus();
+  }
   let inputEl = $state<HTMLInputElement | null>(null);
   let scriptureResults = $state<ScriptureMatch[]>([]);
   let scriptureTranslation = $state("KJV");
@@ -28,20 +64,26 @@
   let errorMsg = $state<string | null>(null);
   let inserting = $state<string | null>(null);
   let seq = 0;
+  let paletteGeneration = 0;
   let scriptureBiblePromise: Promise<BibleInfo | null> | null = null;
 
   function getSearchBible(): Promise<BibleInfo | null> {
     if (!scriptureBiblePromise) {
-      scriptureBiblePromise = withTimeout(api.listBibles(), 15000, "Bible list did not respond.").then((bibles) => {
+      const pending = withTimeout(api.listBibles(), 15000, "Bible list did not respond.").then((bibles) => {
         let rememberedId: string | null = null;
         try { rememberedId = window.localStorage.getItem("makrstudio.scripture-bible-id"); } catch { /* use the first available Bible */ }
         return bibles.find((bible) => bible.id === rememberedId) ?? bibles.find((bible) => bible.id === "kjv") ?? bibles[0] ?? null;
-      }).catch(() => null);
+      });
+      scriptureBiblePromise = pending;
+      void pending.catch(() => {
+        if (scriptureBiblePromise === pending) scriptureBiblePromise = null;
+      });
     }
     return scriptureBiblePromise;
   }
 
   async function labelMatchesForBible(matches: ScriptureMatch[], request: number): Promise<ScriptureMatch[]> {
+    if (!matches.length) return [];
     const bible = await getSearchBible();
     if (request !== seq) return [];
     const translation = bible?.shortName?.trim() || bible?.name?.trim() || "KJV";
@@ -50,7 +92,7 @@
     const chapters = new Map<string, Promise<ChapterVerse[]>>();
     for (const match of matches) {
       const key = `${match.book}:${match.chapter}`;
-      if (!chapters.has(key)) chapters.set(key, withTimeout(api.getChapter(bible.id, match.book, match.chapter), 15000, "Bible chapter did not respond.").catch(() => []));
+      if (!chapters.has(key)) chapters.set(key, withTimeout(api.getChapter(bible.id, match.book, match.chapter), 15000, "The selected Bible chapter could not be loaded. Retry search or choose another translation in Scripture."));
     }
     const loaded = new Map<string, ChapterVerse[]>();
     await Promise.all([...chapters].map(async ([key, promise]) => loaded.set(key, await promise)));
@@ -60,24 +102,8 @@
     });
   }
 
-  const libraryResults = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    const songs = library?.songs ?? [];
-    if (!q) return songs.slice(0, 5);
-    return songs
-      .filter((s: any) => {
-        if (s.title.toLowerCase().includes(q)) return true;
-        const blocks: any[] = s.blocks
-          ? Object.values(s.blocks)
-          : (s.slides ?? []);
-        return blocks.some(
-          (v: any) =>
-            v.title.toLowerCase().includes(q) ||
-            v.body.toLowerCase().includes(q),
-        );
-      })
-      .slice(0, 8);
-  });
+  const songIndex = $derived(indexSongs(library?.songs ?? []));
+  const libraryResults = $derived(rankSongs(songIndex, query));
 
   function songVerseCount(s: any): number {
     return s.arrangement?.length ?? (s.blocks ? Object.keys(s.blocks).length : (s.slides?.length ?? 0));
@@ -89,6 +115,7 @@
 
   // Focus when opened
   $effect(() => {
+    ++paletteGeneration;
     let focusFrame = 0;
     if (open) {
       query = "";
@@ -100,7 +127,6 @@
       errorMsg = null;
       loading = false;
       scriptureBiblePromise = null;
-      void getSearchBible();
       seq++;
       focusFrame = requestAnimationFrame(() => {
         inputEl?.focus();
@@ -114,6 +140,7 @@
       }
     }
     return () => {
+      ++paletteGeneration;
       seq++;
       if (debounce) clearTimeout(debounce);
       debounce = null;
@@ -126,6 +153,9 @@
     const v = (e.target as HTMLInputElement).value;
     query = v;
     seq++;
+    errorMsg = null;
+    scriptureResults = [];
+    mediaResults = [];
     loading = v.trim().length > 0;
     onlineSongs = [];
     onlineError = null;
@@ -137,6 +167,9 @@
   async function doSearch(q: string): Promise<void> {
     const cur = ++seq;
     const trimmed = q.trim();
+    errorMsg = null;
+    onlineError = null;
+    onlineLoading = false;
     if (!trimmed) {
       // Empty query: show recent media, clear scripture/media filtered to empty? Keep top media
       scriptureResults = [];
@@ -169,15 +202,21 @@
       withTimeout(api.searchMedia(trimmed), 15000, "Media search timed out. Try again."),
     ]);
     if (cur !== seq) return;
-    if (scr.status === "fulfilled") {
-      const labelled = await labelMatchesForBible(scr.value.slice(0, 8), cur);
-      if (cur !== seq) return;
-      scriptureResults = labelled;
-    } else scriptureResults = [];
     if (med.status === "fulfilled") mediaResults = med.value.slice(0, 8);
     else mediaResults = [];
+    if (scr.status === "fulfilled") {
+      try {
+        const labelled = await labelMatchesForBible(scr.value.slice(0, 8), cur);
+        if (cur !== seq) return;
+        scriptureResults = labelled;
+      } catch (error) {
+        if (cur !== seq) return;
+        scriptureResults = [];
+        errorMsg = `Could not read Scripture from the selected Bible: ${String(error)}`;
+      }
+    } else scriptureResults = [];
     const failures = [scr, med].flatMap((result) => result.status === "rejected" ? [String(result.reason)] : []);
-    if (failures.length) errorMsg = failures.join(" ");
+    if (failures.length) errorMsg = [errorMsg, ...failures].filter(Boolean).join(" ");
     loading = false;
   }
 
@@ -191,37 +230,49 @@
   }
 
   async function insertSong(songId: string): Promise<void> {
+    if (inserting) return;
+    const session = paletteGeneration;
+    const term = query;
     inserting = `song-${songId}`;
     try {
       await api.addSongToPlaylist(songId);
-      onClose();
+      rememberQuery(term);
+      if (open && session === paletteGeneration && query === term) onClose();
     } catch (e) {
-      errorMsg = String(e);
+      if (open && session === paletteGeneration && query === term) errorMsg = String(e);
     } finally {
       inserting = null;
     }
   }
 
   async function insertScripture(m: ScriptureMatch): Promise<void> {
+    if (inserting) return;
+    const session = paletteGeneration;
+    const term = query;
     inserting = `scr-${m.reference}`;
     try {
       const translation = m.translation?.trim() || "KJV";
       await api.addSlide(`${m.reference} · ${translation}`, m.text, undefined, "scripture");
-      onClose();
+      rememberQuery(term);
+      if (open && session === paletteGeneration && query === term) onClose();
     } catch (e) {
-      errorMsg = String(e);
+      if (open && session === paletteGeneration && query === term) errorMsg = String(e);
     } finally {
       inserting = null;
     }
   }
 
   async function insertMedia(asset: MediaAsset): Promise<void> {
+    if (inserting) return;
+    const session = paletteGeneration;
+    const term = query;
     inserting = `media-${asset.hash}`;
     try {
       await addCachedMediaSlide(asset);
-      onClose();
+      rememberQuery(term);
+      if (open && session === paletteGeneration && query === term) onClose();
     } catch (e) {
-      errorMsg = String(e);
+      if (open && session === paletteGeneration && query === term) errorMsg = String(e);
     } finally {
       inserting = null;
     }
@@ -250,7 +301,7 @@
       tabindex="-1"
       in:surface={{ duration: 260, distance: 10 }}
       onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
+      onkeydown={(e) => { e.stopPropagation(); onKeydown(e); }}
     >
       <header class="palette-head">
         <div class="search-row">
@@ -259,26 +310,38 @@
             bind:this={inputEl}
             type="text"
             placeholder="Search songs, scriptures, media…"
+            aria-label="Search songs, Scripture, and media"
+            maxlength="120"
             value={query}
             oninput={onInput}
-            onkeydown={onKeydown}
           />
+          {#if query}<button class="clear-query" aria-label="Clear search" onclick={() => useQuery("")}>Clear</button>{/if}
           <span class="hint">Ctrl+K</span>
         </div>
         <button class="close" aria-label="Close" onclick={onClose}>&times;</button>
       </header>
 
       {#if errorMsg}
-        <div class="palette-error" role="alert">{errorMsg}</div>
+        <div class="palette-error" role="alert">{errorMsg}
+          {#if query.trim()}<button disabled={loading} onclick={() => void doSearch(query)}>Retry search</button>{/if}
+        </div>
       {/if}
 
       <div class="palette-body">
+        {#if !query.trim() && recentQueries.length}
+          <section class="category recent-searches" aria-label="Recent searches">
+            <h3>Recent searches <button onclick={() => { recentQueries = []; saveRecentQueries(); }}>Clear history</button></h3>
+            <div>{#each recentQueries as term (term)}<button onclick={() => useQuery(term)}>{term}</button>{/each}</div>
+            <p class="empty">Stored on this device. Choose a search to run it again.</p>
+          </section>
+        {/if}
+        {#if historyStatus}<p class="empty" role="status">{historyStatus}</p>{/if}
         {#if !query.trim() && libraryResults.length === 0 && scriptureResults.length === 0 && mediaResults.length === 0 && !loading}
           <p class="empty-hint">Search your songs, online lyrics, Bibles, and media. Choose an online song to review its slides before adding it.</p>
         {/if}
 
         {#if loading}
-          <p class="loading-hint"><span class="mini-spinner" aria-hidden="true"></span> Searching…</p>
+          <p class="loading-hint" role="status"><span class="mini-spinner" aria-hidden="true"></span> Searching…</p>
         {/if}
 
         <!-- Songs / Library -->
@@ -288,15 +351,17 @@
             <p class="empty">No songs match “{query.trim()}”.</p>
           {:else}
             <ul class="result-list">
-              {#each libraryResults as song (song.id)}
+              {#each libraryResults as hit (hit.song.id)}
+                {@const song = hit.song}
                 <li>
                   <button
                     class="result"
                     onclick={() => void insertSong(song.id)}
-                    disabled={inserting === `song-${song.id}`}
+                    disabled={inserting !== null}
                     title="Click to add whole song to playlist (uses arrangement)"
                   >
                     <span class="result-title">{song.title}</span>
+                    {#if query.trim()}<span class="result-meta">{hit.reason}</span>{/if}
                     <span class="result-meta">{songVerseCount(song)} {songVerseCount(song) === 1 ? "verse" : "verses"} • {songBlockTitles(song)}</span>
                   </button>
                 </li>
@@ -319,7 +384,7 @@
           {:else}
             <ul class="result-list">
               {#each onlineSongs as hit (hit.id)}
-                <li><button class="result online-result" onclick={() => onImportLyrics(hit)}>
+                <li><button class="result online-result" disabled={inserting !== null} onclick={() => { rememberQuery(query); onImportLyrics(hit); }}>
                   <span class="result-title">{hit.title}</span>
                   <span class="result-meta">{hit.artist}{hit.album ? ` · ${hit.album}` : ""}</span>
                   <span class="online-action">Review lyrics and slides →</span>
@@ -343,7 +408,7 @@
                   <button
                     class="result"
                     onclick={() => void insertScripture(m)}
-                    disabled={inserting === `scr-${m.reference}`}
+                    disabled={inserting !== null}
                     title="Click to add as slide"
                   >
                     <span class="result-title">{m.reference} · {m.translation || "KJV"}</span>
@@ -367,7 +432,7 @@
                   <button
                     class="result media-result"
                     onclick={() => void insertMedia(asset)}
-                    disabled={inserting === `media-${asset.hash}`}
+                    disabled={inserting !== null}
                     title="Click to create a new slide with this background"
                   >
                     <span
@@ -399,6 +464,9 @@
 {/if}
 
 <style>
+  .recent-searches h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .recent-searches > div { display: flex; flex-wrap: wrap; gap: 6px; }
+  .recent-searches button, .clear-query { font: inherit; font-size: 11px; padding: 5px 8px; }
   .overlay {
     position: fixed;
     inset: 0;

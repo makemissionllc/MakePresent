@@ -1,5 +1,12 @@
 # MakrStudio (formerly MakePresent) — Living Project Doc
 
+## Changed (2026-10-12) — Smarter song layout and safer arrangement editing
+
+- Added `smartSongLayout.ts`, an O(lines × maxLines) dynamic-programming partitioner with a rough character budget, punctuation-boundary preference, and orphan penalty. It respects contiguous group/alignment boundaries and preserves line order; the operator explicitly applies and reviews the preview.
+- Song Editor keeps one bounded arrangement snapshot for Undo and clears it on source changes/close. Parsing depends on lyrics/line limit/session opening, so naming and alignment no longer erase manual edits. Global alignment is explicit and individual alignment is preserved.
+- Song Editor cleans up search debounce/focus callbacks and invalidates late responses on close/destruction, bounds lyric waits at 15 seconds, refreshes reopened sessions, and handles Escape across controls. Layout failures preserve the previous arrangement.
+- Updated Help, Settings → What’s New, README, and CHANGELOG with the new workflow and all prior release notes.
+
 ## Changed (2026-10-12) — Smarter search and simpler content selection
 
 - Added `src/lib/songSearch.ts`: a derived local index and deterministic ranking for normalized exact/prefix/title-token, bounded single-edit typo, and lyric matches, with stable ties and explanatory labels. Global Search retains at most eight successful/reviewed queries locally and exposes rerun/clear controls.

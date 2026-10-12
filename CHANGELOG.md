@@ -2,6 +2,25 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
+## 2026-10-12 — Smarter song layout and safer arrangement editing
+
+### Added
+
+- Song Editor Undo restores the last layout, reorder, duplication, removal, or global/per-slide alignment change. Only one snapshot is retained; lyric/line-limit changes and closing the editor clear it.
+- Optional Smart layout uses dynamic programming to balance lyric length, prefer punctuation boundaries, and discourage single-line orphans while respecting the selected line limit, contiguous section groups, and alignment boundaries. It preserves lyric lines and their order; it is a heuristic preview, not a guarantee of final text fit. Review before Add Song or use Undo.
+
+### Improved
+
+- Clearer All slides alignment labels, a line-limit-aware empty state, responsive arrangement toolbar, and status feedback for layout/Undo.
+- Help describes the simplified paste/find lyrics → choose line limit → Smart layout → review → Add Song workflow.
+
+### Fixed
+
+- Naming/alignment changes no longer reparse the source and discard manual arrangement edits. Per-slide alignment is no longer overwritten by global alignment effects.
+- Each new Song Editor session regenerates its arrangement even when reopening the same lyrics and resets stale drag state.
+- Pending lyric-search timers and scheduled focus callbacks are cancelled on close/destruction, Undo snapshots are released on close, and late responses are invalidated. Lyric search/loading waits are bounded at 15 seconds with retry guidance.
+- Escape closes Song Editor from any control. Smart layout failures retain the existing arrangement.
+
 ## 2026-10-12 — Smarter search and simpler content selection
 
 ### Added

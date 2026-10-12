@@ -72,6 +72,9 @@
       <div class="section-title">Find content faster</div>
       <p class="muted">Press Ctrl+K (⌘K on Mac). Song results put matching titles first, tolerate small spelling mistakes, and also find lyric phrases. The match label explains each result. Choose a result to add it; searches used to add content appear under Recent searches next time. Clear history removes the saved list from this device.</p>
       <p class="muted">Use Clear to start another search, or Escape to close search from any control. If a Bible cannot be read, Retry search or choose a different translation in Scripture; library songs and available media stay usable.</p>
+      <div class="section-title">Prepare a song</div>
+      <p class="muted">In Song Editor, paste or find lyrics, choose Lines/slide, then try Smart layout. It balances text length and favors phrase endings while keeping lyric order and section groups. Review the preview before Add Song. Undo restores the last layout, reorder, duplicate, removal, or alignment change.</p>
+      <p class="muted">Renaming the song keeps your arrangement. All slides alignment controls apply to every slide; the buttons on each preview card adjust just that slide. Editing the lyrics or line limit rebuilds the preview and clears arrangement Undo.</p>
       <div class="section-title">Keyboard shortcuts</div>
       <ul class="shortcuts">
         <li><span class="keys"><kbd>←</kbd> <kbd>→</kbd></span> Previous / next slide (when not typing)</li>

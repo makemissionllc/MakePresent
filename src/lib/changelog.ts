@@ -13,6 +13,18 @@ export interface ChangeLogRelease {
 export const CHANGELOG: ChangeLogRelease[] = [
   {
     date: "October 12, 2026",
+    title: "Smarter song layout and safer arrangement editing",
+    items: [
+      { kind: "New", text: "Song Editor has Undo for the last arrangement change: layout, reorder, duplicate, remove, or alignment. Undo keeps only one snapshot and clears when lyrics or the line limit change." },
+      { kind: "New", text: "Smart layout balances lyric length, favors punctuation boundaries, and avoids isolated lines where possible within your selected line limit. Review the result before adding the song, or Undo it." },
+      { kind: "Fixed", text: "Renaming a song or changing alignment no longer rebuilds the arrangement and discards manual edits. Individual slide alignment now stays as chosen." },
+      { kind: "Improved", text: "Song Editor labels global alignment controls clearly, updates its empty-state line limit, and keeps layout actions usable in narrower panels. Help explains the paste, layout, review, and add workflow." },
+      { kind: "Fixed", text: "Song Editor cancels pending search timers and focus callbacks on close or teardown, clears Undo on close, and ignores late lyric responses. Online lyric requests have a 15-second loading limit with retry guidance." },
+      { kind: "Fixed", text: "Escape closes Song Editor from any control, and each new editing session starts with a fresh arrangement and drag state. A layout failure keeps the existing slides." },
+    ],
+  },
+  {
+    date: "October 12, 2026",
     title: "Smarter search and simpler content selection",
     items: [
       { kind: "New", text: "Recent searches remember up to eight queries used to add content or review lyrics. Choose one to search again, or clear the local history." },

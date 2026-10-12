@@ -1,10 +1,12 @@
 <script lang="ts">
   import { surface, veil } from "../lib/motion";
+  import { onDestroy, untrack } from "svelte";
+  import { withTimeout } from "../lib/withTimeout";
+  import { smartSongLayout } from "../lib/smartSongLayout";
   import { api } from "../lib/sync";
   import { formatImportedLyrics } from "../lib/lyrics";
   import type { LyricsHit, LyricsRecord } from "../lib/types";
   import { parseToSongSlides, type SongSlide, type VAlign, type HAlign } from "../lib/parser";
-  import { parseSong } from "../lib/songParser";
 
   interface Props {
     open: boolean;
@@ -75,6 +77,55 @@
   let draggedIdx = $state<number | null>(null);
   let dragOverIdx = $state<number | null>(null);
   let selectedId = $state<string | null>(null);
+  let arrangementUndo = $state<{ slides: SongSlide[]; vAlign: VAlign; hAlign: HAlign } | null>(null);
+  let arrangementStatus = $state<string | null>(null);
+  const focusFrames = new Set<number>();
+  let disposed = false;
+  function scheduleFocus(callback: () => void): void {
+    if (disposed || !open) return;
+    const frame = requestAnimationFrame(() => {
+      focusFrames.delete(frame);
+      if (!disposed && open) callback();
+    });
+    focusFrames.add(frame);
+  }
+  function clearPendingWork(): void {
+    lyricsSearchSeq++;
+    lyricsFetchSeq++;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = null;
+    for (const frame of focusFrames) cancelAnimationFrame(frame);
+    focusFrames.clear();
+  }
+  onDestroy(() => { disposed = true; clearPendingWork(); });
+  function rememberArrangement(): void {
+    arrangementUndo = {
+      slides: editableSlides.map((slide) => ({ ...slide, lines: [...slide.lines], positioning: { ...slide.positioning } })),
+      vAlign: globalVAlign, hAlign: globalHAlign,
+    };
+    arrangementStatus = null;
+  }
+  function undoArrangement(): void {
+    if (!arrangementUndo) return;
+    editableSlides = arrangementUndo.slides;
+    globalVAlign = arrangementUndo.vAlign;
+    globalHAlign = arrangementUndo.hAlign;
+    arrangementUndo = null;
+    selectedId = null;
+    arrangementStatus = "Last arrangement change undone.";
+  }
+  function applySmartLayout(): void {
+    if (!editableSlides.length) return;
+    try {
+      const layout = smartSongLayout(editableSlides, maxLines);
+      rememberArrangement();
+      editableSlides = layout;
+      selectedId = null;
+      arrangementStatus = "Smart layout applied. Review the slides, or Undo to restore the previous arrangement.";
+    } catch {
+      arrangementStatus = "Could not arrange these lyrics. Your existing slides were kept.";
+    }
+  }
 
   $effect(() => {
     if (open) {
@@ -97,20 +148,19 @@
       maxLines = 2;
       globalVAlign = "center";
       globalHAlign = "center";
-      requestAnimationFrame(() => {
-        if (rawText) textareaEl?.focus();
+      draggedIdx = null;
+      dragOverIdx = null;
+      scheduleFocus(() => {
+        if (textareaEl?.value) textareaEl?.focus();
         else lyricsQueryEl?.focus();
       });
       if (initialLyricsId != null) void chooseLyrics(initialLyricsId);
       else if (initialTitle.trim().length >= 2) void searchLyrics(initialTitle);
     } else {
-      lyricsSearchSeq++;
-      lyricsFetchSeq++;
-      if (searchTimer) {
-        clearTimeout(searchTimer);
-        searchTimer = null;
-      }
+      clearPendingWork();
+      arrangementUndo = null;
     }
+    return clearPendingWork;
   });
 
   function onLyricsQuery(e: Event): void {
@@ -134,7 +184,7 @@
     lyricsSearching = true;
     lyricsError = null;
     try {
-      const found = await api.searchLyrics(query);
+      const found = await withTimeout(api.searchLyrics(query), 15000, "Lyrics search took too long. Try searching again.");
       if (seq !== lyricsSearchSeq || !open) return;
       lyricsMatches = found.filter((item) => item.hasLyrics).slice(0, 8);
       lyricsSearched = true;
@@ -153,7 +203,7 @@
     importedFrom = `${record.source} · ${record.artist}`;
     pendingImport = null;
     lyricsMatches = [];
-    requestAnimationFrame(() => textareaEl?.focus());
+    scheduleFocus(() => textareaEl?.focus());
   }
 
   async function chooseLyrics(id: number): Promise<void> {
@@ -161,7 +211,7 @@
     lyricsFetching = id;
     lyricsError = null;
     try {
-      const record = await api.getLyrics(id);
+      const record = await withTimeout(api.getLyrics(id), 15000, "Lyrics loading took too long. Choose the result again to retry.");
       if (seq !== lyricsFetchSeq || !open) return;
       const text = formatImportedLyrics(record.lyrics);
       if (!text) throw new Error("This result has no usable lyric lines.");
@@ -174,34 +224,31 @@
     }
   }
 
-  // Parse raw -> slides (respecting maxLines + global positioning)
-  const parsedBase = $derived(parseToSongSlides(rawText, songTitle, { maxLinesPerSlide: maxLines, defaultVAlign: globalVAlign, defaultHAlign: globalHAlign }));
-  const parsedMeta = $derived(parseSong(rawText, songTitle));
-  const effectiveTitle = $derived(parsedMeta.metadata.title || parsedBase.title || songTitle || "Untitled");
+  // Reparse only when lyric content or line limit changes. Naming and
+  // positioning must not destroy manual arrangement edits.
+  const parsedBase = $derived(parseToSongSlides(rawText, undefined, { maxLinesPerSlide: maxLines }));
+  const parsedMeta = $derived(parsedBase);
+  const effectiveTitle = $derived(parsedMeta.metadata.title || songTitle || "Untitled");
   const hasTitle = $derived(Boolean(songTitle.trim() || parsedMeta.metadata.title?.trim()));
 
-  // Sync editableSlides when parse changes (but preserve manual reorder if raw unchanged? we reset on raw/max change)
+  // Opening a session or changing source lyrics regenerates the preview.
   $effect(() => {
-    // track deps
+    if (!open) return;
     const base = parsedBase.slides;
-    // copy with fresh ids preserved? use base as source
-    editableSlides = base.map((s) => ({ ...s, positioning: { ...s.positioning } }));
+    const positioning = untrack(() => ({ vAlign: globalVAlign, hAlign: globalHAlign }));
+    editableSlides = base.map((s) => ({ ...s, positioning: { ...positioning } }));
     selectedId = null;
+    arrangementUndo = null;
+    arrangementStatus = null;
   });
 
   // Apply global positioning to all
-  function applyGlobalPositioning() {
+  function applyGlobalPositioning(v: VAlign, h: HAlign) {
+    rememberArrangement();
+    globalVAlign = v;
+    globalHAlign = h;
     editableSlides = editableSlides.map((s) => ({ ...s, positioning: { vAlign: globalVAlign, hAlign: globalHAlign } }));
   }
-  $effect(() => {
-    // when globals change, update if editable exists
-    void globalVAlign; void globalHAlign;
-    if (editableSlides.length) {
-      // avoid loop: only if differs
-      const need = editableSlides.some((s) => s.positioning.vAlign !== globalVAlign || s.positioning.hAlign !== globalHAlign);
-      if (need) editableSlides = editableSlides.map((s) => ({ ...s, positioning: { vAlign: globalVAlign, hAlign: globalHAlign } }));
-    }
-  });
 
   function insertTag(tag: string): void {
     const header = `### ${tag}`;
@@ -217,7 +264,7 @@
     const needsNewlineBefore = before && !before.endsWith("\n");
     const insertion = (needsNewlineBefore ? "\n\n" : rawText ? "\n\n" : "") + header + "\n";
     rawText = before + insertion + after;
-    requestAnimationFrame(() => {
+    scheduleFocus(() => {
       el.focus();
       const pos = before.length + insertion.length;
       el.setSelectionRange(pos, pos);
@@ -253,6 +300,7 @@
     const from = draggedIdx;
     const to = idx;
     if (from === to) { draggedIdx = null; dragOverIdx = null; return; }
+    rememberArrangement();
     const copy = [...editableSlides];
     const [moved] = copy.splice(from, 1);
     const insertAt = to > from ? to - 1 : to;
@@ -266,6 +314,7 @@
     const to = dragOverIdx ?? editableSlides.length;
     const from = draggedIdx;
     if (from === to || from + 1 === to) { draggedIdx = null; dragOverIdx = null; return; }
+    rememberArrangement();
     const copy = [...editableSlides];
     const [moved] = copy.splice(from, 1);
     copy.splice(to > from ? to - 1 : to, 0, moved);
@@ -273,6 +322,7 @@
     draggedIdx = null; dragOverIdx = null;
   }
   function duplicate(idx: number): void {
+    rememberArrangement();
     const src = editableSlides[idx];
     const clone: SongSlide = { ...src, id: Math.random().toString(36).slice(2,9), lines: [...src.lines], positioning: { ...src.positioning } };
     const copy = [...editableSlides];
@@ -282,16 +332,19 @@
   function duplicateGroup(startIdx: number, count: number): void {
     const toDup = editableSlides.slice(startIdx, startIdx + count);
     if (!toDup.length) return;
+    rememberArrangement();
     const clones = toDup.map((s) => ({ ...s, id: Math.random().toString(36).slice(2,9), lines: [...s.lines], positioning: { ...s.positioning }}));
     const copy = [...editableSlides];
     copy.splice(startIdx + count, 0, ...clones);
     editableSlides = copy;
   }
   function removeSlide(idx: number): void {
+    rememberArrangement();
     editableSlides = editableSlides.filter((_, i) => i !== idx);
   }
 
   function setSlideAlign(idx: number, v: VAlign, h: HAlign): void {
+    rememberArrangement();
     editableSlides = editableSlides.map((s, i) => i === idx ? { ...s, positioning: { vAlign: v, hAlign: h } } : s);
   }
 
@@ -312,6 +365,7 @@
   }
 
   function onKeydown(e: KeyboardEvent): void {
+    if (e.defaultPrevented) return;
     if (e.key === "Escape") { e.preventDefault(); onCancel(); }
   }
 </script>
@@ -319,7 +373,7 @@
 {#if open}
   <div class="overlay" role="presentation" transition:veil={{ duration: 180 }}>
     <button class="backdrop" aria-label="Close dialog" tabindex="-1" onclick={onCancel}></button>
-    <div class="dialog wide" role="dialog" aria-modal="true" aria-label="Song Editor" tabindex="-1" in:surface={{ duration: 280, distance: 14 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+    <div class="dialog wide" role="dialog" aria-modal="true" aria-label="Song Editor" tabindex="-1" in:surface={{ duration: 280, distance: 14 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => { e.stopPropagation(); onKeydown(e); }}>
       <header class="dialog-head">
         <h2>Song Editor</h2>
         <div class="head-actions">
@@ -336,15 +390,15 @@
             <option value={4}>4 lines</option>
           </select>
         </label>
-        <label>Vertical
-          <select value={globalVAlign} onchange={(e)=> globalVAlign = (e.target as HTMLSelectElement).value as VAlign}>
+        <label>All slides: vertical
+          <select value={globalVAlign} onchange={(e)=> applyGlobalPositioning((e.target as HTMLSelectElement).value as VAlign, globalHAlign)}>
             <option value="top">Top</option>
             <option value="center">Center</option>
             <option value="bottom">Bottom (Lower-Third)</option>
           </select>
         </label>
-        <label>Horizontal
-          <select value={globalHAlign} onchange={(e)=> globalHAlign = (e.target as HTMLSelectElement).value as HAlign}>
+        <label>All slides: horizontal
+          <select value={globalHAlign} onchange={(e)=> applyGlobalPositioning(globalVAlign, (e.target as HTMLSelectElement).value as HAlign)}>
             <option value="left">Left</option>
             <option value="center">Center</option>
             <option value="right">Right</option>
@@ -414,10 +468,14 @@
           <div class="preview-head">
             <span>Arrangement</span>
             <span class="preview-count">{editableSlides.length} slides</span>
+            <button class="ghost small" disabled={!editableSlides.length} onclick={applySmartLayout} title="Balance lyric length and phrase endings within the selected line limit">Smart layout</button>
+            <button class="ghost small" disabled={!arrangementUndo} onclick={undoArrangement}>Undo</button>
           </div>
+          <p class="layout-hint">Smart layout keeps lyric order and section groups. Editing lyrics or Lines/slide rebuilds the preview.</p>
+          {#if arrangementStatus}<p class="layout-hint" role="status">{arrangementStatus}</p>{/if}
 
           {#if editableSlides.length===0}
-            <p class="empty">No slides — add <code>### Verse 1</code> or type lyrics (2-line auto-split).</p>
+            <p class="empty">No slides — add <code>### Verse 1</code> or type lyrics ({maxLines}-line splitting).</p>
           {:else}
             <div class="grid">
               {#each groups as g}
@@ -486,6 +544,7 @@
 {/if}
 
 <style>
+  .layout-hint { color: var(--text-dim); font-size: 11px; margin: 6px 12px 10px; line-height: 1.5; }
   .overlay{position:fixed; inset:0; z-index:80; display:flex; align-items:center; justify-content:center;}
   .backdrop{position:absolute; inset:0; background:rgba(0,0,0,0.55); border:none; cursor:pointer;}
   .dialog{position:relative; width:min(1120px,97vw); max-height:92vh; background:var(--panel); border:1px solid var(--border); border-radius:12px; box-shadow:0 18px 60px rgba(0,0,0,0.5); overflow:hidden; display:flex; flex-direction:column;}
@@ -546,7 +605,7 @@
   .lyrics:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,140,255,0.15);}
   .hint{font-size:11px; color:var(--text-dim);}
   .preview-pane{background:var(--panel-2); display:flex; flex-direction:column; min-height:0; overflow:hidden;}
-  .preview-head{display:flex; justify-content:space-between; padding:10px 12px; border-bottom:1px solid var(--border); font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-dim);}
+  .preview-head{display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid var(--border); font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-dim);}
   .preview-count{color:var(--accent);}
   .empty{padding:16px; font-size:12px; color:var(--text-dim); line-height:1.5;}
   .empty code{background:var(--panel); padding:1px 4px; border-radius:4px;}

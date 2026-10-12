@@ -1,5 +1,9 @@
 # MakrStudio (formerly MakePresent)
 
+## Changed (2026-10-12) — Smarter song layout and safer arrangement editing
+
+- Song Editor adds one-step arrangement Undo and optional Smart layout for readable lyric grouping. Naming and alignment changes preserve manual arrangements; per-slide alignment stays selected. Clearer controls and Help simplify paste/find → layout → review → add. Lyric loading uses bounded waits, and pending timers/focus work and Undo snapshots are released on close. Settings → What’s New and [CHANGELOG.md](CHANGELOG.md) retain all recent feature notes.
+
 ## Changed (2026-10-12) — Smarter search and simpler content selection
 
 - Added bounded recent searches and local song ranking with title priority, accent/punctuation normalization, small-typo tolerance, and match labels. Clear search and consistent Escape handling simplify content selection. Bible read failures show retry feedback; duplicate add actions and stale insertion callbacks are guarded. Camera cancellation and dialog focus cleanup prevent unnecessary work after close. All recent features are listed in Settings → What’s New, Help, and [CHANGELOG.md](CHANGELOG.md).

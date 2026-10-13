@@ -57,7 +57,7 @@
           <li><span class="guide-icon">1</span><div><strong>Build your playlist</strong><p>Choose a starting playlist or begin blank. Add songs, verses, and media, then drag to reorder.</p></div></li>
           <li><span class="guide-icon">2</span><div><strong>Give it a Look</strong><p>Use Looks to set fonts, backgrounds, and layouts for your Output and Stage Display.</p></div></li>
           <li><span class="guide-icon">3</span><div><strong>Keep your place</strong><p>Your current View saves automatically. Save a reusable playlist before creating your next View.</p></div></li>
-          <li><span class="guide-icon">4</span><div><strong>Read and return</strong><p>Find a Bible book by name, open Read book for comfortable text, then use Continue reading to return to your last chapter next time. A gentle one-chapter goal helps you keep your place day by day.</p></div></li>
+          <li><span class="guide-icon">4</span><div><strong>Read and return</strong><p>Find a Bible book by name, open Read book for comfortable text, mark finished chapters, and use Next unread chapter to keep going. Continue reading returns to your last passage; book progress stays on this device.</p></div></li>
         </ol>
         <p class="note">Once Output is visible, clicking a playlist slide puts it live. Use ← and → to move through the service when you’re not typing.</p>
       {:else}

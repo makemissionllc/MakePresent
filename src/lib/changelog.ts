@@ -16,14 +16,15 @@ export const CHANGELOG: ChangeLogRelease[] = [
     title: "A calmer Scripture reading flow",
     items: [
       { kind: "New", text: "Continue reading reopens the last Bible, book, and chapter you read on this device. A single button takes you back to that passage." },
-      { kind: "New", text: "A one-chapter daily goal records a gentle reading streak when you enter Read book. Progress stays on this device and updates only when you read, with no background polling or reminders." },
+      { kind: "New", text: "Mark a chapter read when you finish. The one-chapter daily goal and consecutive-day streak update at that point and stay on this device, with no background polling or reminders." },
+      { kind: "New", text: "Chapter checkmarks and a book progress bar show what you have finished in the selected translation. Next unread chapter takes you straight to the next open chapter." },
       { kind: "New", text: "Read book switches Scripture to a focused reading view: verses wrap and stay expanded, clicking previews instead of adding a slide, and Add as slide remains explicit. Text size and chapter navigation stay close at hand." },
       { kind: "New", text: "Find a book ranks exact names, prefixes, matching words, and small spelling mistakes so you can jump to a Bible book without scrolling the full list." },
       { kind: "Fixed", text: "The bundled NIRV file labels books by number. The XML reader now maps those numbers to their Bible book names, handles common legacy character encodings, and leaves books and chapters with no readable verses out of the browser." },
       { kind: "Improved", text: "Split verse labels are combined for reading, and unreadable verse placeholders are skipped individually so one unusual entry cannot hide its whole chapter." },
       { kind: "Improved", text: "Scripture reading reflows by the width of its panel: book and chapter selection sit side by side on medium screens and stack on narrow screens. The reader text size follows the saved preference." },
       { kind: "Improved", text: "Downloaded translations use a two-version in-memory cache and imported XML is parsed once per session. Bible text search waits for three characters and pauses briefly after typing, avoiding repeated full-file reads and scans." },
-      { kind: "New", text: "The animated guided tour now walks through songs, Scripture book search, Continue reading, and the reader controls. Help and first-run onboarding explain the same path." },
+      { kind: "New", text: "The animated eight-step guided tour now walks through songs, Scripture book search, daily goals, book progress, and reader controls. Help and first-run onboarding explain the same path." },
     ],
   },
   {

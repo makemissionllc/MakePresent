@@ -7,9 +7,10 @@ User-facing features and fixes are also available in **Settings → What’s New
 ### Added
 
 - Continue reading restores the last translation, book, and chapter from this device in one click.
-- A one-chapter daily goal records a gentle reading streak when you enter Read book. Progress stays on this device and updates only when you read, with no background polling or reminders.
+- Mark a chapter read when you finish. The one-chapter daily goal and consecutive-day streak update at that point and stay on this device, with no background polling or reminders.
+- Chapter checkmarks and a book progress bar show what you have finished in the selected translation. Next unread chapter takes you straight to the next open chapter.
 - Read book opens a focused, full-text reader. Verse clicks open a preview instead of inserting a slide; adding remains an explicit action. Text size, previous/next chapter, and the presentation workflow stay available.
-- Find a book ranks exact names, prefixes, matching words, and small spelling mistakes. The animated guided tour now includes Scripture and the reader; first-run onboarding and Help describe the same route.
+- Find a book ranks exact names, prefixes, matching words, and small spelling mistakes. The animated eight-step guided tour covers Scripture, daily goals, book progress, and the reader; first-run onboarding and Help describe the same route.
 
 ### Improved
 

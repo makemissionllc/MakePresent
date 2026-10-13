@@ -57,6 +57,29 @@ import {
   interface ScriptureReadingProgress {
     lastReadDate: string;
     streak: number;
+    readChapters: Record<string, number[]>;
+  }
+
+  function scriptureBookProgressKey(bibleId: string, book: string): string {
+    return `${bibleId.trim().toLocaleLowerCase()}::${book.trim().toLocaleLowerCase().replace(/\s+/g, " ")}`;
+  }
+
+  function sanitizeReadChapters(value: unknown): Record<string, number[]> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([key, chapters]) => key.trim().length > 0 && key.length <= 200 && Array.isArray(chapters))
+      .slice(-80);
+    return Object.fromEntries(entries.map(([book, chapters]) => [
+      book.trim(),
+      [...new Set((chapters as unknown[]).filter((chapter): chapter is number => Number.isInteger(chapter) && Number(chapter) > 0 && Number(chapter) <= 200))]
+        .sort((a, b) => a - b)
+        .slice(0, 200),
+    ]));
+  }
+
+  function isScriptureChapterRead(bibleId: string | null, book: string | null, chapter: number | null): boolean {
+    if (!bibleId || !book || chapter == null) return false;
+    return scriptureReadingProgress.readChapters[scriptureBookProgressKey(bibleId, book)]?.includes(chapter) ?? false;
   }
 
   function localDayKey(date = new Date()): string {
@@ -76,14 +99,17 @@ import {
   function readScriptureReadingProgress(): ScriptureReadingProgress {
     try {
       const raw = window.localStorage.getItem(SCRIPTURE_READING_PROGRESS_KEY);
-      if (!raw) return { lastReadDate: "", streak: 0 };
+      if (!raw) return { lastReadDate: "", streak: 0, readChapters: {} };
       const value = JSON.parse(raw) as Partial<ScriptureReadingProgress>;
-      return typeof value.lastReadDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.lastReadDate) &&
-        Number.isInteger(value.streak) && Number(value.streak) >= 1
-        ? { lastReadDate: value.lastReadDate, streak: Math.min(Number(value.streak), 9999) }
-        : { lastReadDate: "", streak: 0 };
+      const validStreak = typeof value.lastReadDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.lastReadDate) &&
+        Number.isInteger(value.streak) && Number(value.streak) >= 1;
+      return {
+        lastReadDate: validStreak ? value.lastReadDate! : "",
+        streak: validStreak ? Math.min(Number(value.streak), 9999) : 0,
+        readChapters: sanitizeReadChapters(value.readChapters),
+      };
     } catch {
-      return { lastReadDate: "", streak: 0 };
+      return { lastReadDate: "", streak: 0, readChapters: {} };
     }
   }
 
@@ -328,6 +354,17 @@ import {
     const lastRead = scriptureReadingProgress.lastReadDate;
     return lastRead === today || lastRead === previousLocalDayKey(today) ? scriptureReadingProgress.streak : 0;
   });
+  const currentBookReadCount = $derived(selectedBibleId && selectedBook
+    ? (scriptureReadingProgress.readChapters[scriptureBookProgressKey(selectedBibleId, selectedBook)]?.length ?? 0)
+    : 0);
+  const currentChapterRead = $derived(isScriptureChapterRead(selectedBibleId, selectedBook, selectedChapter));
+  const nextUnreadChapter = $derived.by(() => {
+    if (!selectedBibleId || !selectedBook || chapterNumbers.length === 0) return null;
+    const currentIndex = selectedChapter == null ? -1 : chapterNumbers.indexOf(selectedChapter);
+    const start = currentIndex < 0 ? 0 : currentIndex + 1;
+    const ordered = [...chapterNumbers.slice(start), ...chapterNumbers.slice(0, start)];
+    return ordered.find((chapter) => !isScriptureChapterRead(selectedBibleId, selectedBook, chapter)) ?? null;
+  });
   let readerFontSize = $state(readScriptureReaderSize());
   let readerMode = $state(false);
   let continuingReading = $state(false);
@@ -467,7 +504,12 @@ import {
     {
       eyebrow: "Reading rhythm",
       title: "Build a gentle daily habit",
-      body: "Read one chapter in Read book to check off today’s goal. Your streak is counted by local calendar days and stays on this device; it only updates when you read, with no background polling or reminders.",
+      body: "When you finish a chapter, mark it read to check off today’s goal. The streak stays on this device and updates only when you mark a chapter, with no background polling or reminders.",
+    },
+    {
+      eyebrow: "Book progress",
+      title: "Pick up where you left off",
+      body: "Marked chapters stay checked in this translation. The progress bar shows how much of the book you’ve read, and Next unread chapter takes you to the next open chapter.",
     },
     {
       eyebrow: "You're set",
@@ -1248,7 +1290,6 @@ import {
       };
       lastReadingPosition = position;
       try { window.localStorage.setItem(SCRIPTURE_READING_POSITION_KEY, JSON.stringify(position)); } catch { /* keep the reading position for this session */ }
-      markScriptureChapterRead(bibleId, book, chapter);
       use("browse");
     } catch (e) {
       if (request === browseRequestSeq) {
@@ -1264,28 +1305,51 @@ import {
     try { window.localStorage.setItem(SCRIPTURE_READER_SIZE_KEY, String(readerFontSize)); } catch { /* keep this size for the current session */ }
   }
 
-  function markScriptureChapterRead(bibleId: string, book: string, chapter: number): void {
-    if (!readerMode || !bibleId || !book || !Number.isInteger(chapter) || chapter < 1) return;
-    const today = localDayKey();
-    readingTodayKey = today;
-    if (scriptureReadingProgress.lastReadDate === today) return;
-    const streak = scriptureReadingProgress.lastReadDate === previousLocalDayKey(today)
-      ? scriptureReadingProgress.streak + 1
-      : 1;
-    scriptureReadingProgress = { lastReadDate: today, streak };
+  function toggleCurrentChapterRead(): void {
+    if (!selectedBibleId || !selectedBook || selectedChapter == null || chapterVerses.length === 0 || browseLoading) return;
+    const key = scriptureBookProgressKey(selectedBibleId, selectedBook);
+    const currentChapters = scriptureReadingProgress.readChapters[key] ?? [];
+    const wasRead = currentChapters.includes(selectedChapter);
+    const nextChapters = wasRead
+      ? currentChapters.filter((chapter) => chapter !== selectedChapter)
+      : [...currentChapters, selectedChapter].sort((a, b) => a - b);
+    const readChapters = { ...scriptureReadingProgress.readChapters };
+    delete readChapters[key];
+    if (nextChapters.length > 0) readChapters[key] = nextChapters.slice(0, 200);
+
+    let lastReadDate = scriptureReadingProgress.lastReadDate;
+    let streak = scriptureReadingProgress.streak;
+    if (!wasRead) {
+      const today = localDayKey();
+      readingTodayKey = today;
+      if (lastReadDate !== today) {
+        streak = lastReadDate === previousLocalDayKey(today) ? streak + 1 : 1;
+        lastReadDate = today;
+      }
+    }
+
+    const nextProgress: ScriptureReadingProgress = {
+      lastReadDate,
+      streak,
+      readChapters: Object.fromEntries(Object.entries(readChapters).slice(-80)),
+    };
+    scriptureReadingProgress = nextProgress;
     try {
-      window.localStorage.setItem(SCRIPTURE_READING_PROGRESS_KEY, JSON.stringify(scriptureReadingProgress));
+      window.localStorage.setItem(SCRIPTURE_READING_PROGRESS_KEY, JSON.stringify(nextProgress));
     } catch {
       // Keep the progress visible for this session when storage is unavailable.
     }
   }
 
+  function openNextUnreadChapter(): void {
+    if (nextUnreadChapter == null || !selectedBibleId || !selectedBook) return;
+    readerMode = true;
+    onBrowseChapterSelect(nextUnreadChapter);
+  }
+
   function toggleReaderMode(): void {
     readerMode = !readerMode;
     previewVerse = null;
-    if (readerMode && chapterVerses.length > 0 && selectedBibleId && selectedBook && selectedChapter) {
-      markScriptureChapterRead(selectedBibleId, selectedBook, selectedChapter);
-    }
   }
 
   async function continueReading(): Promise<void> {
@@ -1318,7 +1382,6 @@ import {
       await loadChapterVerses(position.bibleId, position.book, position.chapter);
       if (selectedChapter === position.chapter && chapterVerses.length > 0) {
         readerMode = true;
-        markScriptureChapterRead(position.bibleId, position.book, position.chapter);
       }
     } finally {
       continuingReading = false;
@@ -4274,7 +4337,7 @@ import {
                 <span class="reading-rhythm-icon" aria-hidden="true">{readingCompletedToday ? "✓" : "◷"}</span>
                 <div class="reading-rhythm-body">
                   <div class="reading-rhythm-heading"><strong>One chapter a day</strong><span>{readingStreak > 0 ? `${readingStreak}-day streak` : "Start today"}</span></div>
-                  <p>{readingCompletedToday ? "Today’s reading is done." : "Read a chapter in Read book to mark today’s progress."}</p>
+                  <p>{readingCompletedToday ? "Today’s reading is done." : "Mark a chapter read in Read book to complete today’s goal."}</p>
                   <div class="reading-rhythm-track" role="progressbar" aria-label="Daily chapter goal" aria-valuemin="0" aria-valuemax="1" aria-valuenow={readingCompletedToday ? 1 : 0}>
                     <span class:filled={readingCompletedToday}></span>
                   </div>
@@ -4296,7 +4359,7 @@ import {
 
             </div>
             {#if !browseCollapsed}
-              <div class="browse-dock" class:reader-mode={readerMode} class:tour-highlight={showTour && (tourStep === 3 || tourStep === 4)} role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
+              <div class="browse-dock" class:reader-mode={readerMode} class:tour-highlight={showTour && (tourStep === 3 || tourStep === 4 || tourStep === 6)} role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
                 <div class="browse-dock-header"><strong>Browse Scripture</strong><button class="browse-dock-close" onclick={() => (browseCollapsed = true)} aria-label="Close Scripture browser">× Close</button></div>
                 <div class="browse-dock-left">
                   <label>
@@ -4420,9 +4483,24 @@ import {
                   {#if selectedBook}
                     <div class="browse-chapters">
                       <span class="field-label">{selectedBook} — Chapters</span>
+                      {#if chapterNumbers.length > 0}
+                        <section class="book-progress-card" class:tour-highlight={showTour && tourStep === 6} aria-label={`${selectedBook} reading progress`}>
+                          <div class="book-progress-heading"><strong>Book progress</strong><span>{currentBookReadCount} of {chapterNumbers.length} read</span></div>
+                          <div class="book-progress-track" role="progressbar" aria-label="Chapters read in this translation" aria-valuemin="0" aria-valuemax={chapterNumbers.length} aria-valuenow={Math.min(currentBookReadCount, chapterNumbers.length)}>
+                            <span style={`transform:scaleX(${Math.min(1, currentBookReadCount / chapterNumbers.length)})`}></span>
+                          </div>
+                          {#if currentChapterRead && nextUnreadChapter !== null}
+                            <button class="book-progress-next" onclick={openNextUnreadChapter}><span>Next unread chapter</span><strong>{nextUnreadChapter} →</strong></button>
+                          {:else if currentBookReadCount >= chapterNumbers.length}
+                            <p class="book-progress-complete">You’ve read every chapter in this book.</p>
+                          {/if}
+                        </section>
+                      {/if}
                       <div class="chapter-grid">
                         {#each chapterNumbers as ch}
-                          <button class="chapter-pill" class:active={ch === selectedChapter} onclick={() => onBrowseChapterSelect(ch)}>{ch}</button>
+                          <button class="chapter-pill" class:active={ch === selectedChapter} class:read={isScriptureChapterRead(selectedBibleId, selectedBook, ch)} aria-label={`Chapter ${ch}${isScriptureChapterRead(selectedBibleId, selectedBook, ch) ? ", read" : ""}`} onclick={() => onBrowseChapterSelect(ch)}>
+                            {ch}{#if isScriptureChapterRead(selectedBibleId, selectedBook, ch)}<span class="chapter-read-check" aria-hidden="true">✓</span>{/if}
+                          </button>
                         {/each}
                       </div>
                     </div>
@@ -4466,7 +4544,7 @@ import {
                     <div class="reader-toolbar">
                       <div class="reader-heading">
                         <strong>{selectedBook} {selectedChapter}</strong>
-                        <span>{chapterVerses.length} verses · Chapter {chapterNumbers.indexOf(selectedChapter ?? 0) + 1} of {chapterNumbers.length}</span>
+                        <span>{chapterVerses.length} verses · {currentBookReadCount} of {chapterNumbers.length} chapters read</span>
                       </div>
                       <div class="reader-controls">
                         <button class="reader-control" disabled={browseLoading || selectedChapter === chapterNumbers[0]} onclick={() => navigateBrowseChapter(-1)} aria-label="Previous chapter">←</button>
@@ -4474,6 +4552,9 @@ import {
                         <span class="reader-control-divider" aria-hidden="true"></span>
                         <button class="reader-control" disabled={readerFontSize <= 14} onclick={() => changeReaderFontSize(-2)} aria-label="Make Scripture text smaller">A−</button>
                         <button class="reader-control" disabled={readerFontSize >= 22} onclick={() => changeReaderFontSize(2)} aria-label="Make Scripture text larger">A+</button>
+                        {#if readerMode}
+                          <button class="chapter-read-toggle" class:complete={currentChapterRead} disabled={browseLoading} aria-pressed={currentChapterRead} aria-label={currentChapterRead ? "Mark chapter unread" : "Mark chapter read"} onclick={toggleCurrentChapterRead}>{currentChapterRead ? "✓ Read" : "Mark read"}</button>
+                        {/if}
                         <button class="reader-mode-toggle" aria-pressed={readerMode} onclick={toggleReaderMode}>{readerMode ? "Exit reading" : "Read book"}</button>
                       </div>
                     </div>
@@ -6204,13 +6285,28 @@ import {
     gap: 4px;
   }
   .chapter-pill {
+    position: relative;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: 6px 0;
     font-size: 12px;
     text-align: center;
+    cursor: pointer;
   }
+  .chapter-pill.read:not(.active) { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+  .chapter-read-check { position: absolute; top: 1px; right: 3px; color: var(--accent); font-size: 8px; font-weight: 800; line-height: 1; }
+  .chapter-pill.active .chapter-read-check { color: white; }
+  .book-progress-card { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); animation: scripture-resume-in 220ms var(--ease-emphasized) both; }
+  .book-progress-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .book-progress-heading strong { color: var(--text); font-size: 11px; }
+  .book-progress-heading span { color: var(--text-dim); font-size: 10px; white-space: nowrap; }
+  .book-progress-track { height: 4px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
+  .book-progress-track span { display: block; width: 100%; height: 100%; border-radius: inherit; background: var(--accent); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-emphasized); }
+  .book-progress-next { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel-2); text-align: left; font: inherit; font-size: 10px; cursor: pointer; }
+  .book-progress-next:hover { border-color: var(--accent); }
+  .book-progress-next strong { color: var(--accent); }
+  .book-progress-complete { margin: 0; color: var(--accent); font-size: 10px; }
   .chapter-pill.active {
     background: var(--accent);
     color: white;
@@ -6376,12 +6472,14 @@ import {
   .reader-heading strong { color: var(--text); font-size: 13px; }
   .reader-heading span { color: var(--text-dim); font-size: 10px; }
   .reader-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
-  .reader-control, .reader-mode-toggle { min-height: 30px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel); font: inherit; font-size: 11px; cursor: pointer; }
-  .reader-control:hover:not(:disabled), .reader-mode-toggle:hover { border-color: var(--accent); }
-  .reader-control:disabled { opacity: .45; cursor: default; }
+  .reader-control, .reader-mode-toggle, .chapter-read-toggle { min-height: 30px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel); font: inherit; font-size: 11px; cursor: pointer; }
+  .reader-control:hover:not(:disabled), .reader-mode-toggle:hover, .chapter-read-toggle:hover:not(:disabled) { border-color: var(--accent); }
+  .reader-control:disabled, .chapter-read-toggle:disabled { opacity: .45; cursor: default; }
   .reader-control-divider { width: 1px; height: 20px; margin-inline: 2px; background: var(--border); }
   .reader-mode-toggle { border-color: var(--accent); color: var(--accent); font-weight: 700; }
   .reader-mode-toggle[aria-pressed="true"] { color: var(--text); background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
+  .chapter-read-toggle { color: var(--text-dim); }
+  .chapter-read-toggle.complete { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
   .browse-dock.reader-mode .browse-range-tools,
   .browse-dock.reader-mode .browse-verse-select,
   .browse-dock.reader-mode .verse-preview-action { display: none; }
@@ -7533,8 +7631,9 @@ import {
     .continue-reading-action { font-size: 10px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .continue-reading-card, .reading-rhythm-card { animation: none; transition: none; }
+    .continue-reading-card, .reading-rhythm-card, .book-progress-card { animation: none; transition: none; }
     .reading-rhythm-track span { transition: none; }
+    .book-progress-track span { transition: none; }
   }
   @keyframes scripture-resume-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
   .editor-content:has(:global(.look-editor-view)) .editor-heading { position:sticky; top:-22px; z-index:10; background:var(--bg); padding-top:22px; margin-top:-22px; }

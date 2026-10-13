@@ -60,14 +60,14 @@
           <li><span class="guide-icon">1</span><div><strong>Build your playlist</strong><p>Choose a starting playlist or begin blank. Add songs, verses, and media, then drag to reorder.</p></div></li>
           <li><span class="guide-icon">2</span><div><strong>Give it a Look</strong><p>Use Looks to set fonts, backgrounds, and layouts for your Output and Stage Display.</p></div></li>
           <li><span class="guide-icon">3</span><div><strong>Keep your place</strong><p>Your current View saves automatically. Save a reusable playlist before creating your next View.</p></div></li>
-          <li><span class="guide-icon">4</span><div><strong>Read and return</strong><p>Find a Bible book by name, open Read book for comfortable text, mark finished chapters, and use Next unread chapter to keep going. Choose Page, Columns, Paper tone, and your text size. Select a verse → Save my place to return to that exact verse with Continue reading. Mark read &amp; continue opens the next chapter. Your preferences and progress stay on this device.</p></div></li>
+          <li><span class="guide-icon">4</span><div><strong>Read and return</strong><p>Find a Bible book by name, open Read book for comfortable text, mark finished chapters, and use Next unread chapter to keep going. Your text size and progress stay on this device.</p></div></li>
         </ol>
         <p class="note">Once Output is visible, clicking a playlist slide puts it live. Use ← and → to move through the service when you’re not typing.</p>
       {:else}
         <p class="intro">Keep controls on your screen and the presentation on your projector or audience display.</p>
         <div class="display-status"><span class="status-dot"></span><div><strong>{displayCount === null ? "Check your displays in the editor" : displayCount > 1 ? `${displayCount} displays detected` : "Working with one display"}</strong><p>{displayCount !== null && displayCount > 1 ? "Choose the audience display in the Output panel, then select Show Output." : "You can prepare your service now. Connect a second display when you’re ready to present."}</p></div></div>
         <div class="connection-notes"><strong>Streaming with OBS?</strong><p>Enable NDI in Settings, show Output, then select MakrStudio in an OBS NDI Source. OBS needs the DistroAV plugin and a compatible NDI Runtime. Check for Live status in MakrStudio.</p></div>
-        <p class="note">Showing Output can reveal the current live slide. Check the preview before putting it on screen.</p>
+        <p class="note">Showing Output can reveal the current live slide. Check the preview before putting it on screen. The ✓ Service check in the top bar gathers playlist, display, and stage readiness in one calm list.</p>
         <div class="next-actions"><button onclick={() => onFinish("tour")}>Explore the interactive tutorial</button><button onclick={() => onFinish("settings")}>Open settings</button></div>
       {/if}
     </section>

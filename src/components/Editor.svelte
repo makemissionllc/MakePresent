@@ -15,8 +15,6 @@ import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, Count
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
   import SlideThumbnail from "./SlideThumbnail.svelte";
-  import ScriptureReader from "./ScriptureReader.svelte";
-  import { loadReadingPlace, READING_PLACE_KEY, type ReadingPlace } from "../lib/readerPreferences";
   import SongEditorModal from "./SongEditorModal.svelte";
   import ProjectHub from "../lib/components/ProjectHub.svelte";
   import GlobalSearch from "./GlobalSearch.svelte";
@@ -26,6 +24,8 @@ import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, Count
   import HelpModal from "./HelpModal.svelte";
   import BrandLockup from "./BrandLockup.svelte";
   import Onboarding from "./Onboarding.svelte";
+  import ServiceCheck from "./ServiceCheck.svelte";
+  import type { ServiceCheckItem } from "./ServiceCheck.svelte";
   import { prefersReducedMotion } from "../lib/motion";
 import {
     dismissHint,
@@ -133,9 +133,9 @@ import {
   function readScriptureReaderSize(): number {
     try {
       const value = Number(window.localStorage.getItem(SCRIPTURE_READER_SIZE_KEY));
-      return [14, 16, 18, 20, 22, 24, 26, 28].includes(value) ? value : 18;
+      return [14, 16, 18, 20, 22].includes(value) ? value : 16;
     } catch {
-      return 18;
+      return 16;
     }
   }
 
@@ -323,6 +323,9 @@ import {
   }
   let settingsOpen = $state(false);
   let settingsRequestedTab = $state<"plugins" | "whats-new" | null>(null);
+  // Service check — a calm pre-presentation checklist. It only reads state and
+  // opens panels; it never puts a slide live or start polling.
+  let serviceCheckOpen = $state(false);
   let welcomeDismissed = $state(false);
   let importingMedia = $state(false);
   let scriptureQuery = $state("");
@@ -350,10 +353,6 @@ import {
   let browseCopyStatus = $state<string | null>(null);
   let scriptureBookmarks = $state<ScriptureBookmark[]>(readScriptureBookmarks());
   let lastReadingPosition = $state<ScriptureReadingPosition | null>(readScriptureReadingPosition());
-  let savedReadingPlace = $state<ReadingPlace | null>(loadReadingPlace());
-  let resumeReaderVerse = $state<number | null>(null);
-  const continuePosition = $derived(savedReadingPlace ?? lastReadingPosition);
-  const savedReaderVerse = $derived(savedReadingPlace?.bibleId === selectedBibleId && savedReadingPlace?.book === selectedBook && savedReadingPlace?.chapter === selectedChapter ? savedReadingPlace.verse : null);
   let scriptureReadingProgress = $state<ScriptureReadingProgress>(readScriptureReadingProgress());
   let readingTodayKey = $state(localDayKey());
   const readingCompletedToday = $derived(scriptureReadingProgress.lastReadDate === readingTodayKey);
@@ -379,7 +378,7 @@ import {
   let continueReadingSeq = 0;
   let bibleBookQuery = $state("");
   const visibleBibleBooks = $derived(rankBibleBooks(bibleBooks, bibleBookQuery));
-  const showContinueReading = $derived(Boolean(savedReadingPlace) || Boolean(lastReadingPosition) && !(
+  const showContinueReading = $derived(Boolean(lastReadingPosition) && !(
     lastReadingPosition?.bibleId === selectedBibleId && lastReadingPosition.book === selectedBook && lastReadingPosition.chapter === selectedChapter
   ));
   let bookmarkQuery = $state("");
@@ -485,7 +484,7 @@ import {
   let onboardingOpen = $state(false);
   let helpOpen = $state(false);
 
-  const showTour = $derived(tourActive && !showHub && !onboardingOpen && !helpOpen && !settingsOpen && !globalSearchOpen && appState !== null);
+  const showTour = $derived(tourActive && !showHub && !onboardingOpen && !helpOpen && !settingsOpen && !serviceCheckOpen && !globalSearchOpen && appState !== null);
 
   function finishOnboarding(action: "view" | "tour" | "settings" | "skip"): void {
     onboarding = dismissWelcome(onboarding);
@@ -532,6 +531,7 @@ import {
         showDetail = false;
         sourceOpen = false;
       } else if (action === "songs" || action === "media") openSourceTab(action);
+      else if (action === "readiness") serviceCheckOpen = true;
       else {
         openSourceTab("scripture");
         browseCollapsed = false;
@@ -547,12 +547,20 @@ import {
           }
           if (!active() || !selectedBook || browseError) return;
           if (selectedChapter == null && chapterNumbers.length > 0) await loadChapterVerses(selectedBibleId, selectedBook, chapterNumbers[0]);
-          if (active() && !browseError && chapterVerses.length > 0) { readerMode = true; resumeReaderVerse = null; }
+          if (active() && !browseError && chapterVerses.length > 0) readerMode = true;
         }
       }
     } finally {
       tourActionBusy = false;
     }
+  }
+
+  function handleServiceCheckAction(action: "playlist" | "output" | "stage"): void {
+    serviceCheckOpen = false;
+    centralView = "slides";
+    showDetail = false;
+    sourceOpen = false;
+    if (action === "playlist") use("playlist");
   }
 
   // Render-ack heartbeat (Phase 1 of the live-thumbnail research): the latest
@@ -658,6 +666,26 @@ import {
   let itemLookBusy = $state(false);
 
   const project = $derived(appState?.project ?? null);
+  const serviceChecks = $derived<ServiceCheckItem[]>([
+    {
+      title: "Playlist has slides",
+      detail: (project?.slides.length ?? 0) > 0
+        ? `${project?.slides.length} ${project?.slides.length === 1 ? "slide" : "slides"} in order, ready to present.`
+        : "Add a song, verse, or media slide to begin your service order.",
+      ready: (project?.slides.length ?? 0) > 0,
+      action: "playlist",
+      actionLabel: "Show playlist",
+    },
+    {
+      title: "Audience display chosen",
+      detail: appState?.output.monitorIndex != null
+        ? `Output will use ${appState?.output.monitorName || `display ${Number(appState?.output.monitorIndex) + 1}`}.`
+        : "Pick the projector or audience display in the Output panel.",
+      ready: appState?.output.monitorIndex != null,
+      action: "output",
+      actionLabel: "Show output",
+    },
+  ]);
   // Older/stale native backends may still return a ClientState without the
   // Phase 3.5 field. Keep the editor from crashing and explain the mismatch.
   const items = $derived(Array.isArray(appState?.items) ? appState.items : []);
@@ -1288,7 +1316,6 @@ import {
       selectedChapter = chapter;
       browseCopyStatus = null;
       bookmarkStatus = null;
-      resumeReaderVerse = null;
       const bible = bibles.find((item) => item.id === bibleId);
       const position: ScriptureReadingPosition = {
         bibleId,
@@ -1309,7 +1336,7 @@ import {
   }
 
   function changeReaderFontSize(delta: -2 | 2): void {
-    readerFontSize = Math.max(14, Math.min(28, readerFontSize + delta));
+    readerFontSize = Math.max(14, Math.min(22, readerFontSize + delta));
     try { window.localStorage.setItem(SCRIPTURE_READER_SIZE_KEY, String(readerFontSize)); } catch { /* keep this size for the current session */ }
   }
 
@@ -1361,7 +1388,6 @@ import {
     verseTextQuery = "";
     verseTextSeq++;
     if (verseTextTimer) clearTimeout(verseTextTimer);
-    resumeReaderVerse = null;
     if (!readerMode) void tick().then(() => {
       if (!editorDisposed && !readerMode && sourceOpen && sourceTab === "scripture") {
         document.querySelector<HTMLButtonElement>(".reader-mode-toggle")?.focus({ preventScroll: true });
@@ -1369,26 +1395,8 @@ import {
     });
   }
 
-  function saveReadingPlace(verse: number): void {
-    if (!selectedBibleId || !selectedBook || selectedChapter == null || !chapterVerses.some((item) => item.verse === verse)) return;
-    const bible = bibles.find((item) => item.id === selectedBibleId);
-    savedReadingPlace = { bibleId: selectedBibleId, book: selectedBook, chapter: selectedChapter, verse, version: bible?.shortName || bible?.name || "" };
-    try {
-      window.localStorage.setItem(READING_PLACE_KEY, JSON.stringify(savedReadingPlace));
-      browseCopyStatus = `Place saved at ${selectedBook} ${selectedChapter}:${verse}. Continue reading will bring you back here.`;
-    } catch {
-      browseCopyStatus = "Place saved for this session. Device storage is unavailable.";
-    }
-  }
-
-  function clearReadingPlace(): void {
-    savedReadingPlace = null;
-    try { window.localStorage.removeItem(READING_PLACE_KEY); } catch { /* Session state still clears. */ }
-    browseCopyStatus = "Saved place cleared. Your last opened chapter is still remembered.";
-  }
-
   async function continueReading(): Promise<void> {
-    const position = continuePosition;
+    const position = lastReadingPosition;
     if (!position || continuingReading) return;
     continuingReading = true;
     const sequence = ++continueReadingSeq;
@@ -1425,7 +1433,6 @@ import {
       await loadChapterVerses(position.bibleId, position.book, position.chapter);
       if (active() && !browseError && selectedBibleId === position.bibleId && selectedBook === position.book && selectedChapter === position.chapter && chapterVerses.length > 0) {
         readerMode = true;
-        resumeReaderVerse = "verse" in position && typeof position.verse === "number" && chapterVerses.some((item) => item.verse === position.verse) ? position.verse : null;
       }
     } finally {
       continuingReading = false;
@@ -2740,6 +2747,11 @@ import {
       globalSearchOpen = false;
       return;
     }
+    if (e.key === "Escape" && serviceCheckOpen) {
+      e.preventDefault();
+      serviceCheckOpen = false;
+      return;
+    }
     if (e.key === "Escape" && tourActive) {
       e.preventDefault();
       endTour();
@@ -2750,6 +2762,7 @@ import {
     // so checking only the active element lets the global arrows leak through.
     if (
       settingsOpen ||
+      serviceCheckOpen ||
       showSongEditor ||
       showHub ||
       showSavePlaylistModal ||
@@ -3170,6 +3183,9 @@ import {
     <button class="ghost" onclick={() => newProject()}>New view</button>
     <button class="ghost help-trigger" title="Help — guided tour and keyboard shortcuts" onclick={() => (helpOpen = true)}>
       ? Help
+    </button>
+    <button class="ghost" title="Service check — playlist, display, and stage readiness" onclick={() => (serviceCheckOpen = true)}>
+      ✓ Service check
     </button>
     <button class="ghost" title="Settings" onclick={() => (settingsOpen = true)}>
       &#9881; Settings
@@ -4124,7 +4140,7 @@ import {
     </aside>
   </div>
 
-  <section class="source-bar" class:expanded={sourceOpen} class:reading={sourceOpen && sourceTab === "scripture" && readerMode && !browseCollapsed} aria-label="Content library">
+  <section class="source-bar" class:expanded={sourceOpen} aria-label="Content library">
     <div class="source-tab-row">
       <span class="source-bar-label">Add content</span>
       <button class:active={sourceOpen && sourceTab === "songs"} aria-pressed={sourceOpen && sourceTab === "songs"} onclick={() => openSourceTab("songs")}>Songs</button>
@@ -4305,7 +4321,7 @@ import {
             </div>
           </div>
         {:else if sourceTab === "scripture"}
-          <div class="source-pane scripture-pane" class:browsing={!browseCollapsed} class:focus-reading={readerMode && !browseCollapsed}>
+          <div class="source-pane scripture-pane" class:browsing={!browseCollapsed}>
             <div class="scripture-tools">
               <div class="sidebar-section scripture-section" class:has-content={scriptureOpen || scriptureQuery.trim().length > 0} class:active={scriptureOpen}>
                 <div class="section-title scripture-title">Add Scripture</div>
@@ -4378,13 +4394,12 @@ import {
                 </div>
               </div>
 
-              {#if showContinueReading && continuePosition}
+              {#if showContinueReading && lastReadingPosition}
                 <button class="continue-reading-card" onclick={() => void continueReading()} disabled={continuingReading} aria-busy={continuingReading}>
                   <span class="continue-reading-mark" aria-hidden="true">↗</span>
-                  <span class="continue-reading-copy"><strong>Continue reading</strong><span>{continuePosition.book} {continuePosition.chapter}{savedReadingPlace ? `:${savedReadingPlace.verse}` : ""}{continuePosition.version ? ` · ${continuePosition.version}` : ""}</span></span>
-                  <span class="continue-reading-action">{continuingReading ? "Opening…" : savedReadingPlace ? "Saved verse →" : "Open chapter →"}</span>
+                  <span class="continue-reading-copy"><strong>Continue reading</strong><span>{lastReadingPosition.book} {lastReadingPosition.chapter}{lastReadingPosition.version ? ` · ${lastReadingPosition.version}` : ""}</span></span>
+                  <span class="continue-reading-action">{continuingReading ? "Opening…" : "Open chapter →"}</span>
                 </button>
-                {#if savedReadingPlace}<button class="clear-reading-place" onclick={clearReadingPlace}>Clear saved reading place</button>{/if}
               {/if}
 
               <section class="reading-rhythm-card" class:completed={readingCompletedToday} class:tour-highlight={showTour && tourStep === 5} role="group" aria-label="Daily Scripture reading progress">
@@ -4566,33 +4581,6 @@ import {
                   {/if}
                 </div>
                 <div class="browse-dock-right">
-                  {#if readerMode && selectedBook && selectedChapter && chapterVerses.length > 0}
-                    <ScriptureReader
-                      book={selectedBook}
-                      chapter={selectedChapter}
-                      version={bibles.find((item) => item.id === selectedBibleId)?.shortName || bibles.find((item) => item.id === selectedBibleId)?.name || "Bible"}
-                      verses={chapterVerses}
-                      fontSize={readerFontSize}
-                      busy={browseLoading}
-                      read={currentChapterRead}
-                      canPrevious={selectedChapter !== chapterNumbers[0]}
-                      canNext={selectedChapter !== chapterNumbers.at(-1)}
-                      savedVerse={savedReaderVerse}
-                      resumeVerse={resumeReaderVerse}
-                      status={browseCopyStatus || bookmarkStatus}
-                      error={browseError}
-                      onRetry={() => browseRetry?.()}
-                      onNavigate={navigateBrowseChapter}
-                      onResize={changeReaderFontSize}
-                      onToggleRead={toggleCurrentChapterRead}
-                      onSavePlace={saveReadingPlace}
-                      onClearPlace={clearReadingPlace}
-                      onAdd={(verse) => insertBrowseVerse(verse)}
-                      onCopy={(verse) => { previewVerse = verse; void copyPreviewVerse(); }}
-                      onBookmark={(verse) => { previewVerse = verse; bookmarkPreviewVerse(); }}
-                      onExit={toggleReaderMode}
-                    />
-                  {:else}
                   <label class="verse-text-search">
                     Search this Bible’s verse text
                     <input type="search" value={verseTextQuery} oninput={onVerseTextSearchInput} placeholder="Search a phrase or word" aria-label="Search this Bible's verse text" />
@@ -4632,7 +4620,7 @@ import {
                         <button class="reader-control" disabled={browseLoading || selectedChapter === chapterNumbers.at(-1)} onclick={() => navigateBrowseChapter(1)} aria-label="Next chapter">→</button>
                         <span class="reader-control-divider" aria-hidden="true"></span>
                         <button class="reader-control" disabled={readerFontSize <= 14} onclick={() => changeReaderFontSize(-2)} aria-label="Make Scripture text smaller">A−</button>
-                        <button class="reader-control" disabled={readerFontSize >= 28} onclick={() => changeReaderFontSize(2)} aria-label="Make Scripture text larger">A+</button>
+                        <button class="reader-control" disabled={readerFontSize >= 22} onclick={() => changeReaderFontSize(2)} aria-label="Make Scripture text larger">A+</button>
                         {#if readerMode}
                           <button class="chapter-read-toggle" class:complete={currentChapterRead} disabled={browseLoading} aria-pressed={currentChapterRead} aria-label={currentChapterRead ? "Mark chapter unread" : "Mark chapter read"} onclick={toggleCurrentChapterRead}>{currentChapterRead ? "✓ Read" : "Mark read"}</button>
                         {/if}
@@ -4708,7 +4696,6 @@ import {
                     <p class="browse-placeholder">Select a chapter to see verses — click a verse to add as slide (drag secondary)</p>
                   {:else}
                     <p class="browse-placeholder">Select a book and chapter to browse verses. Click a verse to add as slide.</p>
-                  {/if}
                   {/if}
                 </div>
               </div>
@@ -4814,6 +4801,15 @@ import {
 />
 
 <GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} onImportLyrics={importLyricsFromSearch} />
+
+{#if serviceCheckOpen}
+  <ServiceCheck
+    checks={serviceChecks}
+    stageVisible={Boolean(appState?.stage.visible)}
+    onClose={() => (serviceCheckOpen = false)}
+    onAction={(action) => handleServiceCheckAction(action)}
+  />
+{/if}
 
 {#if showTour}
   <GuidedTour
@@ -6510,7 +6506,15 @@ import {
     background: transparent;
     cursor: pointer;
   }
-  .browse-verse-row { display: flex; align-items: stretch; gap: 4px; }
+  .browse-verse-row {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    /* Long chapters skip layout and paint for offscreen rows until scrolled
+       into view, keeping chapter navigation cheap on low-power devices. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 44px;
+  }
   .verse-preview-action {
     flex: 0 0 auto;
     align-self: center;
@@ -6688,6 +6692,9 @@ import {
       padding-right: 0;
       padding-bottom: 12px;
     }
+    .browse-dock.reader-mode .browse-verses { padding: 4px 6px; }
+    .reader-toolbar { padding: 7px 8px; gap: 8px; }
+    .reader-control-divider { display: none; }
   }
 
   .library-verse-row {
@@ -7730,15 +7737,5 @@ import {
     .book-progress-track span { transition: none; }
   }
   @keyframes scripture-resume-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
-  /* Reading takes the available panel instead of competing with three pickers. */
-  .source-bar.expanded.reading { height: min(76vh, calc(100dvh - 110px)); max-height: none; }
-  .clear-reading-place { align-self: flex-start; margin-top: -8px; padding: 4px 2px; border: 0; color: var(--text-dim); background: transparent; font-size: 10px; }
-  .scripture-pane.browsing.focus-reading { display: block; height: 100%; padding: 12px 16px; overflow: hidden; }
-  .scripture-pane.focus-reading .scripture-tools,
-  .scripture-pane.focus-reading .browse-dock-header,
-  .scripture-pane.focus-reading .browse-dock-left,
-  .scripture-pane.focus-reading .browse-dock-middle { display: none; }
-  .scripture-pane.focus-reading .browse-dock { display: block; height: 100%; min-height: 0; margin: 0; overflow: hidden; }
-  .scripture-pane.focus-reading .browse-dock-right { display: block; height: 100%; min-height: 0; max-height: none; padding: 0; overflow: hidden; }
   .editor-content:has(:global(.look-editor-view)) .editor-heading { position:sticky; top:-22px; z-index:10; background:var(--bg); padding-top:22px; margin-top:-22px; }
 </style>

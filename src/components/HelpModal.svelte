@@ -59,7 +59,10 @@
       >
         Replay guided tour
       </button>
-      <button class="replay" onclick={() => { onReplayTour(4); onClose(); }}>Explore the focused reader</button>
+      <button class="replay" onclick={() => { onReplayTour(4); onClose(); }}>Explore the reader</button>
+      <button class="replay" onclick={() => { onReplayTour(7); onClose(); }}>Run the service check</button>
+      <div class="section-title">Service check</div>
+      <p class="muted">The ✓ Service check in the top bar gathers playlist, audience display, and Stage readiness in one list. Each item opens the real control, and checking never puts a slide live.</p>
       <div class="section-title">Backgrounds</div>
       <p class="muted">Pick a Look for Songs, Scripture and Text in Looks, or choose one for a single item from the item menu.</p>
       <p class="muted">
@@ -71,10 +74,8 @@
       <div class="section-title">Scripture bookmarks</div>
       <p class="muted">In Scripture, open Browse Scripture → Bookmarks. Search by reference, translation, or words from the passage, then choose Add slide. Selected verses use compact references such as John 3:16–18, 20.</p>
       <div class="section-title">Find your place and read a chapter</div>
-      <p class="muted">Use Find a book to rank exact names, prefixes, and close spellings. Choose a chapter, then Read book to expand the verse text and prevent accidental slide inserts. A−/A+ keeps your chosen text size on this device. Select a verse to preview it; choose Add as slide only when you want to present it.</p>
+      <p class="muted">Use Find a book to rank exact names, prefixes, and close spellings. Choose a chapter, then Read book for comfortable text that keeps clicks from adding slides by accident. A−/A+ keeps your chosen text size (14–22) on this device. Select a verse to preview it; choose Add as slide only when you want to present it.</p>
       <p class="muted">The Scripture panel remembers the last chapter you opened. Continue reading reopens that translation, book, and chapter in one step. Your reading position and text size stay on this device.</p>
-      <p class="muted">The reading room gives the passage more space. Page keeps a comfortable line length; Columns uses two columns in wide panels and one in narrow panels. Paper tone and text sizes from 14–28 stay on this device and affect the reader. Select a verse → Save my place to keep an exact verse. Continue reading returns to that mark even after browsing elsewhere. Clear saved place returns to the last opened chapter.</p>
-      <p class="muted">At the end of a chapter, Mark read &amp; continue saves your progress and opens the next chapter. Previous and Next stop at book boundaries.</p>
       <p class="muted">In Read book, mark a chapter read when you finish. The one-chapter daily goal and consecutive-day streak update at that point and stay on this device.</p>
       <p class="muted">Chapter numbers show what you have read in the selected translation. The progress bar tracks the book, and Next unread chapter opens the next chapter you have not marked.</p>
       <div class="section-title">Find content faster</div>
@@ -90,7 +91,7 @@
       <div class="section-title">Keyboard shortcuts</div>
       <ul class="shortcuts">
         <li><span class="keys"><kbd>←</kbd> <kbd>→</kbd></span> Previous / next slide (when not typing)</li>
-        <li><span class="keys"><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd></span> Previous / next chapter in the focused reader</li>
+        <li><span class="keys"><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd></span> Previous / next chapter in reading mode</li>
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span> Search songs, Bibles &amp; media <span class="muted">(⌘K on Mac)</span></li>
         <li><span class="keys"><kbd>?</kbd></span> Open or close this shortcut guide</li>
         <li><span class="keys"><kbd>Esc</kbd></span> Close search, tour, dialog, or return from reading</li>

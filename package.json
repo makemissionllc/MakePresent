@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test:reader": "node tests/readerPreferences.test.mjs",
     "tauri": "tauri",
     "tauri:build:windows": "tauri build --bundles nsis,msi",
     "tauri:build:linux": "tauri build --bundles deb,appimage",

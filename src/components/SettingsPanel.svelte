@@ -54,11 +54,15 @@
     onBrowseMedia?: () => void;
     onOpenSearch?: () => void;
     onUpdate?: (s: ClientState) => void;
+    initialTab?: "plugins" | "whats-new" | null;
+    onTutorial?: (step?: number) => void;
+    tourInProgress?: boolean;
   }
 
-  let { app: appState, onclose, onBrowseMedia = () => {}, onOpenSearch, onUpdate = () => {} }: Props = $props();
+  let { app: appState, onclose, onBrowseMedia = () => {}, onOpenSearch, onUpdate = () => {}, initialTab = null, onTutorial, tourInProgress = false }: Props = $props();
 
   let tab = $state<SettingsTab>(readLastSettingsTab());
+  $effect(() => { if (initialTab) tab = initialTab; });
   let status = $state<{ kind: "ok" | "err"; text: string } | null>(null);
   let logs = $state<LogEntry[]>([]);
   let logsMsg = $state<string | null>(null);
@@ -997,7 +1001,8 @@
   <div class="dialog" role="dialog" tabindex="-1" aria-label="Settings" in:surface={{ duration: 260, distance: 12 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
     <header class="dialog-head">
       <h2>Settings</h2>
-      <button class="close" title="Close" onclick={onclose}>&times;</button>
+      {#if onTutorial}<button class="tutorial-link" onclick={() => onTutorial?.()}>{tourInProgress ? "Return to tutorial" : "Interactive tutorial"}</button>{/if}
+      <button class="close" title="Close" aria-label="Close settings" onclick={onclose}>&times;</button>
     </header>
 
     <nav class="tabs">
@@ -1034,6 +1039,7 @@
             <span class="plugin-kicker">MAKRSTUDIO UPDATES</span>
             <h3>What’s new</h3>
             <p>Recent features and fixes, collected in one place.</p>
+            {#if onTutorial}<div class="tutorial-entry"><button onclick={() => onTutorial?.(0)}>Explore the interactive tutorial →</button><button onclick={() => onTutorial?.(4)}>Try the new reader</button></div>{/if}
           </div>
           {#each CHANGELOG as release (`${release.date}:${release.title}`)}
             <article class="release-card">
@@ -2040,6 +2046,9 @@
 
   .plugin-hub { max-width: 980px; margin: 0 auto; }
   .whats-new { max-width: 820px; margin: 0 auto; }
+  .tutorial-link { margin-left: auto; padding: 6px 10px; color: var(--accent); font-size: 11px; }
+  .tutorial-entry { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .tutorial-entry button { padding: 9px 12px; border: 1px solid var(--border); border-radius: 7px; color: var(--accent); background: var(--panel-2); font-size: 12px; }
   .whats-new-intro { margin: 4px 0 18px; }
   .whats-new-intro h3 { margin: 6px 0; color: var(--text); font-size: 20px; }
   .whats-new-intro p { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.5; }

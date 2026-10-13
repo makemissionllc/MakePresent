@@ -27,13 +27,15 @@
         leave this off so capture devices are only open on Output (live +
         brief fade overlap) and the Editor live preview. */
     enableCamera?: boolean;
+    /** Static editor thumbnails use the cached poster, without a video decoder. */
+    enableVideo?: boolean;
     /** Preview-only fallback; projection retains its existing black default. */
     fallbackColor?: string;
     /** Present the parent song name instead of its Verse/Chorus section label. */
     presentSongTitle?: boolean;
   }
 
-  let { slide, effectiveBackground, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, overlays = [], enableCamera = false, fallbackColor = "#000000", presentSongTitle = false }: Props = $props();
+  let { slide, effectiveBackground, look, showText = true, showBackground = true, isStage = false, aspectRatio, overlay = null, overlays = [], enableCamera = false, enableVideo = true, fallbackColor = "#000000", presentSongTitle = false }: Props = $props();
 
   const visibleOverlays = $derived.by(() => {
     if (overlays.length > 0) return overlays.filter((item) => item.visible);
@@ -132,6 +134,7 @@
         }}
       />
     {:else if background.type === "video"}
+      {#if enableVideo}
       <video
         class="slide-background media-layer"
         src={convertFileSrc(background.path)}
@@ -141,6 +144,11 @@
         playsinline
         preload="auto"
       ></video>
+      {:else if background.thumb}
+        <img class="slide-background media-layer" src={convertFileSrc(background.thumb)} alt="" draggable="false" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+      {:else}
+        <div class="camera-placeholder"><span>Video preview</span></div>
+      {/if}
     {:else if background.type === "live_camera"}
       {#if enableCamera}
         <CameraFeed
@@ -249,6 +257,7 @@
           }}
         />
       {:else if overlayItem.background?.type === "video"}
+        {#if enableVideo}
         <video
           class="overlay-media"
           src={convertFileSrc(overlayItem.background.path)}
@@ -258,6 +267,9 @@
           playsinline
           preload="auto"
         ></video>
+        {:else if overlayItem.background.thumb}
+          <img class="overlay-media" src={convertFileSrc(overlayItem.background.thumb)} alt="" draggable="false" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+        {/if}
       {/if}
       {#if overlayItem.text}
         <div class="overlay-text">{overlayItem.text}</div>

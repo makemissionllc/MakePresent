@@ -14,6 +14,7 @@
     aspectRatio?: string;
     isStage?: boolean;
     enableCamera?: boolean;
+    enableVideo?: boolean;
     fallbackColor?: string;
   }
 
@@ -28,6 +29,7 @@
     aspectRatio,
     isStage = false,
     enableCamera = false,
+    enableVideo = false,
     fallbackColor = "#000000",
   }: Props = $props();
 
@@ -37,6 +39,8 @@
   let scale = $state(1);
   let left = $state(0);
   let top = $state(0);
+  let visible = $state(typeof IntersectionObserver === "undefined");
+  let pageVisible = $state(typeof document === "undefined" || !document.hidden);
 
   onMount(() => {
     const update = () => {
@@ -52,9 +56,22 @@
     };
     const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
     observer?.observe(viewport);
-    window.addEventListener("resize", update);
+    // Only previews intersecting a scroll pane need text fitting or media.
+    const intersection = typeof IntersectionObserver !== "undefined"
+      ? new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; }, { rootMargin: "120px" })
+      : null;
+    intersection?.observe(viewport);
+    const onVisibility = () => { pageVisible = !document.hidden; };
+    document.addEventListener("visibilitychange", onVisibility);
+    if (!observer) window.addEventListener("resize", update);
+    onVisibility();
     update();
-    return () => { observer?.disconnect(); window.removeEventListener("resize", update); };
+    return () => {
+      observer?.disconnect();
+      intersection?.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (!observer) window.removeEventListener("resize", update);
+    };
   });
 </script>
 
@@ -65,19 +82,22 @@
     style:top={`${top}px`}
     style:transform={`scale(${scale})`}
   >
-    <SlideRender
-      {slide}
-      {effectiveBackground}
-      {look}
-      {showText}
-      {showBackground}
-      {overlay}
-      {overlays}
-      {aspectRatio}
-      {isStage}
-      {enableCamera}
-      {fallbackColor}
-    />
+    {#if visible && pageVisible}
+      <SlideRender
+        {slide}
+        {effectiveBackground}
+        {look}
+        {showText}
+        {showBackground}
+        {overlay}
+        {overlays}
+        {aspectRatio}
+        {isStage}
+        {enableCamera}
+        {enableVideo}
+        {fallbackColor}
+      />
+    {/if}
   </div>
 </div>
 

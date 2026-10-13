@@ -13,6 +13,21 @@ export interface ChangeLogRelease {
 export const CHANGELOG: ChangeLogRelease[] = [
   {
     date: "October 13, 2026",
+    title: "A reading room that remembers your place",
+    items: [
+      { kind: "New", text: "Read book opens a focused reading room with a comfortable page layout, optional two columns on wide panels, a paper tone, and text sizes from 14–28. Layout and tone stay on this device; narrow layouts automatically use one column." },
+      { kind: "New", text: "Select a verse → Save my place. Continue reading returns to that exact verse and translation after browsing elsewhere or restarting. Clear saved place returns to the last opened chapter. Saving a place never adds a slide." },
+      { kind: "New", text: "Mark read & continue completes the current chapter and opens the next one. Previous and Next stay within the current book, and chapter progress remains available in the Bible browser." },
+      { kind: "Improved", text: "The animated interactive tutorial has 15 topics and buttons that open the actual tools. Jump to playlists, Output/Stage, songs, Scripture, reader preferences, reading progress, saved places, search, media, Looks, live tools, connections, and updates. Opening a lesson never starts projection or adds content." },
+      { kind: "New", text: "Settings and What’s New open the interactive tutorial or jump straight to the reader lesson. Help includes the same reader entry and instructions; first-run onboarding now explains the reading room and saved verse workflow." },
+      { kind: "Improved", text: "Playlist, slide-editing, and Stage thumbnails use cached still posters for video backgrounds and video overlays. The visible live Output preview keeps playback. Offscreen thumbnails skip slide rendering, hidden editor previews release video/camera resources, and the editor confirmation clock runs only while a renderer is visible and the editor is in view." },
+      { kind: "Fixed", text: "Text fitting ignores font-ready callbacks after a preview is removed. Reader chapter changes clear stale feedback, failed navigation keeps the passage and offers Retry chapter, and choosing another Bible, book, or chapter cancels pending Continue reading navigation. Saved places can also be cleared from the browser if a translation is unavailable." },
+      { kind: "Improved", text: "Reading controls, verse actions, and chapter navigation wrap at narrow widths. Entry and selection animations are brief, respect reduced motion, and use no continuous animation loop." },
+      { kind: "Fixed", text: "Focused reading owns the keyboard: arrow keys cannot accidentally advance live slides. Alt+← / → changes chapters; Escape returns to browsing." },
+    ],
+  },
+  {
+    date: "October 13, 2026",
     title: "A calmer Scripture reading flow",
     items: [
       { kind: "New", text: "Continue reading reopens the last Bible, book, and chapter you read on this device. A single button takes you back to that passage." },

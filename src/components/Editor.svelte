@@ -15,11 +15,14 @@ import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, Count
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
   import SlideThumbnail from "./SlideThumbnail.svelte";
+  import ScriptureReader from "./ScriptureReader.svelte";
+  import { loadReadingPlace, READING_PLACE_KEY, type ReadingPlace } from "../lib/readerPreferences";
   import SongEditorModal from "./SongEditorModal.svelte";
   import ProjectHub from "../lib/components/ProjectHub.svelte";
   import GlobalSearch from "./GlobalSearch.svelte";
   import LookEditorView from "./LookEditorView.svelte";
   import GuidedTour from "./GuidedTour.svelte";
+  import { TOUR_STEPS } from "../lib/tour";
   import HelpModal from "./HelpModal.svelte";
   import BrandLockup from "./BrandLockup.svelte";
   import Onboarding from "./Onboarding.svelte";
@@ -130,9 +133,9 @@ import {
   function readScriptureReaderSize(): number {
     try {
       const value = Number(window.localStorage.getItem(SCRIPTURE_READER_SIZE_KEY));
-      return [14, 16, 18, 20, 22].includes(value) ? value : 16;
+      return [14, 16, 18, 20, 22, 24, 26, 28].includes(value) ? value : 18;
     } catch {
-      return 16;
+      return 18;
     }
   }
 
@@ -319,6 +322,7 @@ import {
     mediaThumbFailures = new Set([...mediaThumbFailures, hash]);
   }
   let settingsOpen = $state(false);
+  let settingsRequestedTab = $state<"plugins" | "whats-new" | null>(null);
   let welcomeDismissed = $state(false);
   let importingMedia = $state(false);
   let scriptureQuery = $state("");
@@ -346,6 +350,10 @@ import {
   let browseCopyStatus = $state<string | null>(null);
   let scriptureBookmarks = $state<ScriptureBookmark[]>(readScriptureBookmarks());
   let lastReadingPosition = $state<ScriptureReadingPosition | null>(readScriptureReadingPosition());
+  let savedReadingPlace = $state<ReadingPlace | null>(loadReadingPlace());
+  let resumeReaderVerse = $state<number | null>(null);
+  const continuePosition = $derived(savedReadingPlace ?? lastReadingPosition);
+  const savedReaderVerse = $derived(savedReadingPlace?.bibleId === selectedBibleId && savedReadingPlace?.book === selectedBook && savedReadingPlace?.chapter === selectedChapter ? savedReadingPlace.verse : null);
   let scriptureReadingProgress = $state<ScriptureReadingProgress>(readScriptureReadingProgress());
   let readingTodayKey = $state(localDayKey());
   const readingCompletedToday = $derived(scriptureReadingProgress.lastReadDate === readingTodayKey);
@@ -368,9 +376,10 @@ import {
   let readerFontSize = $state(readScriptureReaderSize());
   let readerMode = $state(false);
   let continuingReading = $state(false);
+  let continueReadingSeq = 0;
   let bibleBookQuery = $state("");
   const visibleBibleBooks = $derived(rankBibleBooks(bibleBooks, bibleBookQuery));
-  const showContinueReading = $derived(Boolean(lastReadingPosition) && !(
+  const showContinueReading = $derived(Boolean(savedReadingPlace) || Boolean(lastReadingPosition) && !(
     lastReadingPosition?.bibleId === selectedBibleId && lastReadingPosition.book === selectedBook && lastReadingPosition.chapter === selectedChapter
   ));
   let bookmarkQuery = $state("");
@@ -472,64 +481,11 @@ import {
   let onboarding = $state(loadOnboarding());
   let tourActive = $state(false);
   let tourStep = $state(0);
+  let tourActionBusy = $state(false);
   let onboardingOpen = $state(false);
   let helpOpen = $state(false);
 
-  const TOUR_STEPS = [
-    {
-      eyebrow: "Playlist",
-      title: "Build your service here",
-      body: "Add slides, drag songs or verses in, drag to reorder. Click a slide to put it live.",
-    },
-    {
-      eyebrow: "Output",
-      title: "Show it when you're ready",
-      body: "Pick a display, then click Show Output. While live, ← and → move through slides.",
-    },
-    {
-      eyebrow: "Songs",
-      title: "Find a song and add it once",
-      body: "Open Songs below, search your library, or paste lyrics to build a song. Drag a result into the Playlist to choose its place. Ctrl+K searches songs, Bible text, and media together.",
-    },
-    {
-      eyebrow: "Scripture",
-      title: "Go straight to a book and chapter",
-      body: "Use the book finder to filter or correct a small typo, then choose a chapter. Your last chapter is saved on this device so Continue reading can reopen it next time.",
-    },
-    {
-      eyebrow: "Reader",
-      title: "Read comfortably, then add a verse if you need it",
-      body: "Choose Read book to keep verse text expanded and stop accidental slide inserts. Adjust text size or move between chapters. Select a verse to preview it; use Add as slide when you want it in the service.",
-    },
-    {
-      eyebrow: "Reading rhythm",
-      title: "Build a gentle daily habit",
-      body: "When you finish a chapter, mark it read to check off today’s goal. The streak stays on this device and updates only when you mark a chapter, with no background polling or reminders.",
-    },
-    {
-      eyebrow: "Book progress",
-      title: "Pick up where you left off",
-      body: "Marked chapters stay checked in this translation. The progress bar shows how much of the book you’ve read, and Next unread chapter takes you to the next open chapter.",
-    },
-    {
-      eyebrow: "You're set",
-      title: "Ignore all of this on Sunday morning",
-      body: "Nothing here blocks the app — set any slide live right now. The ? Help button replays this tour and lists shortcuts.",
-    },
-  ];
-
   const showTour = $derived(tourActive && !showHub && !onboardingOpen && !helpOpen && !settingsOpen && !globalSearchOpen && appState !== null);
-
-  $effect(() => {
-    if (!showTour) return;
-    if (tourStep === 2) {
-      browseCollapsed = true;
-      openSourceTab("songs");
-    } else if (tourStep === 3) {
-      openSourceTab("scripture");
-      browseCollapsed = false;
-    }
-  });
 
   function finishOnboarding(action: "view" | "tour" | "settings" | "skip"): void {
     onboarding = dismissWelcome(onboarding);
@@ -552,10 +508,51 @@ import {
     onboarding = dismissTour(onboarding);
   }
 
-  function replayTour(): void {
+  function replayTour(step = 0): void {
     onboarding = resetTourDismissal(onboarding);
-    tourStep = 0;
+    tourStep = Math.max(0, Math.min(step, TOUR_STEPS.length - 1));
     tourActive = true;
+  }
+
+  async function runTourAction(): Promise<void> {
+    if (tourActionBusy) return;
+    const step = tourStep;
+    const action = TOUR_STEPS[step]?.action;
+    if (!action) return;
+    tourActionBusy = true;
+    const active = () => tourActive && tourStep === step && !editorDisposed;
+    try {
+      if (action === "search") globalSearchOpen = true;
+      else if (action === "settings" || action === "whats-new") {
+        settingsRequestedTab = action === "settings" ? "plugins" : "whats-new";
+        settingsOpen = true;
+      } else if (action === "looks") { centralView = "looks"; sourceOpen = false; }
+      else if (action === "playlist" || action === "output") {
+        centralView = "slides";
+        showDetail = false;
+        sourceOpen = false;
+      } else if (action === "songs" || action === "media") openSourceTab(action);
+      else {
+        openSourceTab("scripture");
+        browseCollapsed = false;
+        readerMode = false;
+        if (action === "bookmarks") bookmarksOpen = true;
+        if (action === "reader") {
+          if (!selectedBibleId) await loadBibles();
+          if (!active() || !selectedBibleId || browseError) return;
+          if (!selectedBook) {
+            const book = bibleBooks.find((item) => item === "John") ?? bibleBooks[0];
+            if (!book) return;
+            await loadChaptersForBook(selectedBibleId, book);
+          }
+          if (!active() || !selectedBook || browseError) return;
+          if (selectedChapter == null && chapterNumbers.length > 0) await loadChapterVerses(selectedBibleId, selectedBook, chapterNumbers[0]);
+          if (active() && !browseError && chapterVerses.length > 0) { readerMode = true; resumeReaderVerse = null; }
+        }
+      }
+    } finally {
+      tourActionBusy = false;
+    }
   }
 
   // Render-ack heartbeat (Phase 1 of the live-thumbnail research): the latest
@@ -563,7 +560,15 @@ import {
   // early warning that Output/Stage silently stopped responding.
   let ack = $state<AckUpdate | null>(null);
   let nowMs = $state(Date.now());
+  let editorVisible = $state(true);
+  const hasVisibleRenderer = $derived(Boolean(appState?.output.visible || appState?.stage.visible));
   const ACK_STALE_MS = 12000;
+  $effect(() => {
+    if (!editorVisible || !hasVisibleRenderer) return;
+    nowMs = Date.now();
+    const clock = window.setInterval(() => { nowMs = Date.now(); }, 1000);
+    return () => window.clearInterval(clock);
+  });
 
   function ackAgeMs(at: string | null | undefined): number | null {
     if (!at) return null;
@@ -1281,6 +1286,9 @@ import {
       previewVerse = null;
       selectedVerseNumbers = [];
       selectedChapter = chapter;
+      browseCopyStatus = null;
+      bookmarkStatus = null;
+      resumeReaderVerse = null;
       const bible = bibles.find((item) => item.id === bibleId);
       const position: ScriptureReadingPosition = {
         bibleId,
@@ -1301,7 +1309,7 @@ import {
   }
 
   function changeReaderFontSize(delta: -2 | 2): void {
-    readerFontSize = Math.max(14, Math.min(22, readerFontSize + delta));
+    readerFontSize = Math.max(14, Math.min(28, readerFontSize + delta));
     try { window.localStorage.setItem(SCRIPTURE_READER_SIZE_KEY, String(readerFontSize)); } catch { /* keep this size for the current session */ }
   }
 
@@ -1350,19 +1358,52 @@ import {
   function toggleReaderMode(): void {
     readerMode = !readerMode;
     previewVerse = null;
+    verseTextQuery = "";
+    verseTextSeq++;
+    if (verseTextTimer) clearTimeout(verseTextTimer);
+    resumeReaderVerse = null;
+    if (!readerMode) void tick().then(() => {
+      if (!editorDisposed && !readerMode && sourceOpen && sourceTab === "scripture") {
+        document.querySelector<HTMLButtonElement>(".reader-mode-toggle")?.focus({ preventScroll: true });
+      }
+    });
+  }
+
+  function saveReadingPlace(verse: number): void {
+    if (!selectedBibleId || !selectedBook || selectedChapter == null || !chapterVerses.some((item) => item.verse === verse)) return;
+    const bible = bibles.find((item) => item.id === selectedBibleId);
+    savedReadingPlace = { bibleId: selectedBibleId, book: selectedBook, chapter: selectedChapter, verse, version: bible?.shortName || bible?.name || "" };
+    try {
+      window.localStorage.setItem(READING_PLACE_KEY, JSON.stringify(savedReadingPlace));
+      browseCopyStatus = `Place saved at ${selectedBook} ${selectedChapter}:${verse}. Continue reading will bring you back here.`;
+    } catch {
+      browseCopyStatus = "Place saved for this session. Device storage is unavailable.";
+    }
+  }
+
+  function clearReadingPlace(): void {
+    savedReadingPlace = null;
+    try { window.localStorage.removeItem(READING_PLACE_KEY); } catch { /* Session state still clears. */ }
+    browseCopyStatus = "Saved place cleared. Your last opened chapter is still remembered.";
   }
 
   async function continueReading(): Promise<void> {
-    const position = lastReadingPosition;
+    const position = continuePosition;
     if (!position || continuingReading) return;
     continuingReading = true;
+    const sequence = ++continueReadingSeq;
+    const active = () => sequence === continueReadingSeq && !editorDisposed;
     try {
       sourceTab = "scripture";
       sourceOpen = true;
       browseCollapsed = false;
       bibleBookQuery = "";
+      verseTextQuery = "";
+      verseTextSeq++;
+      if (verseTextTimer) clearTimeout(verseTextTimer);
       browseError = null;
       await loadBibles();
+      if (!active()) return;
       if (!bibles.some((bible) => bible.id === position.bibleId)) {
         browseError = `${position.version || "That Bible"} is no longer available. Choose another translation to continue.`;
         return;
@@ -1370,18 +1411,21 @@ import {
       selectedBibleId = position.bibleId;
       try { window.localStorage.setItem("makrstudio.scripture-bible-id", position.bibleId); } catch { /* keep it selected for this session */ }
       await loadBooks(position.bibleId);
+      if (!active()) return;
       if (!bibleBooks.includes(position.book)) {
         browseError = `${position.book} is not available in ${position.version || "that translation"}. Choose another book.`;
         return;
       }
       await loadChaptersForBook(position.bibleId, position.book);
+      if (!active()) return;
       if (!chapterNumbers.includes(position.chapter)) {
         browseError = `${position.book} ${position.chapter} is not available in ${position.version || "that translation"}. Choose another chapter.`;
         return;
       }
       await loadChapterVerses(position.bibleId, position.book, position.chapter);
-      if (selectedChapter === position.chapter && chapterVerses.length > 0) {
+      if (active() && !browseError && selectedBibleId === position.bibleId && selectedBook === position.book && selectedChapter === position.chapter && chapterVerses.length > 0) {
         readerMode = true;
+        resumeReaderVerse = "verse" in position && typeof position.verse === "number" && chapterVerses.some((item) => item.verse === position.verse) ? position.verse : null;
       }
     } finally {
       continuingReading = false;
@@ -1389,6 +1433,7 @@ import {
   }
 
   function onBrowseBibleChange(e: Event): void {
+    continueReadingSeq++;
     const id = (e.target as HTMLSelectElement).value;
     selectedBibleId = id;
     bibleBookQuery = "";
@@ -1402,11 +1447,13 @@ import {
   }
 
   function onBrowseBookSelect(book: string): void {
+    continueReadingSeq++;
     if (!selectedBibleId) return;
     void loadChaptersForBook(selectedBibleId, book);
   }
 
   function onBrowseChapterSelect(ch: number): void {
+    continueReadingSeq++;
     if (!selectedBibleId || !selectedBook) return;
     void loadChapterVerses(selectedBibleId, selectedBook, ch);
   }
@@ -2707,9 +2754,18 @@ import {
       showHub ||
       showSavePlaylistModal ||
       globalSearchOpen ||
-      tourActive ||
       helpOpen
     ) return;
+    if (sourceOpen && sourceTab === "scripture" && readerMode && !browseCollapsed) {
+      // Reading keys belong to the passage, never to live projection.
+      if (e.key === "Escape") { e.preventDefault(); toggleReaderMode(); }
+      else if (e.altKey && !mod && !e.shiftKey && !isTextInputFocused() && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        navigateBrowseChapter(e.key === "ArrowLeft" ? -1 : 1);
+      }
+      return;
+    }
+    if (tourActive) return;
     if (centralView === "slides" && (e.key === "ArrowRight" || e.key === "ArrowLeft") && !isTextInputFocused()) {
       // Reuse existing next/previous logic — same path as triggers/UI clicks
       if (e.key === "ArrowRight") {
@@ -2860,7 +2916,8 @@ import {
     let unAck: () => void = () => {};
     let unCountdown: () => void = () => {};
     let unFileDrop: (() => void) | null = null;
-    const refreshReadingDay = () => { readingTodayKey = localDayKey(); };
+    const refreshReadingDay = () => { readingTodayKey = localDayKey(); editorVisible = !document.hidden; };
+    refreshReadingDay();
     window.addEventListener("focus", refreshReadingDay);
     document.addEventListener("visibilitychange", refreshReadingDay);
 
@@ -3054,10 +3111,6 @@ import {
     }).catch(() => {});
 
     window.addEventListener("keydown", handleGlobalKeydown);
-    // 1s ticker so "Confirmed Ns ago" ages live without new events.
-    const ackClock = window.setInterval(() => {
-      nowMs = Date.now();
-    }, 1000);
     return () => {
       cancelled = true;
       unSub();
@@ -3065,7 +3118,6 @@ import {
       unAuto();
       unLib();
       unAck();
-      window.clearInterval(ackClock);
       if (unFileDrop) unFileDrop();
       cancelPointerDrag();
       window.removeEventListener("keydown", handleGlobalKeydown);
@@ -3800,6 +3852,7 @@ import {
                 overlay={appState?.overlay ?? null}
                 aspectRatio={project?.aspectRatio ?? "16:9"}
                 enableCamera={true}
+                enableVideo={true}
               />
             {:else}
               <div class="preview-empty">No slide</div>
@@ -4071,7 +4124,7 @@ import {
     </aside>
   </div>
 
-  <section class="source-bar" class:expanded={sourceOpen} aria-label="Content library">
+  <section class="source-bar" class:expanded={sourceOpen} class:reading={sourceOpen && sourceTab === "scripture" && readerMode && !browseCollapsed} aria-label="Content library">
     <div class="source-tab-row">
       <span class="source-bar-label">Add content</span>
       <button class:active={sourceOpen && sourceTab === "songs"} aria-pressed={sourceOpen && sourceTab === "songs"} onclick={() => openSourceTab("songs")}>Songs</button>
@@ -4252,7 +4305,7 @@ import {
             </div>
           </div>
         {:else if sourceTab === "scripture"}
-          <div class="source-pane scripture-pane" class:browsing={!browseCollapsed}>
+          <div class="source-pane scripture-pane" class:browsing={!browseCollapsed} class:focus-reading={readerMode && !browseCollapsed}>
             <div class="scripture-tools">
               <div class="sidebar-section scripture-section" class:has-content={scriptureOpen || scriptureQuery.trim().length > 0} class:active={scriptureOpen}>
                 <div class="section-title scripture-title">Add Scripture</div>
@@ -4325,12 +4378,13 @@ import {
                 </div>
               </div>
 
-              {#if showContinueReading && lastReadingPosition}
+              {#if showContinueReading && continuePosition}
                 <button class="continue-reading-card" onclick={() => void continueReading()} disabled={continuingReading} aria-busy={continuingReading}>
                   <span class="continue-reading-mark" aria-hidden="true">↗</span>
-                  <span class="continue-reading-copy"><strong>Continue reading</strong><span>{lastReadingPosition.book} {lastReadingPosition.chapter}{lastReadingPosition.version ? ` · ${lastReadingPosition.version}` : ""}</span></span>
-                  <span class="continue-reading-action">{continuingReading ? "Opening…" : "Open chapter"}</span>
+                  <span class="continue-reading-copy"><strong>Continue reading</strong><span>{continuePosition.book} {continuePosition.chapter}{savedReadingPlace ? `:${savedReadingPlace.verse}` : ""}{continuePosition.version ? ` · ${continuePosition.version}` : ""}</span></span>
+                  <span class="continue-reading-action">{continuingReading ? "Opening…" : savedReadingPlace ? "Saved verse →" : "Open chapter →"}</span>
                 </button>
+                {#if savedReadingPlace}<button class="clear-reading-place" onclick={clearReadingPlace}>Clear saved reading place</button>{/if}
               {/if}
 
               <section class="reading-rhythm-card" class:completed={readingCompletedToday} class:tour-highlight={showTour && tourStep === 5} role="group" aria-label="Daily Scripture reading progress">
@@ -4512,6 +4566,33 @@ import {
                   {/if}
                 </div>
                 <div class="browse-dock-right">
+                  {#if readerMode && selectedBook && selectedChapter && chapterVerses.length > 0}
+                    <ScriptureReader
+                      book={selectedBook}
+                      chapter={selectedChapter}
+                      version={bibles.find((item) => item.id === selectedBibleId)?.shortName || bibles.find((item) => item.id === selectedBibleId)?.name || "Bible"}
+                      verses={chapterVerses}
+                      fontSize={readerFontSize}
+                      busy={browseLoading}
+                      read={currentChapterRead}
+                      canPrevious={selectedChapter !== chapterNumbers[0]}
+                      canNext={selectedChapter !== chapterNumbers.at(-1)}
+                      savedVerse={savedReaderVerse}
+                      resumeVerse={resumeReaderVerse}
+                      status={browseCopyStatus || bookmarkStatus}
+                      error={browseError}
+                      onRetry={() => browseRetry?.()}
+                      onNavigate={navigateBrowseChapter}
+                      onResize={changeReaderFontSize}
+                      onToggleRead={toggleCurrentChapterRead}
+                      onSavePlace={saveReadingPlace}
+                      onClearPlace={clearReadingPlace}
+                      onAdd={(verse) => insertBrowseVerse(verse)}
+                      onCopy={(verse) => { previewVerse = verse; void copyPreviewVerse(); }}
+                      onBookmark={(verse) => { previewVerse = verse; bookmarkPreviewVerse(); }}
+                      onExit={toggleReaderMode}
+                    />
+                  {:else}
                   <label class="verse-text-search">
                     Search this Bible’s verse text
                     <input type="search" value={verseTextQuery} oninput={onVerseTextSearchInput} placeholder="Search a phrase or word" aria-label="Search this Bible's verse text" />
@@ -4551,7 +4632,7 @@ import {
                         <button class="reader-control" disabled={browseLoading || selectedChapter === chapterNumbers.at(-1)} onclick={() => navigateBrowseChapter(1)} aria-label="Next chapter">→</button>
                         <span class="reader-control-divider" aria-hidden="true"></span>
                         <button class="reader-control" disabled={readerFontSize <= 14} onclick={() => changeReaderFontSize(-2)} aria-label="Make Scripture text smaller">A−</button>
-                        <button class="reader-control" disabled={readerFontSize >= 22} onclick={() => changeReaderFontSize(2)} aria-label="Make Scripture text larger">A+</button>
+                        <button class="reader-control" disabled={readerFontSize >= 28} onclick={() => changeReaderFontSize(2)} aria-label="Make Scripture text larger">A+</button>
                         {#if readerMode}
                           <button class="chapter-read-toggle" class:complete={currentChapterRead} disabled={browseLoading} aria-pressed={currentChapterRead} aria-label={currentChapterRead ? "Mark chapter unread" : "Mark chapter read"} onclick={toggleCurrentChapterRead}>{currentChapterRead ? "✓ Read" : "Mark read"}</button>
                         {/if}
@@ -4628,6 +4709,7 @@ import {
                   {:else}
                     <p class="browse-placeholder">Select a book and chapter to browse verses. Click a verse to add as slide.</p>
                   {/if}
+                  {/if}
                 </div>
               </div>
             {/if}
@@ -4686,7 +4768,16 @@ import {
 {/if}
 
 {#if settingsOpen}
-  <SettingsPanel app={appState} onUpdate={(s) => appState = s} onclose={() => (settingsOpen = false)} onBrowseMedia={() => openSourceTab("media")} onOpenSearch={() => (globalSearchOpen = true)} />
+  <SettingsPanel
+    app={appState}
+    initialTab={settingsRequestedTab}
+    tourInProgress={tourActive}
+    onTutorial={(step) => { settingsOpen = false; settingsRequestedTab = null; replayTour(step ?? (tourActive ? tourStep : 0)); }}
+    onUpdate={(s) => appState = s}
+    onclose={() => { settingsOpen = false; settingsRequestedTab = null; }}
+    onBrowseMedia={() => openSourceTab("media")}
+    onOpenSearch={() => (globalSearchOpen = true)}
+  />
 {/if}
 
 <SongEditorModal
@@ -4728,6 +4819,9 @@ import {
   <GuidedTour
     step={tourStep}
     steps={TOUR_STEPS}
+    onGoTo={(step) => (tourStep = step)}
+    onAction={() => void runTourAction()}
+    busy={tourActionBusy}
     onNext={() => (tourStep = Math.min(tourStep + 1, TOUR_STEPS.length - 1))}
     onBack={() => (tourStep = Math.max(tourStep - 1, 0))}
     onDone={() => endTour()}
@@ -4735,7 +4829,7 @@ import {
   />
 {/if}
 
-<HelpModal open={helpOpen} onClose={() => (helpOpen = false)} onReplayTour={() => replayTour()} onGettingStarted={() => { endTour(); onboardingOpen = true; }} />
+<HelpModal open={helpOpen} onClose={() => (helpOpen = false)} onReplayTour={(step) => replayTour(step)} onGettingStarted={() => { endTour(); onboardingOpen = true; }} />
 
 {#if onboardingOpen && appState}
   <Onboarding displayCount={displays?.length ?? null} onFinish={finishOnboarding} />
@@ -7636,5 +7730,15 @@ import {
     .book-progress-track span { transition: none; }
   }
   @keyframes scripture-resume-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+  /* Reading takes the available panel instead of competing with three pickers. */
+  .source-bar.expanded.reading { height: min(76vh, calc(100dvh - 110px)); max-height: none; }
+  .clear-reading-place { align-self: flex-start; margin-top: -8px; padding: 4px 2px; border: 0; color: var(--text-dim); background: transparent; font-size: 10px; }
+  .scripture-pane.browsing.focus-reading { display: block; height: 100%; padding: 12px 16px; overflow: hidden; }
+  .scripture-pane.focus-reading .scripture-tools,
+  .scripture-pane.focus-reading .browse-dock-header,
+  .scripture-pane.focus-reading .browse-dock-left,
+  .scripture-pane.focus-reading .browse-dock-middle { display: none; }
+  .scripture-pane.focus-reading .browse-dock { display: block; height: 100%; min-height: 0; margin: 0; overflow: hidden; }
+  .scripture-pane.focus-reading .browse-dock-right { display: block; height: 100%; min-height: 0; max-height: none; padding: 0; overflow: hidden; }
   .editor-content:has(:global(.look-editor-view)) .editor-heading { position:sticky; top:-22px; z-index:10; background:var(--bg); padding-top:22px; margin-top:-22px; }
 </style>

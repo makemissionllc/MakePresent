@@ -4,7 +4,7 @@
   interface Props {
     open: boolean;
     onClose: () => void;
-    onReplayTour: () => void;
+    onReplayTour: (step?: number) => void;
     onGettingStarted: () => void;
   }
 
@@ -48,7 +48,7 @@
       <p class="muted">A little preparation. A confident first service.</p>
       <button class="replay" onclick={() => { onClose(); onGettingStarted(); }}>Getting started</button>
       <p class="muted">
-        New here? Take the guided tour — it walks through playlist, Output, songs, the Bible browser, and reading mode.
+        Explore at your own pace. The interactive tutorial covers playlists, Output, songs, Scripture, reading, search, media, Looks, live tools, connections, and updates. Jump to any topic and use its button to open the real controls.
       </p>
       <button
         class="replay"
@@ -59,6 +59,7 @@
       >
         Replay guided tour
       </button>
+      <button class="replay" onclick={() => { onReplayTour(4); onClose(); }}>Explore the focused reader</button>
       <div class="section-title">Backgrounds</div>
       <p class="muted">Pick a Look for Songs, Scripture and Text in Looks, or choose one for a single item from the item menu.</p>
       <p class="muted">
@@ -72,6 +73,8 @@
       <div class="section-title">Find your place and read a chapter</div>
       <p class="muted">Use Find a book to rank exact names, prefixes, and close spellings. Choose a chapter, then Read book to expand the verse text and prevent accidental slide inserts. A−/A+ keeps your chosen text size on this device. Select a verse to preview it; choose Add as slide only when you want to present it.</p>
       <p class="muted">The Scripture panel remembers the last chapter you opened. Continue reading reopens that translation, book, and chapter in one step. Your reading position and text size stay on this device.</p>
+      <p class="muted">The reading room gives the passage more space. Page keeps a comfortable line length; Columns uses two columns in wide panels and one in narrow panels. Paper tone and text sizes from 14–28 stay on this device and affect the reader. Select a verse → Save my place to keep an exact verse. Continue reading returns to that mark even after browsing elsewhere. Clear saved place returns to the last opened chapter.</p>
+      <p class="muted">At the end of a chapter, Mark read &amp; continue saves your progress and opens the next chapter. Previous and Next stop at book boundaries.</p>
       <p class="muted">In Read book, mark a chapter read when you finish. The one-chapter daily goal and consecutive-day streak update at that point and stay on this device.</p>
       <p class="muted">Chapter numbers show what you have read in the selected translation. The progress bar tracks the book, and Next unread chapter opens the next chapter you have not marked.</p>
       <div class="section-title">Find content faster</div>
@@ -82,12 +85,15 @@
       <p class="muted">Renaming the song keeps your arrangement. All slides alignment controls apply to every slide; the buttons on each preview card adjust just that slide. Editing the lyrics or line limit rebuilds the preview and clears arrangement Undo. If the title closely matches a song already in your library, the editor warns you and asks for a second Add Song press to add it anyway.</p>
       <div class="section-title">Bible downloads &amp; audio</div>
       <p class="muted">Bible catalog loads and downloads have bounded waits: a stalled catalog or download reports an error with Retry instead of spinning forever. In Settings → Audio, the device list shows when it is scanning, and a frozen track position surfaces a reconnect hint after repeated failures.</p>
+      <div class="section-title">Lighter previews</div>
+      <p class="muted">Playlist, editing, and Stage thumbnails show cached still posters for video backgrounds and overlays. The visible live Output preview plays motion. Offscreen thumbnails skip rendering, and hidden editor previews release video and camera resources. Settings → What’s New records the changes and links back to this tutorial.</p>
       <div class="section-title">Keyboard shortcuts</div>
       <ul class="shortcuts">
         <li><span class="keys"><kbd>←</kbd> <kbd>→</kbd></span> Previous / next slide (when not typing)</li>
+        <li><span class="keys"><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd></span> Previous / next chapter in the focused reader</li>
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span> Search songs, Bibles &amp; media <span class="muted">(⌘K on Mac)</span></li>
         <li><span class="keys"><kbd>?</kbd></span> Open or close this shortcut guide</li>
-        <li><span class="keys"><kbd>Esc</kbd></span> Close search, tour, or dialog</li>
+        <li><span class="keys"><kbd>Esc</kbd></span> Close search, tour, dialog, or return from reading</li>
         <li><span class="keys"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></span> Pick a Scripture suggestion or a search result</li>
         <li><span class="keys"><kbd>Enter</kbd> / <kbd>Esc</kbd></span> Confirm / cancel a dialog</li>
       </ul>

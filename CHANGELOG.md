@@ -2,6 +2,36 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
+## 2026-10-13 — A reading room that remembers your place
+
+### Added
+
+- A focused Scripture reading room with Page and Columns layouts, Paper tone, and text sizes from 14–28. Wide panels can use two columns; narrow panels reflow to one. Layout, tone, and text size are saved locally.
+- Select a verse → Save my place. Continue reading reopens that translation and scrolls to the exact verse, even after browsing other passages or restarting. Clear saved place restores the last-chapter behavior. Verse actions keep copying, bookmarks, and slide insertion explicit.
+- Mark read & continue completes a chapter and opens the next chapter in the same book. Previous/Next disable at book boundaries.
+- A 15-topic interactive tutorial covers playlists/Views, Output/Stage, song preparation, Scripture selection/downloads, reader preferences, daily/book progress, saved places, global/recent search, media/camera/backgrounds, Looks, overlays/countdown/transitions, connections/audio/triggers/network, and release notes. Topic selection and action buttons open the real tools without adding content or starting projection.
+- Settings and What’s New offer tutorial entry points, including a reader lesson. Help and animated first-run onboarding explain the same features.
+
+### Improved
+
+- Reading mode uses more of the window and hides book/chapter pickers until Back to browse. Controls wrap, reading text stays within a comfortable measure, and the passage scrolls independently of chapter navigation.
+- Playlist, editing, and Stage thumbnails use cached still posters for video backgrounds and overlays rather than opening a video decoder for each thumbnail. The visible live Output preview retains motion; actual projection rendering keeps its existing playback.
+- Intersection and visibility observers skip offscreen slide rendering and release hidden editor preview media/cameras. Thumbnail sizing no longer registers a redundant window resize listener when ResizeObserver is available.
+- The editor confirmation clock stops when no renderer is visible or the editor is hidden. Font-ready callbacks cannot restart text fitting after teardown.
+- Reader and tutorial transitions are short and respect reduced-motion preferences. No continuous decorative animation or reading-progress polling was added.
+
+### Fixed
+
+- Chapter changes clear stale reading feedback. Changing the Bible, book, or chapter interrupts pending Continue reading navigation instead of letting it replace a newer choice.
+- Failed reader navigation preserves the current passage and shows Retry chapter. Saved places can also be cleared from the browser if their translation is no longer installed.
+- Focused reading prevents arrow keys from advancing live slides. Alt+← / → changes chapters, and Escape returns to browsing with focus on Read book.
+
+### Verification
+
+- `npm run check`, `npm run build`, `npm run test:reader`, and `git diff --check` pass. The five persistence tests cover malformed/legacy data, exact verses, independent preferences, and blocked storage.
+- Chromium browser checks with mocked native commands and bundled KJV text cover reading at 1440, 1000, 680, and 390 pixels; saved-place scrolling/reload; layout/tone preferences; mark-and-continue; failed chapter retry; Help/Settings/tutorial actions; and no unintended insert/projection commands. A 100-video-slide fixture has zero grid video elements, and hidden editor previews release video elements. Actual Output and Stage components retain video rendering.
+- Physical projection displays, native Windows WebView2, real camera devices, and device temperature/power draw were not measured in this verification.
+
 ## 2026-10-13 — A calmer Scripture reading flow
 
 ### Added

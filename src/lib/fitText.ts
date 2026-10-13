@@ -209,6 +209,7 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
 ) => {
   let raf = 0;
   let lastDeps: string | undefined;
+  let disposed = false;
 
   const run = (): void => {
     const minTitlePx = opts?.minTitlePx ?? 24;
@@ -286,6 +287,7 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
   // Coalesce all triggers (mount, resize, content change) to at most one
   // measure per frame; never a per-frame loop during transitions.
   const schedule = (): void => {
+    if (disposed) return;
     if (!raf) {
       raf = requestAnimationFrame(() => {
         raf = 0;
@@ -315,6 +317,7 @@ export const fitText: Action<HTMLElement, FitTextOptions | undefined> = (
       }
     },
     destroy(): void {
+      disposed = true;
       ro.disconnect();
       mo.disconnect();
       if (raf) cancelAnimationFrame(raf);

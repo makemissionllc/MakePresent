@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
+  import { surface } from "../lib/motion";
   import BrandLockup from "./BrandLockup.svelte";
 
   interface Props {
@@ -8,23 +9,24 @@
   }
   let { displayCount, onFinish }: Props = $props();
   let dialog: HTMLDialogElement;
-  let heading: HTMLHeadingElement;
+  let heading = $state<HTMLHeadingElement>();
   let step = $state(0);
   const labels = ["Welcome", "Your workspace", "Ready to present"];
 
   onMount(() => {
     const previous = document.activeElement;
     dialog.showModal();
-    heading.focus();
+    heading?.focus();
     return () => {
       dialog.close();
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
   });
 
-  function goTo(next: number): void {
+  async function goTo(next: number): Promise<void> {
     step = next;
-    heading.focus();
+    await tick();
+    heading?.focus();
   }
 </script>
 
@@ -41,7 +43,8 @@
         </button>
       {/each}
     </nav>
-    <section>
+    {#key step}
+    <section in:surface={{ duration: 220, distance: 6 }}>
       <p class="eyebrow">GETTING STARTED · {step + 1} OF 3</p>
       <h1 id="welcome-title" bind:this={heading} tabindex="-1">{step === 0 ? "Make room for the message." : step === 1 ? "A place for every part of your service." : "Your message. On the right screen."}</h1>
       {#if step === 0}
@@ -57,7 +60,7 @@
           <li><span class="guide-icon">1</span><div><strong>Build your playlist</strong><p>Choose a starting playlist or begin blank. Add songs, verses, and media, then drag to reorder.</p></div></li>
           <li><span class="guide-icon">2</span><div><strong>Give it a Look</strong><p>Use Looks to set fonts, backgrounds, and layouts for your Output and Stage Display.</p></div></li>
           <li><span class="guide-icon">3</span><div><strong>Keep your place</strong><p>Your current View saves automatically. Save a reusable playlist before creating your next View.</p></div></li>
-          <li><span class="guide-icon">4</span><div><strong>Read and return</strong><p>Find a Bible book by name, open Read book for comfortable text, mark finished chapters, and use Next unread chapter to keep going. Continue reading returns to your last passage; book progress stays on this device.</p></div></li>
+          <li><span class="guide-icon">4</span><div><strong>Read and return</strong><p>Find a Bible book by name, open Read book for comfortable text, mark finished chapters, and use Next unread chapter to keep going. Choose Page, Columns, Paper tone, and your text size. Select a verse → Save my place to return to that exact verse with Continue reading. Mark read &amp; continue opens the next chapter. Your preferences and progress stay on this device.</p></div></li>
         </ol>
         <p class="note">Once Output is visible, clicking a playlist slide puts it live. Use ← and → to move through the service when you’re not typing.</p>
       {:else}
@@ -65,9 +68,10 @@
         <div class="display-status"><span class="status-dot"></span><div><strong>{displayCount === null ? "Check your displays in the editor" : displayCount > 1 ? `${displayCount} displays detected` : "Working with one display"}</strong><p>{displayCount !== null && displayCount > 1 ? "Choose the audience display in the Output panel, then select Show Output." : "You can prepare your service now. Connect a second display when you’re ready to present."}</p></div></div>
         <div class="connection-notes"><strong>Streaming with OBS?</strong><p>Enable NDI in Settings, show Output, then select MakrStudio in an OBS NDI Source. OBS needs the DistroAV plugin and a compatible NDI Runtime. Check for Live status in MakrStudio.</p></div>
         <p class="note">Showing Output can reveal the current live slide. Check the preview before putting it on screen.</p>
-        <div class="next-actions"><button onclick={() => onFinish("tour")}>Take the workspace tour</button><button onclick={() => onFinish("settings")}>Open settings</button></div>
+        <div class="next-actions"><button onclick={() => onFinish("tour")}>Explore the interactive tutorial</button><button onclick={() => onFinish("settings")}>Open settings</button></div>
       {/if}
     </section>
+    {/key}
   </div>
   <footer>
     <button class="quiet skip" onclick={() => onFinish("skip")}>Skip for now</button>

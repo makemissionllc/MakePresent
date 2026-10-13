@@ -44,6 +44,7 @@ import {
 
   const SCRIPTURE_BOOKMARKS_KEY = "makrstudio.scripture-bookmarks";
   const SCRIPTURE_READING_POSITION_KEY = "makrstudio.scripture-reading-position.v1";
+  const SCRIPTURE_READING_PROGRESS_KEY = "makrstudio.scripture-reading-progress.v1";
   const SCRIPTURE_READER_SIZE_KEY = "makrstudio.scripture-reader-size.v1";
 
   interface ScriptureReadingPosition {
@@ -51,6 +52,39 @@ import {
     book: string;
     chapter: number;
     version: string;
+  }
+
+  interface ScriptureReadingProgress {
+    lastReadDate: string;
+    streak: number;
+  }
+
+  function localDayKey(date = new Date()): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function previousLocalDayKey(dayKey: string): string {
+    const [year, month, day] = dayKey.split("-").map(Number);
+    const previous = new Date(year, month - 1, day);
+    previous.setDate(previous.getDate() - 1);
+    return localDayKey(previous);
+  }
+
+  function readScriptureReadingProgress(): ScriptureReadingProgress {
+    try {
+      const raw = window.localStorage.getItem(SCRIPTURE_READING_PROGRESS_KEY);
+      if (!raw) return { lastReadDate: "", streak: 0 };
+      const value = JSON.parse(raw) as Partial<ScriptureReadingProgress>;
+      return typeof value.lastReadDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.lastReadDate) &&
+        Number.isInteger(value.streak) && Number(value.streak) >= 1
+        ? { lastReadDate: value.lastReadDate, streak: Math.min(Number(value.streak), 9999) }
+        : { lastReadDate: "", streak: 0 };
+    } catch {
+      return { lastReadDate: "", streak: 0 };
+    }
   }
 
   function readScriptureReadingPosition(): ScriptureReadingPosition | null {
@@ -286,6 +320,14 @@ import {
   let browseCopyStatus = $state<string | null>(null);
   let scriptureBookmarks = $state<ScriptureBookmark[]>(readScriptureBookmarks());
   let lastReadingPosition = $state<ScriptureReadingPosition | null>(readScriptureReadingPosition());
+  let scriptureReadingProgress = $state<ScriptureReadingProgress>(readScriptureReadingProgress());
+  let readingTodayKey = $state(localDayKey());
+  const readingCompletedToday = $derived(scriptureReadingProgress.lastReadDate === readingTodayKey);
+  const readingStreak = $derived.by(() => {
+    const today = readingTodayKey;
+    const lastRead = scriptureReadingProgress.lastReadDate;
+    return lastRead === today || lastRead === previousLocalDayKey(today) ? scriptureReadingProgress.streak : 0;
+  });
   let readerFontSize = $state(readScriptureReaderSize());
   let readerMode = $state(false);
   let continuingReading = $state(false);
@@ -421,6 +463,11 @@ import {
       eyebrow: "Reader",
       title: "Read comfortably, then add a verse if you need it",
       body: "Choose Read book to keep verse text expanded and stop accidental slide inserts. Adjust text size or move between chapters. Select a verse to preview it; use Add as slide when you want it in the service.",
+    },
+    {
+      eyebrow: "Reading rhythm",
+      title: "Build a gentle daily habit",
+      body: "Read one chapter in Read book to check off today’s goal. Your streak is counted by local calendar days and stays on this device; it only updates when you read, with no background polling or reminders.",
     },
     {
       eyebrow: "You're set",
@@ -1201,6 +1248,7 @@ import {
       };
       lastReadingPosition = position;
       try { window.localStorage.setItem(SCRIPTURE_READING_POSITION_KEY, JSON.stringify(position)); } catch { /* keep the reading position for this session */ }
+      markScriptureChapterRead(bibleId, book, chapter);
       use("browse");
     } catch (e) {
       if (request === browseRequestSeq) {
@@ -1214,6 +1262,30 @@ import {
   function changeReaderFontSize(delta: -2 | 2): void {
     readerFontSize = Math.max(14, Math.min(22, readerFontSize + delta));
     try { window.localStorage.setItem(SCRIPTURE_READER_SIZE_KEY, String(readerFontSize)); } catch { /* keep this size for the current session */ }
+  }
+
+  function markScriptureChapterRead(bibleId: string, book: string, chapter: number): void {
+    if (!readerMode || !bibleId || !book || !Number.isInteger(chapter) || chapter < 1) return;
+    const today = localDayKey();
+    readingTodayKey = today;
+    if (scriptureReadingProgress.lastReadDate === today) return;
+    const streak = scriptureReadingProgress.lastReadDate === previousLocalDayKey(today)
+      ? scriptureReadingProgress.streak + 1
+      : 1;
+    scriptureReadingProgress = { lastReadDate: today, streak };
+    try {
+      window.localStorage.setItem(SCRIPTURE_READING_PROGRESS_KEY, JSON.stringify(scriptureReadingProgress));
+    } catch {
+      // Keep the progress visible for this session when storage is unavailable.
+    }
+  }
+
+  function toggleReaderMode(): void {
+    readerMode = !readerMode;
+    previewVerse = null;
+    if (readerMode && chapterVerses.length > 0 && selectedBibleId && selectedBook && selectedChapter) {
+      markScriptureChapterRead(selectedBibleId, selectedBook, selectedChapter);
+    }
   }
 
   async function continueReading(): Promise<void> {
@@ -1244,7 +1316,10 @@ import {
         return;
       }
       await loadChapterVerses(position.bibleId, position.book, position.chapter);
-      if (selectedChapter === position.chapter && chapterVerses.length > 0) readerMode = true;
+      if (selectedChapter === position.chapter && chapterVerses.length > 0) {
+        readerMode = true;
+        markScriptureChapterRead(position.bibleId, position.book, position.chapter);
+      }
     } finally {
       continuingReading = false;
     }
@@ -2722,6 +2797,9 @@ import {
     let unAck: () => void = () => {};
     let unCountdown: () => void = () => {};
     let unFileDrop: (() => void) | null = null;
+    const refreshReadingDay = () => { readingTodayKey = localDayKey(); };
+    window.addEventListener("focus", refreshReadingDay);
+    document.addEventListener("visibilitychange", refreshReadingDay);
 
     // Native Tauri drag events preserve physical pointer coordinates. Map them
     // back to CSS pixels before hit testing so OS drops can target exact rows.
@@ -2928,6 +3006,8 @@ import {
       if (unFileDrop) unFileDrop();
       cancelPointerDrag();
       window.removeEventListener("keydown", handleGlobalKeydown);
+      window.removeEventListener("focus", refreshReadingDay);
+      document.removeEventListener("visibilitychange", refreshReadingDay);
       if (scriptureTimer) clearTimeout(scriptureTimer);
       if (verseTextTimer) clearTimeout(verseTextTimer);
       verseTextSeq++;
@@ -4190,6 +4270,18 @@ import {
                 </button>
               {/if}
 
+              <section class="reading-rhythm-card" class:completed={readingCompletedToday} class:tour-highlight={showTour && tourStep === 5} role="group" aria-label="Daily Scripture reading progress">
+                <span class="reading-rhythm-icon" aria-hidden="true">{readingCompletedToday ? "✓" : "◷"}</span>
+                <div class="reading-rhythm-body">
+                  <div class="reading-rhythm-heading"><strong>One chapter a day</strong><span>{readingStreak > 0 ? `${readingStreak}-day streak` : "Start today"}</span></div>
+                  <p>{readingCompletedToday ? "Today’s reading is done." : "Read a chapter in Read book to mark today’s progress."}</p>
+                  <div class="reading-rhythm-track" role="progressbar" aria-label="Daily chapter goal" aria-valuemin="0" aria-valuemax="1" aria-valuenow={readingCompletedToday ? 1 : 0}>
+                    <span class:filled={readingCompletedToday}></span>
+                  </div>
+                  <small>Progress stays on this device.</small>
+                </div>
+              </section>
+
               <div class="browse-panel" class:tour-highlight={showTour && tourStep === 3}>
                 <button class="browse-header" onclick={() => (browseCollapsed = !browseCollapsed)} aria-expanded={!browseCollapsed}>
                   <span class="section-title" style="margin:0; border:none; padding:0;">Browse Scripture</span>
@@ -4382,7 +4474,7 @@ import {
                         <span class="reader-control-divider" aria-hidden="true"></span>
                         <button class="reader-control" disabled={readerFontSize <= 14} onclick={() => changeReaderFontSize(-2)} aria-label="Make Scripture text smaller">A−</button>
                         <button class="reader-control" disabled={readerFontSize >= 22} onclick={() => changeReaderFontSize(2)} aria-label="Make Scripture text larger">A+</button>
-                        <button class="reader-mode-toggle" aria-pressed={readerMode} onclick={() => { readerMode = !readerMode; previewVerse = null; }}>{readerMode ? "Exit reading" : "Read book"}</button>
+                        <button class="reader-mode-toggle" aria-pressed={readerMode} onclick={toggleReaderMode}>{readerMode ? "Exit reading" : "Read book"}</button>
                       </div>
                     </div>
                     <div class="browse-range-tools">
@@ -6266,6 +6358,19 @@ import {
   .continue-reading-copy strong { font-size: 12px; }
   .continue-reading-copy span { color: var(--text-dim); font-size: 11px; }
   .continue-reading-action { margin-left: auto; color: var(--accent); font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .reading-rhythm-card { display: flex; align-items: center; gap: 11px; width: min(100%, 640px); padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); color: var(--text); animation: scripture-resume-in 240ms var(--ease-emphasized) both; }
+  .reading-rhythm-card.completed { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
+  .reading-rhythm-icon { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; border-radius: 50%; color: var(--text-dim); background: var(--panel-2); font-size: 15px; }
+  .reading-rhythm-card.completed .reading-rhythm-icon { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
+  .reading-rhythm-body { display: grid; gap: 5px; min-width: 0; width: 100%; }
+  .reading-rhythm-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .reading-rhythm-heading strong { font-size: 11px; }
+  .reading-rhythm-heading span { color: var(--accent); font-size: 10px; font-weight: 700; white-space: nowrap; }
+  .reading-rhythm-body p { margin: 0; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
+  .reading-rhythm-track { height: 3px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
+  .reading-rhythm-track span { display: block; width: 100%; height: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-emphasized); }
+  .reading-rhythm-track span.filled { transform: scaleX(1); }
+  .reading-rhythm-body small { color: var(--text-dim); font-size: 9px; }
   .reader-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
   .reader-heading { display: grid; gap: 3px; }
   .reader-heading strong { color: var(--text); font-size: 13px; }
@@ -7428,7 +7533,8 @@ import {
     .continue-reading-action { font-size: 10px; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .continue-reading-card { animation: none; transition: none; }
+    .continue-reading-card, .reading-rhythm-card { animation: none; transition: none; }
+    .reading-rhythm-track span { transition: none; }
   }
   @keyframes scripture-resume-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
   .editor-content:has(:global(.look-editor-view)) .editor-heading { position:sticky; top:-22px; z-index:10; background:var(--bg); padding-top:22px; margin-top:-22px; }

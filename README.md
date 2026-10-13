@@ -3,6 +3,7 @@
 ## Changed (2026-10-13) — A calmer Scripture reading flow
 
 - Continue reading restores the last Bible, book, and chapter from this device. Read book offers expanded verse text, saved text sizing, chapter navigation, and preview-before-add behavior; book search ranks exact names and close spellings.
+- A one-chapter daily goal gives a quiet progress check-in and a local reading streak. It uses no background polling, account, or reminders.
 - Fixed numbered-book XML such as the bundled NIRV Bible, added common legacy encoding support, and filter empty verse placeholders so translations no longer present blank books/chapters.
 - Scripture panels adapt to their actual width. A two-translation memory cache, one-time imported XML parsing, and delayed minimum-length Bible text search reduce repeated file reads and CPU work.
 - The animated guided tour, first-run onboarding, Help, and Settings → What’s New explain how to find, read, and resume a passage. All prior release details remain in [CHANGELOG.md](CHANGELOG.md).

@@ -24,7 +24,7 @@
 
 <!-- Non-blocking: the wrapper ignores pointer events so a volunteer under
      time pressure can click straight through everywhere except the card. -->
-<div class="tour-layer" class:source-step={step >= 2 && step <= 4} role="dialog" aria-label="MakrStudio guided tour">
+<div class="tour-layer" class:source-step={step >= 2 && step <= 5} role="dialog" aria-label="MakrStudio guided tour">
   <div class="tour-card" in:surface={{ duration: 240, distance: 10 }}>
     <div class="tour-top">
       <span class="tour-eyebrow">{current.eyebrow} · {step + 1} of {steps.length}</span>

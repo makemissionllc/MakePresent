@@ -72,6 +72,7 @@
       <div class="section-title">Find your place and read a chapter</div>
       <p class="muted">Use Find a book to rank exact names, prefixes, and close spellings. Choose a chapter, then Read book to expand the verse text and prevent accidental slide inserts. A−/A+ keeps your chosen text size on this device. Select a verse to preview it; choose Add as slide only when you want to present it.</p>
       <p class="muted">The Scripture panel remembers the last chapter you opened. Continue reading reopens that translation, book, and chapter in one step. Your reading position and text size stay on this device.</p>
+      <p class="muted">Read a chapter in Read book to check off the one-chapter daily goal. Your consecutive-day streak is counted locally and saved on this device; it updates only when you read and never sends reminders.</p>
       <div class="section-title">Find content faster</div>
       <p class="muted">Press Ctrl+K (⌘K on Mac). Song results put matching titles first, tolerate small spelling mistakes, and also find lyric phrases. Scripture suggestions rank exact references first, then prefix and word matches, tolerating small typos before falling back to verse text.</p>
       <p class="muted">In the search window, press ↑ and ↓ to move through every result and Enter to add the highlighted one. Use Clear to start another search, or Escape to close search from any control. If a Bible cannot be read, Retry search or choose a different translation in Scripture; library songs and available media stay usable.</p>

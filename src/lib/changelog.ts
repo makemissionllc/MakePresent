@@ -16,6 +16,7 @@ export const CHANGELOG: ChangeLogRelease[] = [
     title: "A calmer Scripture reading flow",
     items: [
       { kind: "New", text: "Continue reading reopens the last Bible, book, and chapter you read on this device. A single button takes you back to that passage." },
+      { kind: "New", text: "A one-chapter daily goal records a gentle reading streak when you enter Read book. Progress stays on this device and updates only when you read, with no background polling or reminders." },
       { kind: "New", text: "Read book switches Scripture to a focused reading view: verses wrap and stay expanded, clicking previews instead of adding a slide, and Add as slide remains explicit. Text size and chapter navigation stay close at hand." },
       { kind: "New", text: "Find a book ranks exact names, prefixes, matching words, and small spelling mistakes so you can jump to a Bible book without scrolling the full list." },
       { kind: "Fixed", text: "The bundled NIRV file labels books by number. The XML reader now maps those numbers to their Bible book names, handles common legacy character encodings, and leaves books and chapters with no readable verses out of the browser." },

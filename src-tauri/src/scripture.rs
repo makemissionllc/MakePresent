@@ -249,25 +249,22 @@ impl ScriptureIndex {
         existing.chapters.sort_by_key(|c| c.chapter);
     }
 
-    /// Convert a raw book into its in-memory representation, skipping any
-    /// non-numeric chapter/verse numbers.
+    /// Convert a raw book into its in-memory representation. Malformed or
+    /// non-readable entries are skipped individually so one damaged verse
+    /// cannot make an otherwise usable chapter disappear.
     fn book_data_from(raw: RawBook) -> Option<BookData> {
         let chapters: Vec<ScriptureChapter> = raw
             .chapters
             .into_iter()
             .filter_map(|rc| {
-                let ch_num = rc.chapter.parse::<u32>().ok()?;
-                let verses: Vec<ScriptureVerse> = rc
-                    .verses
+                let ch_num = numeric_label_number(&rc.chapter)?;
+                let verses: Vec<ScriptureVerse> = readable_chapter_verses(&rc)
                     .into_iter()
-                    .filter_map(|rv| {
-                        let v_num = rv.verse.parse::<u32>().ok()?;
-                        Some(ScriptureVerse {
-                            verse: v_num,
-                            text: rv.text,
-                        })
-                    })
+                    .map(|(verse, text)| ScriptureVerse { verse, text })
                     .collect();
+                if verses.is_empty() {
+                    return None;
+                }
                 Some(ScriptureChapter { chapter: ch_num, verses })
             })
             .collect();
@@ -655,6 +652,51 @@ impl ScriptureIndex {
     }
 }
 
+/// Read a leading number from common OpenLP/OSIS-style identifiers, including
+/// labels such as `1a`, `Gen.1`, and `Gen.1.16`. Unsupported labels are omitted
+/// from the numbered reader instead of hiding the surrounding chapter.
+pub fn numeric_label_number(label: &str) -> Option<u32> {
+    let tail = label.trim().rsplit(['.', ':']).next()?.trim();
+    let digits: String = tail.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
+}
+
+/// Return a chapter's readable numbered verses, merging split verse labels
+/// such as `3a` and `3b` into one visible verse to keep reader keys unique.
+pub fn readable_chapter_verses(chapter: &RawChapter) -> Vec<(u32, String)> {
+    let mut verses: Vec<(u32, String)> = Vec::new();
+    let mut verse_indexes: HashMap<u32, usize> = HashMap::new();
+    for verse in &chapter.verses {
+        let Some(number) = numeric_label_number(&verse.verse) else { continue };
+        let text = verse.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if let Some(index) = verse_indexes.get(&number).copied() {
+            let existing = &mut verses[index].1;
+            if !existing.ends_with(' ') {
+                existing.push(' ');
+            }
+            existing.push_str(text);
+        } else {
+            verse_indexes.insert(number, verses.len());
+            verses.push((number, text.to_string()));
+        }
+    }
+    verses.sort_by_key(|(number, _)| *number);
+    verses
+}
+
+pub fn has_readable_verses(book: &RawBook) -> bool {
+    book.chapters.iter().any(|chapter| {
+        numeric_label_number(&chapter.chapter).is_some() && !readable_chapter_verses(chapter).is_empty()
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------
@@ -770,7 +812,7 @@ pub fn scan_bibles_folder(data_dir: &Path) -> (Vec<RawBook>, Vec<(String, String
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown.xml")
                 .to_string();
-            match std::fs::read_to_string(&path) {
+            match read_bible_xml(&path) {
                 Ok(xml) => match parse_openlp_xml(&xml) {
                     Ok(books) => ok.extend(books),
                     Err(e) => errs.push((filename, e)),
@@ -788,13 +830,10 @@ pub fn matches_from_books(books: &[RawBook], limit: usize) -> Vec<ScriptureMatch
     let mut out = Vec::new();
     for book in books {
         for ch in &book.chapters {
-            let Ok(ch_num) = ch.chapter.parse::<u32>() else {
+            let Some(ch_num) = numeric_label_number(&ch.chapter) else {
                 continue;
             };
-            for v in &ch.verses {
-                let Ok(vs_num) = v.verse.parse::<u32>() else {
-                    continue;
-                };
+            for (vs_num, text) in readable_chapter_verses(ch) {
                 if out.len() >= limit {
                     return out;
                 }
@@ -803,7 +842,7 @@ pub fn matches_from_books(books: &[RawBook], limit: usize) -> Vec<ScriptureMatch
                     chapter: ch_num,
                     verse: vs_num,
                     reference: format!("{} {}:{}", book.book, ch_num, vs_num),
-                    text: v.text.trim().to_string(),
+                    text,
                 });
             }
         }
@@ -816,6 +855,8 @@ pub fn matches_from_books(books: &[RawBook], limit: usize) -> Vec<ScriptureMatch
 // ---------------------------------------------------------------------------
 
 use quick_xml::events::{BytesStart, Event};
+use encoding_rs::Encoding;
+use std::fs;
 
 /// Lowercased local tag name so `BIBLEBOOK`, `biblebook`, and namespaced
 /// variants (`osis:verse`) are treated identically.
@@ -858,6 +899,75 @@ fn is_skip_tag(name: &str) -> bool {
     )
 }
 
+fn book_name_from_element(e: &BytesStart) -> Option<String> {
+    if let Some(name) = attr(e, &["bname", "name", "n", "bsname"])
+        .filter(|name| !name.trim().is_empty())
+    {
+        return Some(name.trim().to_string());
+    }
+    let number = attr(e, &["number", "bnumber"])?;
+    let Some(index) = number.trim().parse::<usize>().ok().filter(|n| *n > 0) else {
+        return Some(number.trim().to_string());
+    };
+    Some(
+        abbreviation_table()
+            .get(index - 1)
+            .map(|(name, _)| (*name).to_string())
+            .unwrap_or_else(|| format!("Book {index}")),
+    )
+}
+
+/// Decode common Bible XML encodings before the XML parser sees the document.
+/// UTF-8 remains the fast path; older OpenLP exports often declare Latin-1 or
+/// Windows-1252, and some publishers still ship UTF-16 files.
+pub fn decode_bible_xml(bytes: &[u8]) -> Result<String, String> {
+    if let Some(utf16) = bytes.strip_prefix(&[0xff, 0xfe]) {
+        let units = utf16
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        return Ok(String::from_utf16_lossy(&units));
+    }
+    if let Some(utf16) = bytes.strip_prefix(&[0xfe, 0xff]) {
+        let units = utf16
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>();
+        return Ok(String::from_utf16_lossy(&units));
+    }
+    let utf8 = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    if let Ok(text) = std::str::from_utf8(utf8) {
+        return Ok(text.to_string());
+    }
+
+    let declaration = String::from_utf8_lossy(&bytes[..bytes.len().min(256)]).to_lowercase();
+    let label = declaration
+        .find("encoding")
+        .and_then(|start| declaration[start + "encoding".len()..].find('=').map(|offset| start + "encoding".len() + offset + 1))
+        .and_then(|start| {
+            let rest = declaration[start..].trim_start();
+            let quote = rest.chars().next()?;
+            if quote != '\'' && quote != '"' {
+                return None;
+            }
+            let end = rest[1..].find(quote)? + 1;
+            Some(rest[1..end].as_bytes().to_vec())
+        })
+        .ok_or_else(|| "Bible XML is not valid UTF-8 and does not declare a supported character encoding".to_string())?;
+    let encoding = Encoding::for_label(&label)
+        .ok_or_else(|| format!("unsupported Bible XML encoding: {}", String::from_utf8_lossy(&label)))?;
+    let (decoded, _, had_errors) = encoding.decode(bytes);
+    if had_errors {
+        return Err(format!("Bible XML contains invalid {} text", encoding.name()));
+    }
+    Ok(decoded.into_owned())
+}
+
+pub fn read_bible_xml(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    decode_bible_xml(&bytes).map_err(|error| format!("{}: {error}", path.display()))
+}
+
 /// Parse an OpenLP-compatible Bible XML document into raw book data.
 ///
 /// Accepts:
@@ -887,16 +997,17 @@ pub fn parse_openlp_xml(xml: &str) -> Result<Vec<RawBook>, String> {
                 if skip_depth > 0 || is_skip_tag(&name) {
                     skip_depth += 1;
                 } else if is_book_tag(&name) {
-                    let name = attr(&e, &["bname", "name", "n", "bsname"]).unwrap_or_default();
-                    if !name.is_empty() {
+                    cur_book = None;
+                    cur_chapter = None;
+                    if let Some(name) = book_name_from_element(&e) {
                         books.push(RawBook {
                             book: name,
                             chapters: Vec::new(),
                         });
                         cur_book = Some(books.len() - 1);
                     }
-                    cur_chapter = None;
                 } else if is_chapter_tag(&name) {
+                    cur_chapter = None;
                     if let Some(bi) = cur_book {
                         let num = attr(&e, &["cnumber", "number", "n"]).unwrap_or_default();
                         if !num.is_empty() {
@@ -915,7 +1026,21 @@ pub fn parse_openlp_xml(xml: &str) -> Result<Vec<RawBook>, String> {
             }
             Ok(Event::Empty(e)) => {
                 let name = tag_name(&e);
-                if skip_depth == 0 && is_verse_tag(&name) {
+                if skip_depth == 0 && is_book_tag(&name) {
+                    cur_book = None;
+                    cur_chapter = None;
+                    if let Some(name) = book_name_from_element(&e) {
+                        books.push(RawBook { book: name, chapters: Vec::new() });
+                        cur_book = Some(books.len() - 1);
+                    }
+                } else if skip_depth == 0 && is_chapter_tag(&name) {
+                    if let Some(bi) = cur_book {
+                        let num = attr(&e, &["cnumber", "number", "n"]).unwrap_or_default();
+                        if !num.is_empty() {
+                            books[bi].chapters.push(RawChapter { chapter: num, verses: Vec::new() });
+                        }
+                    }
+                } else if skip_depth == 0 && is_verse_tag(&name) {
                     if let Some((bi, ci)) = cur_chapter {
                         let num = attr(&e, &["vnumber", "number", "n"]).unwrap_or_default();
                         books[bi].chapters[ci].verses.push(RawVerse {
@@ -968,10 +1093,19 @@ pub fn parse_openlp_xml(xml: &str) -> Result<Vec<RawBook>, String> {
     if books.is_empty() {
         return Err("no Bible books found in the OpenLP XML document".to_string());
     }
-    // Drop any books that ended up with no verses/chapters.
-    books.retain(|b| !b.chapters.is_empty());
+    // Remove empty placeholders from imported formats. They otherwise show up
+    // as selectable books or chapters that appear to contain no text.
+    for book in &mut books {
+        for chapter in &mut book.chapters {
+            chapter.verses.retain(|verse| !verse.text.trim().is_empty());
+        }
+        book.chapters.retain(|chapter| {
+            numeric_label_number(&chapter.chapter).is_some() && !chapter.verses.is_empty()
+        });
+    }
+    books.retain(|book| !book.chapters.is_empty());
     if books.is_empty() {
-        return Err("no verses found in the OpenLP XML document".to_string());
+        return Err("no readable Bible verses found in the XML document".to_string());
     }
     Ok(books)
 }
@@ -1061,8 +1195,8 @@ pub fn load_bundled_bible(path: &Path, id: &str) -> Result<DownloadedBible, Stri
         .iter()
         .find(|(source_id, _, _, _)| *source_id == id)
         .ok_or_else(|| "unknown bundled Bible version".to_string())?;
-    let xml = std::fs::read_to_string(path)
-        .map_err(|e| format!("could not read bundled Bible {}: {e}", path.display()))?;
+    let xml = read_bible_xml(path)
+        .map_err(|e| format!("could not read bundled Bible: {e}"))?;
     let books = parse_openlp_xml(&xml)?;
     Ok(DownloadedBible {
         id: id.to_string(),
@@ -1132,7 +1266,11 @@ fn normalize_remote_bible(
         for entry in book.chapters {
             let verses: Vec<_> = entry.chapter.content.into_iter()
                 .filter(|part| part.kind == "verse")
-                .filter_map(|part| Some(RawVerse { verse: part.number?.to_string(), text: part.text? }))
+                .filter_map(|part| {
+                    let number = part.number?;
+                    let text = part.text?;
+                    (!text.trim().is_empty()).then(|| RawVerse { verse: number.to_string(), text })
+                })
                 .collect();
             if !verses.is_empty() {
                 chapters.push(RawChapter { chapter: entry.chapter.number.to_string(), verses });

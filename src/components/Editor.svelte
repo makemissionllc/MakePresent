@@ -10,7 +10,7 @@ import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, Count
   import { isMedia, isLiveCamera } from "../lib/types";
   import { addCachedMediaSlide } from "../lib/mediaSlide";
   import { withTimeout } from "../lib/withTimeout";
-  import { rankScriptureMatches } from "../lib/scriptureRank";
+  import { rankBibleBooks, rankScriptureMatches } from "../lib/scriptureRank";
   import { beginPointerDrag, cancelPointerDrag, type PointerDragPoint } from "../lib/pointerDrag";
   import SettingsPanel from "./SettingsPanel.svelte";
   import Modal from "./Modal.svelte";
@@ -43,6 +43,38 @@ import {
   }
 
   const SCRIPTURE_BOOKMARKS_KEY = "makrstudio.scripture-bookmarks";
+  const SCRIPTURE_READING_POSITION_KEY = "makrstudio.scripture-reading-position.v1";
+  const SCRIPTURE_READER_SIZE_KEY = "makrstudio.scripture-reader-size.v1";
+
+  interface ScriptureReadingPosition {
+    bibleId: string;
+    book: string;
+    chapter: number;
+    version: string;
+  }
+
+  function readScriptureReadingPosition(): ScriptureReadingPosition | null {
+    try {
+      const raw = window.localStorage.getItem(SCRIPTURE_READING_POSITION_KEY);
+      if (!raw) return null;
+      const value = JSON.parse(raw) as Partial<ScriptureReadingPosition>;
+      return typeof value.bibleId === "string" && typeof value.book === "string" &&
+        Number.isInteger(value.chapter) && Number(value.chapter) > 0
+        ? { bibleId: value.bibleId, book: value.book, chapter: Number(value.chapter), version: typeof value.version === "string" ? value.version : "" }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function readScriptureReaderSize(): number {
+    try {
+      const value = Number(window.localStorage.getItem(SCRIPTURE_READER_SIZE_KEY));
+      return [14, 16, 18, 20, 22].includes(value) ? value : 16;
+    } catch {
+      return 16;
+    }
+  }
 
   function readScriptureBookmarks(): ScriptureBookmark[] {
     try {
@@ -253,6 +285,15 @@ import {
   let previewVerse = $state<ChapterVerse | null>(null);
   let browseCopyStatus = $state<string | null>(null);
   let scriptureBookmarks = $state<ScriptureBookmark[]>(readScriptureBookmarks());
+  let lastReadingPosition = $state<ScriptureReadingPosition | null>(readScriptureReadingPosition());
+  let readerFontSize = $state(readScriptureReaderSize());
+  let readerMode = $state(false);
+  let continuingReading = $state(false);
+  let bibleBookQuery = $state("");
+  const visibleBibleBooks = $derived(rankBibleBooks(bibleBooks, bibleBookQuery));
+  const showContinueReading = $derived(Boolean(lastReadingPosition) && !(
+    lastReadingPosition?.bibleId === selectedBibleId && lastReadingPosition.book === selectedBook && lastReadingPosition.chapter === selectedChapter
+  ));
   let bookmarkQuery = $state("");
   const visibleBookmarks = $derived.by(() => {
     const query = bookmarkQuery.trim().toLocaleLowerCase();
@@ -367,9 +408,19 @@ import {
       body: "Pick a display, then click Show Output. While live, ← and → move through slides.",
     },
     {
-      eyebrow: "Songs & Scripture",
-      title: "Your songs and verses live here",
-      body: "Open Songs or Scripture in the bottom bar. Click to add, or drag into the Playlist. Ctrl+K searches everything at once.",
+      eyebrow: "Songs",
+      title: "Find a song and add it once",
+      body: "Open Songs below, search your library, or paste lyrics to build a song. Drag a result into the Playlist to choose its place. Ctrl+K searches songs, Bible text, and media together.",
+    },
+    {
+      eyebrow: "Scripture",
+      title: "Go straight to a book and chapter",
+      body: "Use the book finder to filter or correct a small typo, then choose a chapter. Your last chapter is saved on this device so Continue reading can reopen it next time.",
+    },
+    {
+      eyebrow: "Reader",
+      title: "Read comfortably, then add a verse if you need it",
+      body: "Choose Read book to keep verse text expanded and stop accidental slide inserts. Adjust text size or move between chapters. Select a verse to preview it; use Add as slide when you want it in the service.",
     },
     {
       eyebrow: "You're set",
@@ -381,7 +432,14 @@ import {
   const showTour = $derived(tourActive && !showHub && !onboardingOpen && !helpOpen && !settingsOpen && !globalSearchOpen && appState !== null);
 
   $effect(() => {
-    if (showTour && tourStep === 2) openSourceTab("songs");
+    if (!showTour) return;
+    if (tourStep === 2) {
+      browseCollapsed = true;
+      openSourceTab("songs");
+    } else if (tourStep === 3) {
+      openSourceTab("scripture");
+      browseCollapsed = false;
+    }
   });
 
   function finishOnboarding(action: "view" | "tour" | "settings" | "skip"): void {
@@ -1126,6 +1184,7 @@ import {
       browseError = null;
       const verses = await withTimeout(api.getChapter(bibleId, book, chapter), 15000, "Loading this chapter took too long. Try again.");
       if (request !== browseRequestSeq) return;
+      if (verses.length === 0) throw new Error("This chapter has no readable verses. Choose another chapter or translation.");
       chapterVerses = verses;
       verseRangeStart = verses[0]?.verse ?? null;
       verseRangeEnd = verses[Math.min(1, verses.length - 1)]?.verse ?? null;
@@ -1133,6 +1192,15 @@ import {
       previewVerse = null;
       selectedVerseNumbers = [];
       selectedChapter = chapter;
+      const bible = bibles.find((item) => item.id === bibleId);
+      const position: ScriptureReadingPosition = {
+        bibleId,
+        book,
+        chapter,
+        version: bible?.shortName?.trim() || bible?.name?.trim() || "",
+      };
+      lastReadingPosition = position;
+      try { window.localStorage.setItem(SCRIPTURE_READING_POSITION_KEY, JSON.stringify(position)); } catch { /* keep the reading position for this session */ }
       use("browse");
     } catch (e) {
       if (request === browseRequestSeq) {
@@ -1143,9 +1211,49 @@ import {
     }
   }
 
+  function changeReaderFontSize(delta: -2 | 2): void {
+    readerFontSize = Math.max(14, Math.min(22, readerFontSize + delta));
+    try { window.localStorage.setItem(SCRIPTURE_READER_SIZE_KEY, String(readerFontSize)); } catch { /* keep this size for the current session */ }
+  }
+
+  async function continueReading(): Promise<void> {
+    const position = lastReadingPosition;
+    if (!position || continuingReading) return;
+    continuingReading = true;
+    try {
+      sourceTab = "scripture";
+      sourceOpen = true;
+      browseCollapsed = false;
+      bibleBookQuery = "";
+      browseError = null;
+      await loadBibles();
+      if (!bibles.some((bible) => bible.id === position.bibleId)) {
+        browseError = `${position.version || "That Bible"} is no longer available. Choose another translation to continue.`;
+        return;
+      }
+      selectedBibleId = position.bibleId;
+      try { window.localStorage.setItem("makrstudio.scripture-bible-id", position.bibleId); } catch { /* keep it selected for this session */ }
+      await loadBooks(position.bibleId);
+      if (!bibleBooks.includes(position.book)) {
+        browseError = `${position.book} is not available in ${position.version || "that translation"}. Choose another book.`;
+        return;
+      }
+      await loadChaptersForBook(position.bibleId, position.book);
+      if (!chapterNumbers.includes(position.chapter)) {
+        browseError = `${position.book} ${position.chapter} is not available in ${position.version || "that translation"}. Choose another chapter.`;
+        return;
+      }
+      await loadChapterVerses(position.bibleId, position.book, position.chapter);
+      if (selectedChapter === position.chapter && chapterVerses.length > 0) readerMode = true;
+    } finally {
+      continuingReading = false;
+    }
+  }
+
   function onBrowseBibleChange(e: Event): void {
     const id = (e.target as HTMLSelectElement).value;
     selectedBibleId = id;
+    bibleBookQuery = "";
     try { window.localStorage.setItem("makrstudio.scripture-bible-id", id); } catch { /* keep the selection for this session */ }
     verseTextQuery = "";
     verseTextResults = [];
@@ -1343,15 +1451,19 @@ import {
       verseTextLoading = false;
       return;
     }
+    if (verseTextQuery.trim().length < 3) {
+      verseTextLoading = false;
+      return;
+    }
     verseTextLoading = true;
     const query = verseTextQuery;
-    verseTextTimer = setTimeout(() => void searchVerseText(query), 250);
+    verseTextTimer = setTimeout(() => void searchVerseText(query), 450);
   }
 
   async function searchVerseText(query: string): Promise<void> {
     const seq = ++verseTextSeq;
     const bibleId = selectedBibleId;
-    if (!bibleId || !query.trim()) {
+    if (!bibleId || query.trim().length < 3) {
       verseTextLoading = false;
       return;
     }
@@ -4064,13 +4176,21 @@ import {
                 {#if biblesFolder}
                   <p class="bibles-folder-hint">Or place OpenLP XML files directly in:<br><code>{biblesFolder}</code></p>
                 {/if}
-                {#if scriptureStatus}
+              {#if scriptureStatus}
                     <p class="scripture-status">{scriptureStatus}</p>
                   {/if}
                 </div>
               </div>
 
-              <div class="browse-panel" class:tour-highlight={showTour && tourStep === 2}>
+              {#if showContinueReading && lastReadingPosition}
+                <button class="continue-reading-card" onclick={() => void continueReading()} disabled={continuingReading} aria-busy={continuingReading}>
+                  <span class="continue-reading-mark" aria-hidden="true">↗</span>
+                  <span class="continue-reading-copy"><strong>Continue reading</strong><span>{lastReadingPosition.book} {lastReadingPosition.chapter}{lastReadingPosition.version ? ` · ${lastReadingPosition.version}` : ""}</span></span>
+                  <span class="continue-reading-action">{continuingReading ? "Opening…" : "Open chapter"}</span>
+                </button>
+              {/if}
+
+              <div class="browse-panel" class:tour-highlight={showTour && tourStep === 3}>
                 <button class="browse-header" onclick={() => (browseCollapsed = !browseCollapsed)} aria-expanded={!browseCollapsed}>
                   <span class="section-title" style="margin:0; border:none; padding:0;">Browse Scripture</span>
                   <span class="browse-toggle">{browseCollapsed ? "▸ Show" : "▾ Hide"}</span>
@@ -4084,7 +4204,7 @@ import {
 
             </div>
             {#if !browseCollapsed}
-              <div class="browse-dock" role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
+              <div class="browse-dock" class:reader-mode={readerMode} class:tour-highlight={showTour && (tourStep === 3 || tourStep === 4)} role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
                 <div class="browse-dock-header"><strong>Browse Scripture</strong><button class="browse-dock-close" onclick={() => (browseCollapsed = true)} aria-label="Close Scripture browser">× Close</button></div>
                 <div class="browse-dock-left">
                   <label>
@@ -4095,6 +4215,13 @@ import {
                       {/each}
                     </select>
                   </label>
+                  <label class="bible-book-search">
+                    Find a book
+                    <input type="search" bind:value={bibleBookQuery} placeholder="e.g. John, 1 Samuel" aria-label="Find a Bible book" />
+                  </label>
+                  {#if bibleBookQuery.trim()}
+                    <p class="book-search-count" role="status">{visibleBibleBooks.length} {visibleBibleBooks.length === 1 ? "book" : "books"} found</p>
+                  {/if}
                   <section class="scripture-bookmarks" aria-label="Saved Scripture bookmarks">
                     <button class="scripture-bookmarks-toggle" aria-expanded={bookmarksOpen} onclick={() => (bookmarksOpen = !bookmarksOpen)}>
                       <span>{bookmarksOpen ? "▾" : "▸"} Bookmarks</span><span>{scriptureBookmarks.length}</span>
@@ -4182,11 +4309,20 @@ import {
                       <button class="bible-retry" disabled={browseLoading} onclick={() => browseRetry?.()}>Retry Scripture loading</button>
                     {/if}
                   {/if}
-                  <div class="browse-books">
-                    {#each bibleBooks as book}
-                      <button class="browse-book" class:active={book === selectedBook} onclick={() => onBrowseBookSelect(book)}>{book}</button>
-                    {/each}
-                  </div>
+                  {#if browseLoading && bibleBooks.length === 0}
+                    <p class="browse-placeholder" role="status">Loading Bible books…</p>
+                  {:else if bibleBooks.length > 0 && visibleBibleBooks.length === 0}
+                    <p class="browse-placeholder">No books match “{bibleBookQuery.trim()}”.</p>
+                    <button class="bible-retry" onclick={() => (bibleBookQuery = "")}>Clear search</button>
+                  {:else if bibleBooks.length === 0}
+                    <p class="browse-placeholder">No readable books found in this translation. Try another one or import a different Bible file.</p>
+                  {:else}
+                    <div class="browse-books">
+                      {#each visibleBibleBooks as book (book)}
+                        <button class="browse-book" class:active={book === selectedBook} onclick={() => { bibleBookQuery = ""; onBrowseBookSelect(book); }}>{book}</button>
+                      {/each}
+                    </div>
+                  {/if}
                 </div>
                 <div class="browse-dock-middle">
                   {#if selectedBook}
@@ -4212,7 +4348,9 @@ import {
                   </label>
                   {#if bookmarkStatus}<p class="bookmark-status-inline" role="status">{bookmarkStatus}</p>{/if}
                   {#if verseTextQuery.trim()}
-                    {#if verseTextLoading}
+                    {#if verseTextQuery.trim().length < 3}
+                      <p class="browse-placeholder">Type at least 3 characters to search this Bible.</p>
+                    {:else if verseTextLoading}
                       <p class="browse-placeholder">Searching {bibles.find((item) => item.id === selectedBibleId)?.shortName || "Bible"}…</p>
                     {:else if verseTextError}
                       <p class="browse-error" role="alert">{verseTextError}</p>
@@ -4233,6 +4371,20 @@ import {
                       <p class="browse-placeholder">No verses contain “{verseTextQuery.trim()}”.</p>
                     {/if}
                   {:else if chapterVerses.length > 0}
+                    <div class="reader-toolbar">
+                      <div class="reader-heading">
+                        <strong>{selectedBook} {selectedChapter}</strong>
+                        <span>{chapterVerses.length} verses · Chapter {chapterNumbers.indexOf(selectedChapter ?? 0) + 1} of {chapterNumbers.length}</span>
+                      </div>
+                      <div class="reader-controls">
+                        <button class="reader-control" disabled={browseLoading || selectedChapter === chapterNumbers[0]} onclick={() => navigateBrowseChapter(-1)} aria-label="Previous chapter">←</button>
+                        <button class="reader-control" disabled={browseLoading || selectedChapter === chapterNumbers.at(-1)} onclick={() => navigateBrowseChapter(1)} aria-label="Next chapter">→</button>
+                        <span class="reader-control-divider" aria-hidden="true"></span>
+                        <button class="reader-control" disabled={readerFontSize <= 14} onclick={() => changeReaderFontSize(-2)} aria-label="Make Scripture text smaller">A−</button>
+                        <button class="reader-control" disabled={readerFontSize >= 22} onclick={() => changeReaderFontSize(2)} aria-label="Make Scripture text larger">A+</button>
+                        <button class="reader-mode-toggle" aria-pressed={readerMode} onclick={() => { readerMode = !readerMode; previewVerse = null; }}>{readerMode ? "Exit reading" : "Read book"}</button>
+                      </div>
+                    </div>
                     <div class="browse-range-tools">
                       <button class="browse-range-add" disabled={browseLoading || selectedChapter === chapterNumbers[0]} onclick={() => navigateBrowseChapter(-1)} aria-label="Previous Scripture chapter">← Previous chapter</button>
                       <button class="browse-range-add" disabled={browseLoading || selectedChapter === chapterNumbers.at(-1)} onclick={() => navigateBrowseChapter(1)} aria-label="Next Scripture chapter">Next chapter →</button>
@@ -4267,7 +4419,7 @@ import {
                         </div>
                       </section>
                     {/if}
-                    <ul class="browse-verses">
+                    <ul class="browse-verses" style={`--reader-font-size:${readerFontSize}px`}>
                       {#each chapterVerses as v}
                         <li class="browse-verse-row">
                           <input
@@ -4280,12 +4432,14 @@ import {
                           <button
                             class="browse-verse"
                             onpointerdown={(e) => {
+                              if (readerMode) return;
                               const bible = bibles.find((item) => item.id === selectedBibleId);
                               const version = bible?.shortName?.trim() || bible?.name?.trim();
                               const reference = `${selectedBook} ${selectedChapter}:${v.verse}${version ? ` · ${version}` : ""}`;
                               startPointerDrag(e, { type: "scripture", reference, text: v.text });
                             }}
-                            onclick={() => insertBrowseVerse(v)}
+                            onclick={() => { if (readerMode) { previewVerse = v; browseCopyStatus = null; } else insertBrowseVerse(v); }}
+                            aria-label={readerMode ? `Read ${selectedBook} ${selectedChapter}:${v.verse}` : `Add ${selectedBook} ${selectedChapter}:${v.verse} as a slide`}
                           >
                             <span class="verse-num">{v.verse}</span>
                             <span class="verse-text">{v.text}</span>
@@ -6101,6 +6255,39 @@ import {
     white-space: nowrap;
   }
 
+  .bible-book-search { display: flex; flex-direction: column; gap: 5px; color: var(--text-dim); font-size: 11px; }
+  .bible-book-search input { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel); font: inherit; }
+  .book-search-count { margin: -4px 0 0; color: var(--text-dim); font-size: 10px; }
+  .continue-reading-card { display: flex; align-items: center; gap: 12px; width: min(100%, 640px); padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-radius: 10px; background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 12%, var(--panel)), var(--panel-2)); color: var(--text); text-align: left; cursor: pointer; animation: scripture-resume-in 240ms var(--ease-emphasized) both; transition: border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out), background var(--motion-normal) var(--ease-out); }
+  .continue-reading-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .continue-reading-card:disabled { opacity: .75; cursor: wait; }
+  .continue-reading-mark { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 18%, var(--panel)); color: var(--accent); font-size: 18px; }
+  .continue-reading-copy { display: grid; gap: 3px; min-width: 0; }
+  .continue-reading-copy strong { font-size: 12px; }
+  .continue-reading-copy span { color: var(--text-dim); font-size: 11px; }
+  .continue-reading-action { margin-left: auto; color: var(--accent); font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .reader-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+  .reader-heading { display: grid; gap: 3px; }
+  .reader-heading strong { color: var(--text); font-size: 13px; }
+  .reader-heading span { color: var(--text-dim); font-size: 10px; }
+  .reader-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+  .reader-control, .reader-mode-toggle { min-height: 30px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel); font: inherit; font-size: 11px; cursor: pointer; }
+  .reader-control:hover:not(:disabled), .reader-mode-toggle:hover { border-color: var(--accent); }
+  .reader-control:disabled { opacity: .45; cursor: default; }
+  .reader-control-divider { width: 1px; height: 20px; margin-inline: 2px; background: var(--border); }
+  .reader-mode-toggle { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  .reader-mode-toggle[aria-pressed="true"] { color: var(--text); background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
+  .browse-dock.reader-mode .browse-range-tools,
+  .browse-dock.reader-mode .browse-verse-select,
+  .browse-dock.reader-mode .verse-preview-action { display: none; }
+  .browse-dock.reader-mode .browse-verses { gap: 0; padding: 8px 14px; }
+  .browse-dock.reader-mode .browse-verse-row { gap: 12px; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+  .browse-dock.reader-mode .browse-verse-row:last-child { border-bottom: 0; }
+  .browse-dock.reader-mode .browse-verse { align-items: flex-start; padding: 12px 2px; border: 0; cursor: text; }
+  .browse-dock.reader-mode .browse-verse:hover { border-color: transparent; background: transparent; }
+  .browse-dock.reader-mode .verse-num { flex: 0 0 auto; padding-top: .28em; font-size: .78em; }
+  .browse-dock.reader-mode .verse-text { max-width: 72ch; overflow: visible; color: var(--text); font-size: var(--reader-font-size, 16px); line-height: 1.65; text-overflow: clip; white-space: normal; }
+
   .browse-hint {
     font-size: 10px;
     color: var(--text-dim);
@@ -7117,7 +7304,7 @@ import {
   }
   .source-tab-row .source-toggle { border-color: var(--border); }
   .source-toggle { display: inline-flex; align-items: center; gap: var(--space-1); }
-  .source-panel { flex: 1 1 0; min-height: 0; overflow: hidden; border-top: 1px solid var(--border); }
+  .source-panel { flex: 1 1 0; min-height: 0; overflow: hidden; border-top: 1px solid var(--border); container-type: inline-size; container-name: scripture-workspace; }
   .source-pane { height: 100%; min-width: 0; min-height: 0; padding: var(--space-3) var(--space-4); overflow: auto; }
   .songs-pane .library-section {
     width: min(100%, 980px);
@@ -7218,5 +7405,31 @@ import {
     .sidebar:not(.output-panel) { overflow: visible; }
     .detail-workspace { gap: 18px; }
   }
+  @container scripture-workspace (max-width: 1100px) {
+    .scripture-pane.browsing { display: block; overflow-y: auto; }
+    .scripture-pane.browsing .scripture-tools { width: 100%; max-width: 640px; overflow: visible; }
+    .scripture-pane .browse-dock { grid-template-columns: minmax(0, .9fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, auto) minmax(0, auto); height: auto; min-height: 0; max-height: none; margin-top: var(--space-3); overflow: visible; }
+    .scripture-pane .browse-dock-header { grid-column: 1 / -1; grid-row: 1; }
+    .scripture-pane .browse-dock-left { grid-column: 1; grid-row: 2; min-height: 0; padding-bottom: 10px; }
+    .scripture-pane .browse-dock-middle { grid-column: 2; grid-row: 2; min-height: 0; padding-bottom: 10px; }
+    .scripture-pane .browse-dock-right { grid-column: 1 / -1; grid-row: 3; min-height: 280px; max-height: 48vh; }
+    .scripture-pane .browse-dock .browse-books { max-height: 230px; }
+  }
+  @container scripture-workspace (max-width: 680px) {
+    .scripture-pane .browse-dock { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 8px; max-height: none; overflow: visible; }
+    .scripture-pane .browse-dock-header, .scripture-pane .browse-dock-left, .scripture-pane .browse-dock-middle, .scripture-pane .browse-dock-right { grid-column: 1; grid-row: auto; width: auto; max-height: none; padding-right: 0; }
+    .scripture-pane .browse-dock-left, .scripture-pane .browse-dock-middle { border-right: 0; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+    .scripture-pane .browse-dock-right { min-height: 360px; }
+    .scripture-pane .browse-dock .browse-books { max-height: 220px; }
+    .reader-toolbar { align-items: flex-start; flex-direction: column; }
+    .reader-controls { width: 100%; }
+    .reader-mode-toggle { margin-left: auto; }
+    .continue-reading-card { width: 100%; }
+    .continue-reading-action { font-size: 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .continue-reading-card { animation: none; transition: none; }
+  }
+  @keyframes scripture-resume-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
   .editor-content:has(:global(.look-editor-view)) .editor-heading { position:sticky; top:-22px; z-index:10; background:var(--bg); padding-top:22px; margin-top:-22px; }
 </style>

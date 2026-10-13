@@ -24,16 +24,19 @@
 
 <!-- Non-blocking: the wrapper ignores pointer events so a volunteer under
      time pressure can click straight through everywhere except the card. -->
-<div class="tour-layer" class:source-step={step === 2} role="dialog" aria-label="MakrStudio guided tour">
+<div class="tour-layer" class:source-step={step >= 2 && step <= 4} role="dialog" aria-label="MakrStudio guided tour">
   <div class="tour-card" in:surface={{ duration: 240, distance: 10 }}>
     <div class="tour-top">
       <span class="tour-eyebrow">{current.eyebrow} · {step + 1} of {steps.length}</span>
       <button class="tour-x" title="End tour" aria-label="End tour" onclick={onSkip}>×</button>
     </div>
+    <div class="tour-progress" role="progressbar" aria-label="Tour progress" aria-valuemin="1" aria-valuemax={steps.length} aria-valuenow={step + 1}>
+      <span style={`transform:scaleX(${(step + 1) / steps.length})`}></span>
+    </div>
     {#key step}
       <div class="tour-copy" in:surface={{ duration: 190, distance: 5 }}>
         <strong class="tour-title">{current.title}</strong>
-        <p class="tour-body">{current.body}</p>
+        <p class="tour-body" aria-live="polite">{current.body}</p>
       </div>
     {/key}
     <div class="tour-dots" aria-hidden="true">
@@ -80,6 +83,8 @@
     flex-direction: column;
     gap: 8px;
   }
+  .tour-progress { height: 3px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
+  .tour-progress span { display: block; width: 100%; height: 100%; background: var(--accent, #4f8cff); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-emphasized); }
   .tour-copy { display: grid; gap: 8px; }
   .tour-top {
     display: flex;
@@ -151,5 +156,9 @@
     background: var(--accent, #4f8cff);
     border-color: var(--accent, #4f8cff);
     color: #fff;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tour-progress span { transition: none; }
+    .tour-dot { transition: none; }
   }
 </style>

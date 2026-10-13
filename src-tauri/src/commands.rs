@@ -9,7 +9,7 @@ use crate::project::{
     PlaylistTemplate, Positioning, Project, SavedOverlay, Settings, Slide, SlideKind, StageView,
     TemplateItem, TextPosition, Transition, write_settings,
 };
-use crate::scripture::ScriptureMatch;
+use crate::scripture::{DownloadedBible, ScriptureMatch};
 use crate::state::{AppState, CountdownView};
 use crate::triggers::TriggerAction;
 use crate::windows::{self, DisplayInfo};
@@ -17,6 +17,7 @@ use chrono::{Local, NaiveTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
@@ -125,6 +126,54 @@ fn snapshot(app: &AppHandle) -> ClientState {
     state.network.broadcast(&crate::network::stage_broadcast(app));
 
     snap
+}
+
+fn cache_downloaded_bible(state: &AppState, bible: Arc<DownloadedBible>) {
+    let mut cache = state.downloaded_bibles.lock().unwrap();
+    cache.retain(|(id, _)| id != &bible.id);
+    cache.push_front((bible.id.clone(), bible));
+    cache.truncate(2);
+}
+
+fn load_imported_bibles_cached(state: &AppState) -> Arc<Vec<crate::scripture::RawBook>> {
+    if let Some(books) = state.imported_bibles.lock().unwrap().as_ref().cloned() {
+        return books;
+    }
+    let data_dir = state.app_data_dir();
+    let mut books = crate::scripture::load_imported_books(&data_dir);
+    let (scanned, _) = crate::scripture::scan_bibles_folder(&data_dir);
+    books.extend(scanned);
+    let loaded = Arc::new(books);
+    let mut cache = state.imported_bibles.lock().unwrap();
+    cache.get_or_insert_with(|| loaded.clone()).clone()
+}
+
+fn load_downloaded_bible_cached(state: &AppState, version_id: &str) -> Result<Arc<DownloadedBible>, String> {
+    {
+        let mut cache = state.downloaded_bibles.lock().unwrap();
+        if let Some(index) = cache.iter().position(|(id, _)| id == version_id) {
+            if let Some(entry) = cache.remove(index) {
+                let bible = entry.1.clone();
+                cache.push_front(entry);
+                return Ok(bible);
+            }
+        }
+    }
+
+    let loaded = Arc::new(crate::scripture::load_downloaded_bible(&state.app_data_dir(), version_id)?);
+    let mut cache = state.downloaded_bibles.lock().unwrap();
+    // Another window may have requested this translation while the file was
+    // being read. Reuse its entry and keep the cache order deterministic.
+    if let Some(index) = cache.iter().position(|(id, _)| id == version_id) {
+        if let Some(entry) = cache.remove(index) {
+            let bible = entry.1.clone();
+            cache.push_front(entry);
+            return Ok(bible);
+        }
+    }
+    cache.push_front((version_id.to_string(), loaded.clone()));
+    cache.truncate(2);
+    Ok(loaded)
 }
 
 fn song_credit_line(song: &LibrarySong) -> Option<String> {
@@ -2964,11 +3013,10 @@ fn search_raw_scripture_text(
     let mut seen = std::collections::HashSet::new();
     for book in books {
         for chapter in &book.chapters {
-            let Ok(chapter_number) = chapter.chapter.parse::<u32>() else { continue };
-            for verse in &chapter.verses {
-                if verse.text.to_lowercase().contains(&needle) {
-                    let Ok(verse_number) = verse.verse.parse::<u32>() else { continue };
-                    let dedupe_key = (book.book.clone(), chapter_number, verse_number, verse.text.clone());
+            let Some(chapter_number) = crate::scripture::numeric_label_number(&chapter.chapter) else { continue };
+            for (verse_number, text) in crate::scripture::readable_chapter_verses(chapter) {
+                if text.to_lowercase().contains(&needle) {
+                    let dedupe_key = (book.book.clone(), chapter_number, verse_number, text.clone());
                     if !seen.insert(dedupe_key) {
                         continue;
                     }
@@ -2977,7 +3025,7 @@ fn search_raw_scripture_text(
                         chapter: chapter_number,
                         verse: verse_number,
                         reference: format!("{} {}:{}", book.book, chapter_number, verse_number),
-                        text: verse.text.clone(),
+                        text,
                     });
                     if matches.len() >= limit {
                         return matches;
@@ -2999,8 +3047,11 @@ pub fn search_bible_text(
 ) -> Result<Vec<ScriptureMatch>, String> {
     let state = app.state::<AppState>();
     let limit = limit.unwrap_or(100).clamp(1, 500);
+    if query.trim().chars().count() < 3 {
+        return Ok(Vec::new());
+    }
     if let Some(version_id) = bible_id.strip_prefix("downloaded:") {
-        let bible = crate::scripture::load_downloaded_bible(&state.app_data_dir(), version_id)?;
+        let bible = load_downloaded_bible_cached(&state, version_id)?;
         return Ok(search_raw_scripture_text(&bible.books, &query, limit));
     }
     match bible_id.as_str() {
@@ -3010,9 +3061,7 @@ pub fn search_bible_text(
             Ok(index.search_text(&query, limit))
         }
         "imported" => {
-            let mut books = crate::scripture::load_imported_books(&state.app_data_dir());
-            let (scanned, _) = crate::scripture::scan_bibles_folder(&state.app_data_dir());
-            books.extend(scanned);
+            let books = load_imported_bibles_cached(&state);
             Ok(search_raw_scripture_text(&books, &query, limit))
         }
         _ => Err(format!("unknown bible id: {bible_id}")),
@@ -3071,9 +3120,10 @@ fn apply_scripture_import(
         total_books = index.book_count();
     }
     let data_dir = state.app_data_dir();
-    let mut imported = crate::scripture::load_imported_books(&data_dir);
+    let mut imported = load_imported_bibles_cached(state).as_ref().clone();
     crate::scripture::merge_persisted(&mut imported, books.to_vec());
     crate::scripture::save_imported_books(&data_dir, &imported)?;
+    *state.imported_bibles.lock().unwrap() = Some(Arc::new(imported));
     Ok(ScriptureImportResult {
         books: books.len(),
         verses,
@@ -3092,8 +3142,8 @@ pub async fn import_openlp_bible(
 ) -> Result<ScriptureImportResult, String> {
     let path_buf = std::path::PathBuf::from(path.clone());
     let books = tauri::async_runtime::spawn_blocking(move || {
-        let xml = std::fs::read_to_string(&path_buf)
-            .map_err(|e| format!("failed to read {}: {e}", path_buf.display()))?;
+        let xml = crate::scripture::read_bible_xml(&path_buf)
+            .map_err(|e| format!("failed to read Bible XML: {e}"))?;
         crate::scripture::parse_openlp_xml(&xml)
     })
     .await
@@ -3233,8 +3283,10 @@ pub fn list_bibles(app: AppHandle) -> Result<Vec<BibleInfo>, String> {
     // Count distinct books across persisted + scanned (in case scanned not yet persisted due to error)
     let mut all_books = imported;
     all_books.extend(scanned);
-    if !all_books.is_empty() {
-        let distinct: std::collections::HashSet<String> = all_books.iter().map(|b| b.book.clone()).collect();
+    *state.imported_bibles.lock().unwrap() = Some(Arc::new(all_books.clone()));
+    let readable_books: Vec<_> = all_books.iter().filter(|book| crate::scripture::has_readable_verses(book)).collect();
+    if !readable_books.is_empty() {
+        let distinct: std::collections::HashSet<String> = readable_books.iter().map(|b| b.book.clone()).collect();
         out.push(BibleInfo {
             id: "imported".to_string(),
             name: "Imported Bibles".to_string(),
@@ -3249,7 +3301,7 @@ pub fn list_bibles(app: AppHandle) -> Result<Vec<BibleInfo>, String> {
         BibleInfo {
             id: format!("downloaded:{}", bible.id),
             name: bible.name,
-            book_count: bible.books.len(),
+            book_count: bible.books.iter().filter(|book| crate::scripture::has_readable_verses(book)).count(),
             short_name: bible.short_name,
             language_name: bible.language_name,
             license_url: bible.license_url,
@@ -3322,6 +3374,8 @@ pub async fn download_bible_version(app: AppHandle, version_id: String) -> Resul
     })
     .await
     .map_err(|e| format!("Bible save task failed: {e}"))??;
+    let state = app.state::<AppState>();
+    cache_downloaded_bible(&state, Arc::new(bible.clone()));
     Ok(BibleInfo {
         id: format!("downloaded:{}", bible.id),
         name: bible.name,
@@ -3343,8 +3397,11 @@ pub fn get_bibles_folder(app: AppHandle) -> String {
 pub fn get_book_list(app: AppHandle, bible_id: String) -> Result<Vec<String>, String> {
     let state = app.state::<AppState>();
     if let Some(version_id) = bible_id.strip_prefix("downloaded:") {
-        let bible = crate::scripture::load_downloaded_bible(&state.app_data_dir(), version_id)?;
-        return Ok(bible.books.into_iter().map(|book| book.book).collect());
+        let bible = load_downloaded_bible_cached(&state, version_id)?;
+        return Ok(bible.books.iter()
+            .filter(|book| crate::scripture::has_readable_verses(book))
+            .map(|book| book.book.clone())
+            .collect());
     }
     match bible_id.as_str() {
         "kjv" => {
@@ -3353,17 +3410,15 @@ pub fn get_book_list(app: AppHandle, bible_id: String) -> Result<Vec<String>, St
             Ok(idx.ordered_book_names())
         }
         "imported" => {
-            let mut imported = crate::scripture::load_imported_books(&state.app_data_dir());
-            let (scanned, _) = crate::scripture::scan_bibles_folder(&state.app_data_dir());
-            imported.extend(scanned);
+            let imported = load_imported_bibles_cached(&state);
             if imported.is_empty() {
                 return Err("no imported Bibles found — place OpenLP XML files in bibles folder or use Import button".to_string());
             }
             let mut seen = std::collections::HashSet::new();
             let mut out = Vec::new();
-            for b in imported {
+            for b in imported.iter().filter(|book| crate::scripture::has_readable_verses(book)) {
                 if seen.insert(b.book.clone()) {
-                    out.push(b.book);
+                    out.push(b.book.clone());
                 }
             }
             Ok(out)
@@ -3381,15 +3436,19 @@ pub fn get_chapter(
 ) -> Result<Vec<ChapterVerse>, String> {
     let state = app.state::<AppState>();
     if let Some(version_id) = bible_id.strip_prefix("downloaded:") {
-        let bible = crate::scripture::load_downloaded_bible(&state.app_data_dir(), version_id)?;
+        let bible = load_downloaded_bible_cached(&state, version_id)?;
         let raw_book = bible.books.iter().find(|candidate| candidate.book.eq_ignore_ascii_case(&book))
             .ok_or_else(|| format!("book {book} not found in {}", bible.name))?;
-        let raw_chapter = raw_book.chapters.iter().find(|candidate| candidate.chapter.parse::<u32>().ok() == Some(chapter))
+        let raw_chapter = raw_book.chapters.iter().find(|candidate| crate::scripture::numeric_label_number(&candidate.chapter) == Some(chapter))
             .ok_or_else(|| format!("{book} {chapter} not found in {}", bible.name))?;
-        return Ok(raw_chapter.verses.iter().filter_map(|verse| Some(ChapterVerse {
-            verse: verse.verse.parse().ok()?,
-            text: verse.text.clone(),
-        })).collect());
+        let verses = crate::scripture::readable_chapter_verses(raw_chapter).into_iter().map(|(verse, text)| ChapterVerse {
+            verse,
+            text,
+        }).collect::<Vec<_>>();
+        if verses.is_empty() {
+            return Err(format!("{book} {chapter} contains no readable verses in {}", bible.name));
+        }
+        return Ok(verses);
     }
     match bible_id.as_str() {
         "kjv" => {
@@ -3401,24 +3460,21 @@ pub fn get_chapter(
             Ok(verses.into_iter().map(|(verse, text)| ChapterVerse { verse, text }).collect())
         }
         "imported" => {
-            let mut imported = crate::scripture::load_imported_books(&state.app_data_dir());
-            let (scanned, _) = crate::scripture::scan_bibles_folder(&state.app_data_dir());
-            imported.extend(scanned);
+            let imported = load_imported_bibles_cached(&state);
             if imported.is_empty() {
                 return Err("no imported Bibles found — place OpenLP XML files in bibles folder or use Import button".to_string());
             }
-            for b in imported {
+            for b in imported.iter() {
                 if b.book.to_lowercase() == book.to_lowercase() {
-                    for ch in b.chapters {
-                        if ch.chapter.parse::<u32>().ok() == Some(chapter) {
-                            return Ok(ch
-                                .verses
-                                .into_iter()
-                                .filter_map(|v| {
-                                    let n = v.verse.parse::<u32>().ok()?;
-                                    Some(ChapterVerse { verse: n, text: v.text })
-                                })
-                                .collect());
+                    for ch in &b.chapters {
+                        if crate::scripture::numeric_label_number(&ch.chapter) == Some(chapter) {
+                            let verses = crate::scripture::readable_chapter_verses(ch).into_iter()
+                                .map(|(verse, text)| ChapterVerse { verse, text })
+                                .collect::<Vec<_>>();
+                            if verses.is_empty() {
+                                return Err(format!("{book} {chapter} contains no readable verses"));
+                            }
+                            return Ok(verses);
                         }
                     }
                     return Err(format!("{book} {chapter} not found in imported Bibles"));
@@ -3434,11 +3490,15 @@ pub fn get_chapter(
 pub fn list_chapters(app: AppHandle, bible_id: String, book: String) -> Result<Vec<u32>, String> {
     let state = app.state::<AppState>();
     if let Some(version_id) = bible_id.strip_prefix("downloaded:") {
-        let bible = crate::scripture::load_downloaded_bible(&state.app_data_dir(), version_id)?;
+        let bible = load_downloaded_bible_cached(&state, version_id)?;
         let raw_book = bible.books.iter().find(|candidate| candidate.book.eq_ignore_ascii_case(&book))
             .ok_or_else(|| format!("book {book} not found in {}", bible.name))?;
-        let mut chapters: Vec<u32> = raw_book.chapters.iter().filter_map(|chapter| chapter.chapter.parse().ok()).collect();
+        let mut chapters: Vec<u32> = raw_book.chapters.iter()
+            .filter(|chapter| !crate::scripture::readable_chapter_verses(chapter).is_empty())
+            .filter_map(|chapter| crate::scripture::numeric_label_number(&chapter.chapter))
+            .collect();
         chapters.sort_unstable();
+        chapters.dedup();
         return Ok(chapters);
     }
     match bible_id.as_str() {
@@ -3451,20 +3511,18 @@ pub fn list_chapters(app: AppHandle, bible_id: String, book: String) -> Result<V
                 .ok_or_else(|| format!("book {book} not found in KJV"))
         }
         "imported" => {
-            let mut imported = crate::scripture::load_imported_books(&state.app_data_dir());
-            let (scanned, _) = crate::scripture::scan_bibles_folder(&state.app_data_dir());
-            imported.extend(scanned);
+            let imported = load_imported_bibles_cached(&state);
             if imported.is_empty() {
                 return Err("no imported Bibles found — place OpenLP XML files in bibles folder or use Import button".to_string());
             }
-            for b in imported {
+            for b in imported.iter() {
                 if b.book.to_lowercase() == book.to_lowercase() {
-                    let mut nums: Vec<u32> = b
-                        .chapters
-                        .iter()
-                        .filter_map(|c| c.chapter.parse::<u32>().ok())
+                    let mut nums: Vec<u32> = b.chapters.iter()
+                        .filter(|chapter| !crate::scripture::readable_chapter_verses(chapter).is_empty())
+                        .filter_map(|chapter| crate::scripture::numeric_label_number(&chapter.chapter))
                         .collect();
                     nums.sort_unstable();
+                    nums.dedup();
                     return Ok(nums);
                 }
             }

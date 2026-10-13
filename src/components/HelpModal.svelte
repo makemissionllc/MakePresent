@@ -48,7 +48,7 @@
       <p class="muted">A little preparation. A confident first service.</p>
       <button class="replay" onclick={() => { onClose(); onGettingStarted(); }}>Getting started</button>
       <p class="muted">
-        New here? Take the 4-step tour — playlist, Output, songs &amp; Scripture.
+        New here? Take the guided tour — it walks through playlist, Output, songs, the Bible browser, and reading mode.
       </p>
       <button
         class="replay"
@@ -69,6 +69,9 @@
       </p>
       <div class="section-title">Scripture bookmarks</div>
       <p class="muted">In Scripture, open Browse Scripture → Bookmarks. Search by reference, translation, or words from the passage, then choose Add slide. Selected verses use compact references such as John 3:16–18, 20.</p>
+      <div class="section-title">Find your place and read a chapter</div>
+      <p class="muted">Use Find a book to rank exact names, prefixes, and close spellings. Choose a chapter, then Read book to expand the verse text and prevent accidental slide inserts. A−/A+ keeps your chosen text size on this device. Select a verse to preview it; choose Add as slide only when you want to present it.</p>
+      <p class="muted">The Scripture panel remembers the last chapter you opened. Continue reading reopens that translation, book, and chapter in one step. Your reading position and text size stay on this device.</p>
       <div class="section-title">Find content faster</div>
       <p class="muted">Press Ctrl+K (⌘K on Mac). Song results put matching titles first, tolerate small spelling mistakes, and also find lyric phrases. Scripture suggestions rank exact references first, then prefix and word matches, tolerating small typos before falling back to verse text.</p>
       <p class="muted">In the search window, press ↑ and ↓ to move through every result and Enter to add the highlighted one. Use Clear to start another search, or Escape to close search from any control. If a Bible cannot be read, Retry search or choose a different translation in Scripture; library songs and available media stay usable.</p>

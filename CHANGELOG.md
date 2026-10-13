@@ -2,6 +2,24 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
+## 2026-10-13 — A calmer Scripture reading flow
+
+### Added
+
+- Continue reading restores the last translation, book, and chapter from this device in one click.
+- Read book opens a focused, full-text reader. Verse clicks open a preview instead of inserting a slide; adding remains an explicit action. Text size, previous/next chapter, and the presentation workflow stay available.
+- Find a book ranks exact names, prefixes, matching words, and small spelling mistakes. The animated guided tour now includes Scripture and the reader; first-run onboarding and Help describe the same route.
+
+### Improved
+
+- Reader text and the book/chapter/verse layout adapt to the Scripture panel width, including stacked narrow layouts.
+- Scripture parsing accepts numbered book elements such as the bundled NIRV XML, decodes common legacy character encodings, combines split verse labels, and removes empty books/chapters from the browser.
+- A two-entry cache keeps recent downloaded translations in memory, imported XML is parsed once per session, and Bible text search waits for three characters plus a short typing pause to avoid repeated full-file reads and scans.
+
+### Fixed
+
+- Translations with books labeled only by sequential numbers no longer open with missing or empty book names. Empty verse placeholders are skipped, and one unusual verse label no longer removes readable text from its chapter.
+
 ## 2026-10-12 — Duplicate warnings and steadier downloads
 
 ### Added

@@ -22,6 +22,26 @@ function oneEditApart(a: string, b: string): boolean {
   );
 }
 
+/** Rank Bible books by exact name, prefix, token coverage, then a small typo.
+ * Stable source order is retained for ties, and short queries avoid typo work. */
+export function rankBibleBooks(books: string[], query: string): string[] {
+  const q = normalize(query.slice(0, 80));
+  if (!q) return books;
+  const tokens = [...new Set(q.split(" ").filter(Boolean))].slice(0, 6);
+  return books.flatMap((book, order) => {
+    const name = normalize(book);
+    const words = name.split(" ").filter(Boolean);
+    let score = 0;
+    if (name === q) score = 1000;
+    else if (name.startsWith(q)) score = 900;
+    else if (name.includes(q)) score = 800;
+    else if (tokens.every((token) => words.some((word) => word.startsWith(token)))) score = 600;
+    else if (tokens.every((token) => words.some((word) =>
+      word.startsWith(token) || (token.length >= 4 && oneEditApart(token, word))))) score = 500;
+    return score ? [{ book, score, order }] : [];
+  }).sort((a, b) => b.score - a.score || a.order - b.order).map(({ book }) => book);
+}
+
 /**
  * Intelligent ranking for Scripture hits.
  *

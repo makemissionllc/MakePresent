@@ -7,8 +7,8 @@ use crate::osc::OscListener;
 use crate::audio::AudioPlayer;
 use crate::project::{now_iso, Library, Notice, Overlay, Project, RenderAck, AckUpdate, Settings};
 use crate::project::SavedOverlay;
-use crate::scripture::ScriptureIndex;
-use std::collections::HashSet;
+use crate::scripture::{DownloadedBible, RawBook, ScriptureIndex};
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -120,6 +120,14 @@ pub struct AppState {
     pub save_tx: Mutex<Option<Sender<()>>>,
     /// Scripture search index, loaded once at startup from vendored KJV data.
     pub scripture: RwLock<Option<ScriptureIndex>>,
+    /// Recently used downloaded translations are retained in a two-entry LRU
+    /// so chapter changes and text searches do not repeatedly parse large JSON
+    /// files or grow memory without bound.
+    pub downloaded_bibles: Mutex<VecDeque<(String, Arc<DownloadedBible>)>>,
+    /// Imported translations are parsed once per session. The cache is replaced
+    /// after imports and browser refreshes so reading/searching does not rescan
+    /// every XML file on every chapter or keystroke.
+    pub imported_bibles: Mutex<Option<Arc<Vec<RawBook>>>>,
     /// NDI broadcaster (runtime-loaded SDK; inactive unless NDI is enabled).
     pub broadcaster: Broadcaster,
     /// NDI receive confidence monitor (runtime-loaded SDK; fully independent
@@ -173,6 +181,8 @@ impl Default for AppState {
             logger: Logger::default(),
             save_tx: Mutex::new(None),
             scripture: RwLock::new(None),
+            downloaded_bibles: Mutex::new(VecDeque::new()),
+            imported_bibles: Mutex::new(None),
             broadcaster: Broadcaster::default(),
             ndi_monitor: NdiReceiveMonitor::default(),
             midi: MidiListener::default(),

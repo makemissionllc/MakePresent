@@ -2599,6 +2599,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "cpal",
+ "encoding_rs",
  "futures-util",
  "get_if_addrs",
  "image 0.25.10",

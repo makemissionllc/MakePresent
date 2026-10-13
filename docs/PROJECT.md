@@ -1,5 +1,13 @@
 # MakrStudio (formerly MakePresent) — Living Project Doc
 
+## Changed (2026-10-13) — A calmer Scripture reading flow
+
+- Added the local Continue reading checkpoint for the last successful translation/book/chapter, a dedicated Read book mode with explicit preview-before-add behavior, saved text sizing, and in-reader chapter navigation.
+- Added ranked book filtering with exact/prefix/token/typo matching, responsive reader layouts based on the actual source-panel width, and a six-step animated tour covering the content workflow. Help and first-run onboarding point to the same controls.
+- The XML parser now maps numbered book elements to canonical names (fixing the included NIRV file), decodes common legacy encodings, combines split verse labels, and removes empty/unreadable placeholders from the browser.
+- Added a bounded two-version LRU for downloaded translations and a session cache for imported XML. Bible text search now waits for three characters and 450 ms of typing pause before scanning, reducing repeated file parsing and CPU work while preserving local, offline search.
+- Updated Settings → What’s New, Help, README, and CHANGELOG with this release.
+
 ## Changed (2026-10-12) — Smarter song layout and safer arrangement editing
 
 - Added `smartSongLayout.ts`, an O(lines × maxLines) dynamic-programming partitioner with a rough character budget, punctuation-boundary preference, and orphan penalty. It respects contiguous group/alignment boundaries and preserves line order; the operator explicitly applies and reviews the preview.

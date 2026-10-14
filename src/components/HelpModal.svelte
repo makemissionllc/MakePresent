@@ -48,7 +48,7 @@
       <p class="muted">A little preparation. A confident first service.</p>
       <button class="replay" onclick={() => { onClose(); onGettingStarted(); }}>Getting started</button>
       <p class="muted">
-        Explore at your own pace. The interactive tutorial covers playlists, Output, songs, Scripture, reading, search, media, Looks, live tools, connections, updates, and returning to your current View. Jump to any topic and use its button to open the real controls.
+        Explore at your own pace. The interactive tutorial covers playlists, Output, songs, Scripture, reader layouts, reading progress, search, media, Looks, live tools, connections, updates, and returning to your current View. Jump to any topic and use its button to open the real controls.
       </p>
       <button
         class="replay"
@@ -60,6 +60,7 @@
         Replay guided tour
       </button>
       <button class="replay" onclick={() => { onReplayTour(4); onClose(); }}>Explore Scripture reading</button>
+      <button class="replay" onclick={() => { onReplayTour(17); onClose(); }}>Choose a reader layout</button>
       <button class="replay" onclick={() => { onReplayTour(7); onClose(); }}>Run the service check</button>
       <button class="replay" onclick={() => { onReplayTour(14); onClose(); }}>Follow the live slide</button>
       <button class="replay" onclick={() => { onReplayTour(15); onClose(); }}>Find entries in Logs</button>
@@ -81,9 +82,9 @@
       <div class="section-title">Scripture bookmarks</div>
       <p class="muted">In Scripture, open Browse Scripture → Bookmarks. Search by reference, translation, or words from the passage, then choose Add slide. Selected verses use compact references such as John 3:16–18, 20.</p>
       <div class="section-title">Find your place and read a chapter</div>
-      <p class="muted">Use Find a book to rank exact names, prefixes, and close spellings. Choose a chapter, then Read book for comfortable text that keeps clicks from adding slides by accident. A−/A+ keeps your chosen text size (14–22) on this device. Select a verse to preview it; choose Add as slide only when you want to present it.</p>
+      <p class="muted">Use Find a book to rank exact names, prefixes, and close spellings. Choose a chapter, then Read book for comfortable text that keeps clicks from adding slides by accident. Choose Auto, One, or Two columns; Auto fits the panel, and narrow layouts stay in one column. A−/A+ keeps your chosen text size (14–22) on this device. Select a verse to preview it; choose Add as slide only when you want to present it.</p>
       <p class="muted">The Scripture panel remembers the last chapter you opened. Continue reading reopens that translation, book, and chapter in one step. Your reading position and text size stay on this device.</p>
-      <p class="muted">In Read book, mark a chapter read when you finish. The one-chapter daily goal and consecutive-day streak update at that point and stay on this device.</p>
+      <p class="muted">In Read book, mark a chapter read when you finish. Mark read &amp; next saves your progress and opens the next unread chapter in one step. The one-chapter daily goal and consecutive-day streak update at that point and stay on this device.</p>
       <p class="muted">Chapter numbers show what you have read in the selected translation. The progress bar tracks the book, and Next unread chapter opens the next chapter you have not marked.</p>
       <div class="section-title">Find content faster</div>
       <p class="muted">Press Ctrl+K (⌘K on Mac). Song results put matching titles first, tolerate small spelling mistakes, and also find lyric phrases. Scripture suggestions rank exact references first, then prefix and word matches, tolerating small typos before falling back to verse text.</p>
@@ -94,7 +95,7 @@
       <div class="section-title">Bible downloads &amp; audio</div>
       <p class="muted">Bible catalog loads and downloads have bounded waits: a stalled catalog or download reports an error with Retry instead of spinning forever. In Settings → Audio, the device list shows when it is scanning, and a frozen track position surfaces a reconnect hint after repeated failures.</p>
       <div class="section-title">Lighter previews</div>
-      <p class="muted">Playlist, editing, and Stage thumbnails show cached still posters for video backgrounds and overlays. The visible live Output preview plays motion. Offscreen thumbnails skip rendering, and hidden editor previews release video and camera resources. Settings → What’s New records the changes and links back to this tutorial.</p>
+      <p class="muted">Playlist, editing, and Stage thumbnails show cached still posters for video backgrounds and overlays. Output and Stage pause video and camera previews when their windows are hidden, then resume when shown; the Stage clock also pauses. Offscreen thumbnails skip rendering, and hidden editor previews release media. Settings → What’s New records the changes and links back to this tutorial.</p>
       <div class="section-title">Keyboard shortcuts</div>
       <ul class="shortcuts">
         <li><span class="keys"><kbd>←</kbd> <kbd>→</kbd></span> Previous / next slide (when not typing)</li>

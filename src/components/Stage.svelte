@@ -11,6 +11,7 @@
   import { stripChords } from "../lib/chords";
 
   let appState = $state<ClientState | null>(null);
+  let pageVisible = $state(typeof document === "undefined" || !document.hidden);
   let currentTime = $state("--:--:--");
   let countdown = $state<CountdownView>({ active: false, running: false, remainingSeconds: 0, outputVisible: false, mode: null, targetTime: null });
   // Exit/outro animation (real Quit only): same contract as Output — full
@@ -64,7 +65,7 @@
     }
 
     const selectedTransition = appState?.project?.transition ?? "cut";
-    if (selectedTransition !== "cut" && !prefersReducedMotion()) {
+    if (selectedTransition !== "cut" && pageVisible && !prefersReducedMotion()) {
       currentTransition = selectedTransition;
       currentTransitionStarted = false;
       leavingCurrent = previous;
@@ -127,6 +128,17 @@
     const tick = () => {
       currentTime = new Date().toLocaleTimeString([], { hour12: false });
     };
+    const refreshVisibility = () => {
+      pageVisible = !document.hidden;
+      if (pageVisible) {
+        tick();
+        if (clock === undefined) clock = window.setInterval(tick, 1000);
+      } else if (clock !== undefined) {
+        window.clearInterval(clock);
+        clock = undefined;
+      }
+    };
+    document.addEventListener("visibilitychange", refreshVisibility);
     const ack = () => emitRenderAck("stage", current?.id ?? null);
 
     listeners.add(subscribeState((s) => {
@@ -152,13 +164,13 @@
         console.error("Failed to fetch initial countdown", e);
       }
     })();
-    tick();
-    clock = window.setInterval(tick, 1000);
+    refreshVisibility();
     ackTimer = window.setInterval(ack, ACK_MS);
 
     return () => {
       stageDisposed = true;
       listeners.dispose();
+      document.removeEventListener("visibilitychange", refreshVisibility);
       window.clearTimeout(currentFadeTimer);
       if (currentFrame !== undefined) cancelAnimationFrame(currentFrame);
       currentFrame = undefined;
@@ -177,7 +189,7 @@
   <section class="current">
     {#if shownCurrent && look}
       <div class="stage-frame" class:crossfading={currentCrossfading} class:push-in={currentTransition === "push" && !currentTransitionStarted} style:opacity={currentInOpacity} style:clip-path={currentTransition === "wipe" ? (currentTransitionStarted ? "inset(0)" : "inset(0 100% 0 0)") : undefined}>
-        <SlideRender {look} slide={shownCurrent} effectiveBackground={appState?.effectiveBackgrounds?.[shownCurrent.id] ?? shownCurrent.background} {showText} {showBackground} {aspectRatio} isStage={true} presentSongTitle={true} />
+        <SlideRender {look} slide={shownCurrent} effectiveBackground={appState?.effectiveBackgrounds?.[shownCurrent.id] ?? shownCurrent.background} {showText} {showBackground} {aspectRatio} isStage={true} enableVideo={pageVisible} presentSongTitle={true} />
       </div>
     {:else if shownCurrent}
       <p class="placeholder">{shownCurrent.body || shownCurrent.title}</p>
@@ -186,7 +198,7 @@
     {/if}
     {#if leavingCurrent && look}
       <div class="stage-frame stage-frame-leaving" class:crossfading={currentCrossfading} class:push-out={currentTransition === "push" && currentTransitionStarted} style:opacity={currentOutOpacity}>
-        <SlideRender {look} slide={leavingCurrent} effectiveBackground={appState?.effectiveBackgrounds?.[leavingCurrent.id] ?? leavingCurrent.background} {showText} {showBackground} {aspectRatio} isStage={true} presentSongTitle={true} />
+        <SlideRender {look} slide={leavingCurrent} effectiveBackground={appState?.effectiveBackgrounds?.[leavingCurrent.id] ?? leavingCurrent.background} {showText} {showBackground} {aspectRatio} isStage={true} enableVideo={pageVisible} presentSongTitle={true} />
       </div>
     {/if}
   </section>

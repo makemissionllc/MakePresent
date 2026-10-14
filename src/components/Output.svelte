@@ -25,6 +25,7 @@
   // True while a crossfade is active — drives GPU layer hints.
   let crossfading = $state(false);
   let appState = $state<ClientState | null>(null);
+  let pageVisible = $state(typeof document === "undefined" || !document.hidden);
   let countdown = $state<CountdownView>({ active: false, running: false, remainingSeconds: 0, outputVisible: false, mode: null, targetTime: null });
   let timer: number | undefined;
   let frame: number | undefined;
@@ -115,7 +116,7 @@
       return;
     }
 
-    if (transition !== "cut" && !prefersReducedMotion()) {
+    if (transition !== "cut" && pageVisible && !prefersReducedMotion()) {
       activeTransition = transition;
       transitionStarted = false;
       leaving = prev;
@@ -158,6 +159,9 @@
 
   onMount(() => {
     const listeners = createListenerScope();
+    const refreshVisibility = () => { pageVisible = !document.hidden; };
+    document.addEventListener("visibilitychange", refreshVisibility);
+    refreshVisibility();
     let ackTimer: number | undefined;
     // One-way ack: confirm each applied state + a slow heartbeat so a
     // frozen-but-not-updating window is still detectable. Fire-and-forget —
@@ -190,6 +194,7 @@
     return () => {
       rendererDisposed = true;
       listeners.dispose();
+      document.removeEventListener("visibilitychange", refreshVisibility);
       window.clearTimeout(timer);
       if (frame !== undefined) cancelAnimationFrame(frame);
       frame = undefined;
@@ -212,7 +217,7 @@
         style:opacity={inOpacity}
         style:clip-path={activeTransition === "wipe" ? (transitionStarted ? "inset(0)" : "inset(0 100% 0 0)") : undefined}
       >
-        <SlideRender slide={shown} effectiveBackground={appState?.effectiveBackgrounds?.[shown.id] ?? shown.background} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} presentSongTitle={true} />
+        <SlideRender slide={shown} effectiveBackground={appState?.effectiveBackgrounds?.[shown.id] ?? shown.background} {look} {showText} {showBackground} {aspectRatio} enableCamera={pageVisible} enableVideo={pageVisible} presentSongTitle={true} />
       </div>
     {/if}
   {:else if !leaving}
@@ -227,7 +232,7 @@
         class:push-out={activeTransition === "push" && transitionStarted}
         style:opacity={outOpacity}
       >
-        <SlideRender slide={leaving} effectiveBackground={appState?.effectiveBackgrounds?.[leaving.id] ?? leaving.background} {look} {showText} {showBackground} {aspectRatio} enableCamera={true} presentSongTitle={true} />
+        <SlideRender slide={leaving} effectiveBackground={appState?.effectiveBackgrounds?.[leaving.id] ?? leaving.background} {look} {showText} {showBackground} {aspectRatio} enableCamera={pageVisible} enableVideo={pageVisible} presentSongTitle={true} />
       </div>
     {/if}
   {/if}
@@ -244,7 +249,7 @@
             (e.currentTarget as HTMLImageElement).style.display = "none";
           }}
         />
-      {:else if overlay.background?.type === "video"}
+      {:else if overlay.background?.type === "video" && pageVisible}
         <video
           class="overlay-media"
           src={convertFileSrc(overlay.background.path)}
@@ -254,6 +259,8 @@
           playsinline
           preload="auto"
         ></video>
+      {:else if overlay.background?.type === "video" && overlay.background.thumb}
+        <img class="overlay-media" src={convertFileSrc(overlay.background.thumb)} alt="" draggable="false" />
       {/if}
       {#if overlay.text}
         <div class="overlay-text">{overlay.text}</div>
@@ -272,7 +279,7 @@
     </div>
   {/if}
 
-  {#if onDeck}
+  {#if onDeck && pageVisible}
     {@const onDeckBackground = appState?.effectiveBackgrounds?.[onDeck.id] ?? onDeck.background}
     {#if onDeckBackground.type === "video"}
       <video

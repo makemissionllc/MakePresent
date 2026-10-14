@@ -8,7 +8,8 @@
 - Settings → Logs handles duplicate records safely and filters by time, level, or text. Copy and export still include the full log.
 - View Hub names the current autosaved View and provides a one-click Continue this View return path. The interactive tutorial, Help, and Settings → What’s New explain it.
 - Read book stays inside the Bible browser with responsive verse text, 14–22 text sizing, chapter navigation, and explicit preview/add actions. Completed chapter progress and Continue reading remain on this device.
-- The interactive tutorial, onboarding, Help, and Settings → What’s New explain service readiness, Follow live slide, its keyboard shortcut, and log filtering. Scripture layout breakpoints follow the panel width, including split-pane layouts. Video thumbnails use cached posters; offscreen slides and verses skip unnecessary rendering; hidden editor previews release media. These changes reduce avoidable rendering work; device temperature has not been measured.
+- Read book adds saved Auto, One, and Two column layouts that adapt to panel width, plus Mark read & next to save progress and open another unread chapter in one step.
+- The interactive tutorial, onboarding, Help, and Settings → What’s New explain the reader layouts, Mark read & next, service readiness, Follow live slide, its keyboard shortcut, and log filtering. Scripture layout breakpoints follow the panel width, including split-pane layouts. Video thumbnails use cached posters; offscreen slides and verses skip unnecessary rendering; hidden editor previews and hidden Output/Stage windows release media playback. The Stage clock pauses while hidden; device temperature has not been measured.
 - All prior release details remain in [CHANGELOG.md](CHANGELOG.md).
 
 ## Changed (2026-10-13) — A calmer Scripture reading flow

@@ -49,6 +49,8 @@ import {
   const SCRIPTURE_READING_POSITION_KEY = "makrstudio.scripture-reading-position.v1";
   const SCRIPTURE_READING_PROGRESS_KEY = "makrstudio.scripture-reading-progress.v1";
   const SCRIPTURE_READER_SIZE_KEY = "makrstudio.scripture-reader-size.v1";
+  const SCRIPTURE_READER_LAYOUT_KEY = "makrstudio.scripture-reader-layout.v1";
+  type ScriptureReaderLayout = "auto" | "single" | "split";
 
   interface ScriptureReadingPosition {
     bibleId: string;
@@ -83,6 +85,15 @@ import {
   function isScriptureChapterRead(bibleId: string | null, book: string | null, chapter: number | null): boolean {
     if (!bibleId || !book || chapter == null) return false;
     return scriptureReadingProgress.readChapters[scriptureBookProgressKey(bibleId, book)]?.includes(chapter) ?? false;
+  }
+
+  function readScriptureReaderLayout(): ScriptureReaderLayout {
+    try {
+      const saved = window.localStorage.getItem(SCRIPTURE_READER_LAYOUT_KEY);
+      return saved === "single" || saved === "split" ? saved : "auto";
+    } catch {
+      return "auto";
+    }
   }
 
   function localDayKey(date = new Date()): string {
@@ -373,7 +384,27 @@ import {
     return ordered.find((chapter) => !isScriptureChapterRead(selectedBibleId, selectedBook, chapter)) ?? null;
   });
   let readerFontSize = $state(readScriptureReaderSize());
+  let readerLayout = $state<ScriptureReaderLayout>(readScriptureReaderLayout());
   let readerMode = $state(false);
+  let readerPane = $state<HTMLDivElement | null>(null);
+  let readerPaneWidth = $state(0);
+  const readerUsesColumns = $derived(readerLayout === "split"
+    ? readerPaneWidth >= 680
+    : readerLayout === "auto" && readerPaneWidth >= 900);
+  const readerColumns = $derived.by(() => {
+    if (!readerUsesColumns) return [chapterVerses];
+    const midpoint = Math.ceil(chapterVerses.length / 2);
+    return [chapterVerses.slice(0, midpoint), chapterVerses.slice(midpoint)];
+  });
+  $effect(() => {
+    const pane = readerPane;
+    if (!pane || !readerMode || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) readerPaneWidth = entry.contentRect.width;
+    });
+    observer.observe(pane);
+    return () => observer.disconnect();
+  });
   let continuingReading = $state(false);
   let continueReadingSeq = 0;
   let bibleBookQuery = $state("");
@@ -1378,6 +1409,11 @@ import {
     try { window.localStorage.setItem(SCRIPTURE_READER_SIZE_KEY, String(readerFontSize)); } catch { /* keep this size for the current session */ }
   }
 
+  function changeReaderLayout(layout: ScriptureReaderLayout): void {
+    readerLayout = layout;
+    try { window.localStorage.setItem(SCRIPTURE_READER_LAYOUT_KEY, layout); } catch { /* keep this layout for the current session */ }
+  }
+
   function toggleCurrentChapterRead(): void {
     if (!selectedBibleId || !selectedBook || selectedChapter == null || chapterVerses.length === 0 || browseLoading) return;
     const key = scriptureBookProgressKey(selectedBibleId, selectedBook);
@@ -1415,9 +1451,15 @@ import {
   }
 
   function openNextUnreadChapter(): void {
-    if (nextUnreadChapter == null || !selectedBibleId || !selectedBook) return;
+    if (browseLoading || nextUnreadChapter == null || !selectedBibleId || !selectedBook) return;
     readerMode = true;
     onBrowseChapterSelect(nextUnreadChapter);
+  }
+
+  function markReadAndContinue(): void {
+    if (browseLoading) return;
+    if (!currentChapterRead) toggleCurrentChapterRead();
+    openNextUnreadChapter();
   }
 
   function toggleReaderMode(): void {
@@ -3195,6 +3237,34 @@ import {
   });
 </script>
 
+{#snippet scriptureVerseRow(v: ChapterVerse)}
+  <li class="browse-verse-row">
+    <input
+      class="browse-verse-select"
+      type="checkbox"
+      checked={selectedVerseNumbers.includes(v.verse)}
+      onchange={() => toggleVerseSelection(v.verse)}
+      aria-label={`Select ${selectedBook} ${selectedChapter}:${v.verse}`}
+    />
+    <button
+      class="browse-verse"
+      onpointerdown={(e) => {
+        if (readerMode) return;
+        const bible = bibles.find((item) => item.id === selectedBibleId);
+        const version = bible?.shortName?.trim() || bible?.name?.trim();
+        const reference = `${selectedBook} ${selectedChapter}:${v.verse}${version ? ` · ${version}` : ""}`;
+        startPointerDrag(e, { type: "scripture", reference, text: v.text });
+      }}
+      onclick={() => { if (readerMode) { previewVerse = v; browseCopyStatus = null; } else insertBrowseVerse(v); }}
+      aria-label={readerMode ? `Read ${selectedBook} ${selectedChapter}:${v.verse}` : `Add ${selectedBook} ${selectedChapter}:${v.verse} as a slide`}
+    >
+      <span class="verse-num">{v.verse}</span>
+      <span class="verse-text">{v.text}</span>
+    </button>
+    <button class="verse-preview-action" aria-label={`Preview ${selectedBook} ${selectedChapter}:${v.verse}`} onclick={() => { previewVerse = v; browseCopyStatus = null; }}>Preview</button>
+  </li>
+{/snippet}
+
 {#if appState === null}
   <div class="loading-shell">
     <BrandLockup large />
@@ -4476,7 +4546,7 @@ import {
 
             </div>
             {#if !browseCollapsed}
-              <div class="browse-dock" class:reader-mode={readerMode} class:tour-highlight={showTour && (tourStep === 3 || tourStep === 4 || tourStep === 6)} role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
+              <div class="browse-dock" class:reader-mode={readerMode} data-reader-layout={readerLayout} class:tour-highlight={showTour && (tourStep === 3 || tourStep === 4 || tourStep === 6 || tourStep === 17)} role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
                 <div class="browse-dock-header"><strong>Browse Scripture</strong><button class="browse-dock-close" onclick={() => (browseCollapsed = true)} aria-label="Close Scripture browser">× Close</button></div>
                 <div class="browse-dock-left">
                   <label>
@@ -4628,7 +4698,7 @@ import {
                     <span class="media-spinner" style="align-self:center; margin: 8px 0;"></span>
                   {/if}
                 </div>
-                <div class="browse-dock-right">
+                <div class="browse-dock-right" bind:this={readerPane}>
                   <label class="verse-text-search">
                     Search this Bible’s verse text
                     <input type="search" value={verseTextQuery} oninput={onVerseTextSearchInput} placeholder="Search a phrase or word" aria-label="Search this Bible's verse text" />
@@ -4670,6 +4740,17 @@ import {
                         <button class="reader-control" disabled={readerFontSize <= 14} onclick={() => changeReaderFontSize(-2)} aria-label="Make Scripture text smaller">A−</button>
                         <button class="reader-control" disabled={readerFontSize >= 22} onclick={() => changeReaderFontSize(2)} aria-label="Make Scripture text larger">A+</button>
                         {#if readerMode}
+                          <div class="reader-layout-picker" role="group" aria-label="Reader layout">
+                            <span>Layout</span>
+                            <button class:active={readerLayout === "auto"} aria-pressed={readerLayout === "auto"} title="Choose columns automatically for the available width" onclick={() => changeReaderLayout("auto")}>Auto</button>
+                            <button class:active={readerLayout === "single"} aria-pressed={readerLayout === "single"} onclick={() => changeReaderLayout("single")}>One</button>
+                            <button class:active={readerLayout === "split"} aria-pressed={readerLayout === "split"} title="Use two columns when the panel is wide enough" onclick={() => changeReaderLayout("split")}>Two</button>
+                          </div>
+                          {#if nextUnreadChapter !== null}
+                            <button class="reader-continue-action" disabled={browseLoading} onclick={markReadAndContinue} title={currentChapterRead ? "Open the next unread chapter" : "Mark this chapter read and open the next unread chapter"}>{currentChapterRead ? `Next unread · ${nextUnreadChapter} →` : "Mark read & next →"}</button>
+                          {/if}
+                        {/if}
+                        {#if readerMode}
                           <button class="chapter-read-toggle" class:complete={currentChapterRead} disabled={browseLoading} aria-pressed={currentChapterRead} aria-label={currentChapterRead ? "Mark chapter unread" : "Mark chapter read"} onclick={toggleCurrentChapterRead}>{currentChapterRead ? "✓ Read" : "Mark read"}</button>
                         {/if}
                         <button class="reader-mode-toggle" aria-pressed={readerMode} onclick={toggleReaderMode}>{readerMode ? "Exit reading" : "Read book"}</button>
@@ -4709,35 +4790,19 @@ import {
                         </div>
                       </section>
                     {/if}
-                    <ul class="browse-verses" style={`--reader-font-size:${readerFontSize}px`}>
-                      {#each chapterVerses as v}
-                        <li class="browse-verse-row">
-                          <input
-                            class="browse-verse-select"
-                            type="checkbox"
-                            checked={selectedVerseNumbers.includes(v.verse)}
-                            onchange={() => toggleVerseSelection(v.verse)}
-                            aria-label={`Select ${selectedBook} ${selectedChapter}:${v.verse}`}
-                          />
-                          <button
-                            class="browse-verse"
-                            onpointerdown={(e) => {
-                              if (readerMode) return;
-                              const bible = bibles.find((item) => item.id === selectedBibleId);
-                              const version = bible?.shortName?.trim() || bible?.name?.trim();
-                              const reference = `${selectedBook} ${selectedChapter}:${v.verse}${version ? ` · ${version}` : ""}`;
-                              startPointerDrag(e, { type: "scripture", reference, text: v.text });
-                            }}
-                            onclick={() => { if (readerMode) { previewVerse = v; browseCopyStatus = null; } else insertBrowseVerse(v); }}
-                            aria-label={readerMode ? `Read ${selectedBook} ${selectedChapter}:${v.verse}` : `Add ${selectedBook} ${selectedChapter}:${v.verse} as a slide`}
-                          >
-                            <span class="verse-num">{v.verse}</span>
-                            <span class="verse-text">{v.text}</span>
-                          </button>
-                          <button class="verse-preview-action" aria-label={`Preview ${selectedBook} ${selectedChapter}:${v.verse}`} onclick={() => { previewVerse = v; browseCopyStatus = null; }}>Preview</button>
-                        </li>
-                      {/each}
-                    </ul>
+                    {#if readerMode && readerUsesColumns}
+                      <div class="reader-pages split" style={`--reader-font-size:${readerFontSize}px`} aria-label="Scripture in two reading columns">
+                        {#each readerColumns as column, i (i)}
+                          <ul class="reader-page" aria-label={`Reading column ${i + 1}`}>
+                            {#each column as v (v.verse)}{@render scriptureVerseRow(v)}{/each}
+                          </ul>
+                        {/each}
+                      </div>
+                    {:else}
+                      <ul class="browse-verses" class:reader-mode={readerMode} style={`--reader-font-size:${readerFontSize}px`}>
+                        {#each chapterVerses as v (v.verse)}{@render scriptureVerseRow(v)}{/each}
+                      </ul>
+                    {/if}
                   {:else if selectedChapter}
                     <p class="browse-placeholder">No verses</p>
                   {:else if selectedBook}
@@ -6640,6 +6705,13 @@ import {
   .reader-mode-toggle[aria-pressed="true"] { color: var(--text); background: color-mix(in srgb, var(--accent) 18%, var(--panel)); }
   .chapter-read-toggle { color: var(--text-dim); }
   .chapter-read-toggle.complete { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+  .reader-layout-picker { display: inline-flex; align-items: center; gap: 2px; min-height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
+  .reader-layout-picker > span { padding: 0 5px; color: var(--text-dim); font-size: 10px; }
+  .reader-layout-picker button { min-height: 24px; padding: 3px 7px; border: 1px solid transparent; border-radius: 5px; color: var(--text-dim); background: transparent; font: inherit; font-size: 10px; cursor: pointer; }
+  .reader-layout-picker button:hover { color: var(--text); }
+  .reader-layout-picker button.active { color: var(--text); border-color: var(--border); background: var(--panel-2); }
+  .reader-continue-action { min-height: 30px; padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border)); border-radius: 6px; color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--panel)); font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+  .reader-continue-action:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, var(--panel)); }
   .browse-dock.reader-mode .browse-range-tools,
   .browse-dock.reader-mode .browse-verse-select,
   .browse-dock.reader-mode .verse-preview-action { display: none; }
@@ -6650,6 +6722,23 @@ import {
   .browse-dock.reader-mode .browse-verse:hover { border-color: transparent; background: transparent; }
   .browse-dock.reader-mode .verse-num { flex: 0 0 auto; padding-top: .28em; font-size: .78em; }
   .browse-dock.reader-mode .verse-text { max-width: 72ch; overflow: visible; color: var(--text); font-size: var(--reader-font-size, 16px); line-height: 1.65; text-overflow: clip; white-space: normal; }
+  .browse-dock.reader-mode { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); width: 100%; height: clamp(320px, 60vh, 760px); min-height: 320px; max-height: 74vh; overflow: hidden; padding: 10px 14px; }
+  .browse-dock.reader-mode .browse-dock-left,
+  .browse-dock.reader-mode .browse-dock-middle { display: none; }
+  .browse-dock.reader-mode .browse-dock-header { grid-column: 1; grid-row: 1; }
+  .browse-dock.reader-mode .browse-dock-right { display: flex; grid-column: 1; grid-row: 2; flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; max-height: none; overflow: hidden; flex-direction: column; container-type: inline-size; container-name: reader-pane; }
+  .browse-dock.reader-mode .browse-verses { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
+  .reader-pages { flex: 1 1 auto; min-height: 0; display: block; overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); animation: reader-layout-in 180ms var(--ease-emphasized) both; }
+  .reader-pages.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .reader-page { min-width: 0; list-style: none; margin: 0; padding: 8px 14px; }
+  .reader-page + .reader-page { border-left: 1px solid var(--border); }
+  .reader-page .browse-verse-row { contain-intrinsic-size: auto 84px; }
+  .reader-page .browse-verse-row:last-child { border-bottom: 0; }
+  .reader-page .browse-verse { align-items: flex-start; padding: 12px 2px; border: 0; cursor: text; }
+  .reader-page .browse-verse:hover { border-color: transparent; background: transparent; }
+  .reader-page .verse-num { flex: 0 0 auto; padding-top: .28em; font-size: .78em; }
+  .reader-page .verse-text { max-width: 72ch; overflow: visible; color: var(--text); font-size: var(--reader-font-size, 16px); line-height: 1.65; text-overflow: clip; white-space: normal; }
+  @keyframes reader-layout-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
   .browse-hint {
     font-size: 10px;
@@ -7796,11 +7885,16 @@ import {
     .continue-reading-card { width: 100%; }
     .continue-reading-action { font-size: 10px; }
   }
+  @container scripture-workspace (max-width: 680px) {
+    .scripture-pane .browse-dock.reader-mode { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: clamp(300px, 58vh, 620px); min-height: 300px; max-height: 74vh; overflow: hidden; }
+    .scripture-pane .browse-dock.reader-mode .browse-dock-right { min-height: 0; padding: 0; }
+  }
   .browse-dock.reader-mode .browse-verse-row { contain-intrinsic-size: auto 72px; }
   @media (prefers-reduced-motion: reduce) {
     .continue-reading-card, .reading-rhythm-card, .book-progress-card { animation: none; transition: none; }
     .reading-rhythm-track span { transition: none; }
     .book-progress-track span { transition: none; }
+    .reader-pages { animation: none; }
   }
   @keyframes scripture-resume-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
   .editor-content:has(:global(.look-editor-view)) .editor-heading { position:sticky; top:-22px; z-index:10; background:var(--bg); padding-top:22px; margin-top:-22px; }

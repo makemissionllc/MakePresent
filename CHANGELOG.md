@@ -11,13 +11,16 @@ User-facing features and fixes are also available in **Settings → What’s New
 - Ctrl+Shift+L (⌘⇧L on Mac) follows the live slide from the keyboard, including while Scripture reading is open; it never changes Output.
 - Settings → Logs now filters recent entries by timestamp, level, or message text without rendering lines that do not match. Help, What’s New, and the interactive tutorial point to the filter; copying and exporting still include the full log.
 - View Hub identifies the current autosaved View and offers **Continue this View**, so returning from New View is one clear action. Help, What’s New, and the interactive tutorial include the shortcut.
+- Read book adds **Mark read & next** to save a finished chapter and open the next unread one in one step, carrying the local daily goal forward without a reminder.
+- Read book offers saved **Auto**, **One**, and **Two** column layouts. Auto follows the reader panel width, narrow panes stay in one column, and focus mode gives the passage more room. Onboarding, Help, What’s New, and the interactive tutorial cover the controls.
 
 ### Improved
 
 - The separate Scripture reading room is gone: Read book now keeps one simple reading mode inside the Bible browser, with comfortable text, A−/A+ sizes from 14–22, chapter navigation, mark-read, and explicit add, copy, and bookmark actions.
 - The reader adapts to narrow layouts with a tighter toolbar and verse list, and offscreen verses skip layout and paint until scrolled into view, keeping long chapters light on low-power devices.
 - Scripture layout breakpoints now respond to the browser panel’s width, so split-pane layouts reflow correctly even in a wide application window.
-- The interactive tutorial explains the service check and Follow live slide alongside Scripture browsing, chapter progress, search, and presentation controls. Onboarding, Help, and What’s New can reopen these lessons or Scripture tools.
+- Hidden Output and Stage windows pause video and camera previews, then resume them when shown; the Stage clock pauses while hidden. This avoids ongoing media decoding and timer work when those windows are not visible. Device temperature was not measured.
+- The interactive tutorial explains reader layouts, Mark read & next, hidden-window media pauses, the service check, Follow live slide, and log filters alongside Scripture browsing, search, and presentation controls. Onboarding, Help, and What’s New can reopen these lessons or Scripture tools.
 
 ### Fixed
 

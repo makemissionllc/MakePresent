@@ -2,12 +2,13 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
-## 2026-10-14 — A clearer live workflow and lighter Scripture browsing
+## 2026-10-14 — Smoother settings, service prep, and Scripture browsing
 
 ### Added
 
 - Service check in the top bar reviews playlist slides, the selected audience display, and Output visibility in one animated checklist. Stage appears separately as optional; each action opens its control without putting a slide live or starting background work. It is covered in onboarding, Help, What’s New, and the interactive tutorial.
 - Follow live slide returns the editor to the slide already on air and scrolls it into view after you select another slide to edit. It changes editing selection only; Output is untouched. Onboarding, Help, What’s New, and the interactive tutorial explain the shortcut.
+- Settings → Logs now filters recent entries by timestamp, level, or message text without rendering lines that do not match. Help, What’s New, and the interactive tutorial point to the filter; copying and exporting still include the full log.
 
 ### Improved
 
@@ -17,6 +18,7 @@ User-facing features and fixes are also available in **Settings → What’s New
 
 ### Fixed
 
+- Repeated identical log records no longer prevent Settings from opening when Logs is the last tab used.
 - Continue reading returns to the last opened chapter without stale saved-verse state, and chapter navigation keeps keyboard focus predictable.
 
 ### Verification

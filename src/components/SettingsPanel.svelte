@@ -54,7 +54,7 @@
     onBrowseMedia?: () => void;
     onOpenSearch?: () => void;
     onUpdate?: (s: ClientState) => void;
-    initialTab?: "plugins" | "whats-new" | null;
+    initialTab?: SettingsTab | null;
     onTutorial?: (step?: number) => void;
     tourInProgress?: boolean;
   }
@@ -65,8 +65,16 @@
   $effect(() => { if (initialTab) tab = initialTab; });
   let status = $state<{ kind: "ok" | "err"; text: string } | null>(null);
   let logs = $state<LogEntry[]>([]);
+  let logFilter = $state("");
   let logsMsg = $state<string | null>(null);
   let lookErr = $state<string | null>(null);
+
+  const visibleLogs = $derived.by(() => {
+    const query = logFilter.trim().toLowerCase();
+    return logs
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => !query || `${entry.at} ${entry.level} ${entry.message}`.toLowerCase().includes(query));
+  });
 
   $effect(() => {
     try { window.localStorage.setItem(SETTINGS_TAB_KEY, tab); } catch { /* preferences are optional */ }
@@ -1039,7 +1047,7 @@
             <span class="plugin-kicker">MAKRSTUDIO UPDATES</span>
             <h3>What’s new</h3>
             <p>Recent features and fixes, collected in one place.</p>
-            {#if onTutorial}<div class="tutorial-entry"><button onclick={() => onTutorial?.(0)}>Explore the interactive tutorial →</button><button onclick={() => onTutorial?.(4)}>Explore Scripture reading</button><button onclick={() => onTutorial?.(7)}>Run the service check</button><button onclick={() => onTutorial?.(14)}>Follow the live slide</button></div>{/if}
+            {#if onTutorial}<div class="tutorial-entry"><button onclick={() => onTutorial?.(0)}>Explore the interactive tutorial →</button><button onclick={() => onTutorial?.(4)}>Explore Scripture reading</button><button onclick={() => onTutorial?.(7)}>Run the service check</button><button onclick={() => onTutorial?.(14)}>Follow the live slide</button><button onclick={() => onTutorial?.(15)}>Find entries in Logs</button></div>{/if}
           </div>
           {#each CHANGELOG as release (`${release.date}:${release.title}`)}
             <article class="release-card">
@@ -1579,16 +1587,25 @@
       {:else if tab === "logs"}
         <div class="panel-logs">
           <div class="log-actions">
-            <button onclick={() => loadLogs()}>Refresh</button>
-            <button onclick={() => copyLogs()}>Copy to clipboard</button>
-            <button onclick={() => exportLogs()}>Export log file…</button>
+            <div class="log-buttons">
+              <button onclick={() => loadLogs()}>Refresh</button>
+              <button onclick={() => copyLogs()}>Copy to clipboard</button>
+              <button onclick={() => exportLogs()}>Export log file…</button>
+            </div>
+            <label class="log-filter">
+              <span class="sr-only">Filter log entries</span>
+              <input type="search" bind:value={logFilter} placeholder="Filter recent logs…" />
+            </label>
           </div>
           {#if logsMsg}
             <p class="status">{logsMsg}</p>
           {/if}
+          <p class="log-summary">{logFilter.trim() ? `Showing ${visibleLogs.length} of ${logs.length} entries` : `${logs.length} recent entries`}</p>
           <pre class="log-view" tabindex="-1">
-{#each logs as entry (entry.at + entry.level + entry.message)}
-  <span>{entry.at} {entry.level} {entry.message}</span>
+{#each visibleLogs as row (row.index)}
+  <span transition:veil={{ duration: 120 }}>{row.entry.at} {row.entry.level} {row.entry.message}</span>
+{:else}
+  <span class="log-empty">{logFilter.trim() ? "No matching log entries." : "No log entries yet."}</span>
 {/each}
           </pre>
         </div>
@@ -2133,6 +2150,14 @@
     gap: 8px;
     flex-wrap: wrap;
   }
+
+  .log-actions { align-items: center; justify-content: space-between; }
+  .log-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  .log-filter { flex: 1 1 190px; min-width: min(190px, 100%); }
+  .log-filter input { width: 100%; min-height: 34px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); color: var(--text); font: inherit; font-size: 12px; }
+  .log-filter input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .log-summary { margin: 10px 0 0; color: var(--text-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .log-empty { color: var(--text-dim); font-style: italic; }
 
   .bcast-block {
     display: flex;

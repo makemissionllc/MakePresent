@@ -322,7 +322,7 @@ import {
     mediaThumbFailures = new Set([...mediaThumbFailures, hash]);
   }
   let settingsOpen = $state(false);
-  let settingsRequestedTab = $state<"plugins" | "whats-new" | null>(null);
+  let settingsRequestedTab = $state<"plugins" | "logs" | "whats-new" | null>(null);
   // Service check — a calm pre-presentation checklist. It only reads state and
   // opens panels; it never puts a slide live or start polling.
   let serviceCheckOpen = $state(false);
@@ -522,8 +522,8 @@ import {
     const active = () => tourActive && tourStep === step && !editorDisposed;
     try {
       if (action === "search") globalSearchOpen = true;
-      else if (action === "settings" || action === "whats-new") {
-        settingsRequestedTab = action === "settings" ? "plugins" : "whats-new";
+      else if (action === "settings" || action === "whats-new" || action === "logs") {
+        settingsRequestedTab = action === "settings" ? "plugins" : action === "logs" ? "logs" : "whats-new";
         settingsOpen = true;
       } else if (action === "looks") { centralView = "looks"; sourceOpen = false; }
       else if (action === "playlist" || action === "output") {

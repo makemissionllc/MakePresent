@@ -66,7 +66,7 @@
       <div class="section-title">Service check</div>
       <p class="muted">The ✓ Service check reviews playlist slides, the audience display, and whether Output is open. Stage is optional. Each item opens the real control, and checking never puts a slide live.</p>
       <div class="section-title">Return to the live slide</div>
-      <p class="muted">If you select another slide to edit, use Follow live slide below the Output preview. The editor selects and scrolls to the current live slide without changing what the audience sees.</p>
+      <p class="muted">If you select another slide to edit, use Follow live slide below the Output preview or press Ctrl+Shift+L (⌘⇧L on Mac). The editor selects and scrolls to the current live slide without changing what the audience sees.</p>
       <div class="section-title">Search logs</div>
       <p class="muted">Settings → Logs shows recent entries. Filter by timestamp, level, or message text; Refresh for newer lines, or copy/export the full log for troubleshooting.</p>
       <div class="section-title">Backgrounds</div>
@@ -97,6 +97,7 @@
       <div class="section-title">Keyboard shortcuts</div>
       <ul class="shortcuts">
         <li><span class="keys"><kbd>←</kbd> <kbd>→</kbd></span> Previous / next slide (when not typing)</li>
+        <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></span> Follow the live slide <span class="muted">(⌘⇧L on Mac)</span></li>
         <li><span class="keys"><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd></span> Previous / next chapter in reading mode</li>
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span> Search songs, Bibles &amp; media <span class="muted">(⌘K on Mac)</span></li>
         <li><span class="keys"><kbd>?</kbd></span> Open or close this shortcut guide</li>

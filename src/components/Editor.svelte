@@ -2806,6 +2806,13 @@ import {
       globalSearchOpen ||
       helpOpen
     ) return;
+    if (tourActive) return;
+    if (mod && e.shiftKey && e.key.toLowerCase() === "l" && !isTextInputFocused() && project?.live) {
+      e.preventDefault();
+      use("shortcuts");
+      followLiveSlide();
+      return;
+    }
     if (sourceOpen && sourceTab === "scripture" && readerMode && !browseCollapsed) {
       // Reading keys belong to the passage, never to live projection.
       if (e.key === "Escape") { e.preventDefault(); toggleReaderMode(); }
@@ -2815,7 +2822,6 @@ import {
       }
       return;
     }
-    if (tourActive) return;
     if (centralView === "slides" && (e.key === "ArrowRight" || e.key === "ArrowLeft") && !isTextInputFocused()) {
       // Reuse existing next/previous logic — same path as triggers/UI clicks
       if (e.key === "ArrowRight") {
@@ -3341,7 +3347,7 @@ import {
           <p class="hint-line">Drag a Playlist item onto a slide to copy it into that slide group. Drag items here to reorder them.<button class="hint-x" title="Dismiss" aria-label="Dismiss drag-and-drop hint" onclick={() => dismiss("dragdrop")}>×</button></p>
         {/if}
         {#if showHint(onboarding, "shortcuts")}
-          <p class="hint-line"><kbd>←</kbd> <kbd>→</kbd> advance live slides · <kbd>Ctrl+K</kbd> searches everything.<button class="hint-x" title="Dismiss" aria-label="Dismiss shortcuts hint" onclick={() => dismiss("shortcuts")}>×</button></p>
+          <p class="hint-line"><kbd>←</kbd> <kbd>→</kbd> advance live · <kbd>Ctrl+Shift+L</kbd> follow live · <kbd>Ctrl+K</kbd> search.<button class="hint-x" title="Dismiss" aria-label="Dismiss shortcuts hint" onclick={() => dismiss("shortcuts")}>×</button></p>
         {/if}
         <div class="template-actions">
           <button class="ghost template-btn" onclick={() => openSavePlaylist()} title="Save this View's playlist as a reusable Playlist">Save as Playlist</button>
@@ -7768,7 +7774,7 @@ import {
   @container scripture-workspace (max-width: 1100px) {
     .scripture-pane.browsing { display: block; overflow-y: auto; }
     .scripture-pane.browsing .scripture-tools { width: 100%; max-width: 640px; overflow: visible; }
-    .scripture-pane .browse-dock { grid-template-columns: minmax(0, .9fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, auto) minmax(0, auto); height: auto; min-height: 0; max-height: none; margin-top: var(--space-3); overflow: visible; }
+    .scripture-pane .browse-dock { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, auto) minmax(0, auto); height: auto; min-height: 0; max-height: none; margin-top: var(--space-3); overflow: visible; }
     .scripture-pane .browse-dock-header { grid-column: 1 / -1; grid-row: 1; }
     .scripture-pane .browse-dock-left { grid-column: 1; grid-row: 2; min-height: 0; padding-bottom: 10px; }
     .scripture-pane .browse-dock-middle { grid-column: 2; grid-row: 2; min-height: 0; padding-bottom: 10px; }
@@ -7776,7 +7782,7 @@ import {
     .scripture-pane .browse-dock .browse-books { max-height: 230px; }
   }
   @container scripture-workspace (max-width: 680px) {
-    .scripture-pane .browse-dock { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 8px; max-height: none; overflow: visible; }
+    .scripture-pane .browse-dock { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; gap: 8px; max-height: none; overflow: visible; }
     .scripture-pane .browse-dock-header, .scripture-pane .browse-dock-left, .scripture-pane .browse-dock-middle, .scripture-pane .browse-dock-right { grid-column: 1; grid-row: auto; width: auto; max-height: none; padding-right: 0; }
     .scripture-pane .browse-dock-left, .scripture-pane .browse-dock-middle { border-right: 0; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
     .scripture-pane .browse-dock-right { min-height: 360px; }

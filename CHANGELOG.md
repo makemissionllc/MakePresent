@@ -8,12 +8,14 @@ User-facing features and fixes are also available in **Settings → What’s New
 
 - Service check in the top bar reviews playlist slides, the selected audience display, and Output visibility in one animated checklist. Stage appears separately as optional; each action opens its control without putting a slide live or starting background work. It is covered in onboarding, Help, What’s New, and the interactive tutorial.
 - Follow live slide returns the editor to the slide already on air and scrolls it into view after you select another slide to edit. It changes editing selection only; Output is untouched. Onboarding, Help, What’s New, and the interactive tutorial explain the shortcut.
+- Ctrl+Shift+L (⌘⇧L on Mac) follows the live slide from the keyboard, including while Scripture reading is open; it never changes Output.
 - Settings → Logs now filters recent entries by timestamp, level, or message text without rendering lines that do not match. Help, What’s New, and the interactive tutorial point to the filter; copying and exporting still include the full log.
 
 ### Improved
 
 - The separate Scripture reading room is gone: Read book now keeps one simple reading mode inside the Bible browser, with comfortable text, A−/A+ sizes from 14–22, chapter navigation, mark-read, and explicit add, copy, and bookmark actions.
 - The reader adapts to narrow layouts with a tighter toolbar and verse list, and offscreen verses skip layout and paint until scrolled into view, keeping long chapters light on low-power devices.
+- Scripture layout breakpoints now respond to the browser panel’s width, so split-pane layouts reflow correctly even in a wide application window.
 - The interactive tutorial explains the service check and Follow live slide alongside Scripture browsing, chapter progress, search, and presentation controls. Onboarding, Help, and What’s New can reopen these lessons or Scripture tools.
 
 ### Fixed

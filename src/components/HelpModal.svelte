@@ -59,10 +59,10 @@
       >
         Replay guided tour
       </button>
-      <button class="replay" onclick={() => { onReplayTour(4); onClose(); }}>Explore the reader</button>
+      <button class="replay" onclick={() => { onReplayTour(4); onClose(); }}>Explore Scripture reading</button>
       <button class="replay" onclick={() => { onReplayTour(7); onClose(); }}>Run the service check</button>
       <div class="section-title">Service check</div>
-      <p class="muted">The ✓ Service check in the top bar gathers playlist, audience display, and Stage readiness in one list. Each item opens the real control, and checking never puts a slide live.</p>
+      <p class="muted">The ✓ Service check reviews playlist slides, the audience display, and whether Output is open. Stage is optional. Each item opens the real control, and checking never puts a slide live.</p>
       <div class="section-title">Backgrounds</div>
       <p class="muted">Pick a Look for Songs, Scripture and Text in Looks, or choose one for a single item from the item menu.</p>
       <p class="muted">

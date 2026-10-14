@@ -1,10 +1,10 @@
 # MakrStudio (formerly MakePresent)
 
-## Changed (2026-10-13) — A reading room that remembers your place
+## Changed (2026-10-14) — A calmer service check, a simpler Scripture flow
 
-- Read book now opens a focused reading room with saved Page/Columns layout, Paper tone, and 14–28 text sizing. Narrow panels use one column. Select a verse → Save my place; Continue reading returns to that exact verse after browsing elsewhere or restarting. Mark read & continue completes a chapter and opens the next.
-- The animated interactive tutorial covers 15 topics with a topic picker and buttons that open the actual tools. Help, onboarding, Settings, and What’s New share entry points and explain the reader, saved places, and lighter previews.
-- Video thumbnails and overlay previews use cached posters; the visible live Output preview retains playback. Offscreen thumbnails skip rendering, hidden editor previews release media, and the confirmation clock stops while hidden or when no renderer is shown. These changes reduce unnecessary decoding and rendering; device temperature has not been measured.
+- Service check brings playlist, audience-display, and Output readiness into one top-bar shortcut. Each action opens the relevant controls; Stage is optional, and the checklist never puts a slide live.
+- Read book stays inside the Bible browser with responsive verse text, 14–22 text sizing, chapter navigation, and explicit preview/add actions. Completed chapter progress and Continue reading remain on this device.
+- The interactive tutorial, onboarding, Help, and Settings → What’s New all explain service readiness and open its actual controls. Video thumbnails use cached posters; offscreen slides and verses skip unnecessary rendering; hidden editor previews release media. These changes reduce avoidable rendering work; device temperature has not been measured.
 - All prior release details remain in [CHANGELOG.md](CHANGELOG.md).
 
 ## Changed (2026-10-13) — A calmer Scripture reading flow

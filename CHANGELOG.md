@@ -2,17 +2,17 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
-## 2026-10-14 — A calmer service check, a simpler reader
+## 2026-10-14 — A service check and lighter Scripture browsing
 
 ### Added
 
-- Service check in the top bar gathers playlist, audience display, and Stage readiness in one calm animated list. Each item opens the real control, and checking never puts a slide live or starts background work. It is covered in onboarding, Help, What’s New, and the interactive tutorial’s service-check lesson.
+- Service check in the top bar reviews playlist slides, the selected audience display, and Output visibility in one animated checklist. Stage appears separately as optional; each action opens its control without putting a slide live or starting background work. It is covered in onboarding, Help, What’s New, and the interactive tutorial.
 
 ### Improved
 
 - The separate Scripture reading room is gone: Read book now keeps one simple reading mode inside the Bible browser, with comfortable text, A−/A+ sizes from 14–22, chapter navigation, mark-read, and explicit add, copy, and bookmark actions.
 - The reader adapts to narrow layouts with a tighter toolbar and verse list, and offscreen verses skip layout and paint until scrolled into view, keeping long chapters light on low-power devices.
-- The animated interactive tutorial swaps saved-verse lessons for a service-check lesson. Onboarding, Help, and What’s New all link to the reader and service-check topics.
+- The interactive tutorial explains the service check alongside Scripture browsing, chapter progress, search, and presentation controls. Onboarding, Help, and What’s New can reopen the service-check lesson or Scripture tools.
 
 ### Fixed
 

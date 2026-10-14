@@ -13,12 +13,12 @@ export interface ChangeLogRelease {
 export const CHANGELOG: ChangeLogRelease[] = [
   {
     date: "October 14, 2026",
-    title: "A calmer service check, a simpler reader",
+    title: "A service check and lighter Scripture browsing",
     items: [
-      { kind: "New", text: "Service check in the top bar gathers playlist, audience display, and Stage readiness in one calm animated list. Each item opens the real control, and checking never puts a slide live or starts background work." },
+      { kind: "New", text: "Service check in the top bar reviews playlist slides, the selected audience display, and Output visibility in one animated checklist. Stage appears separately as optional; each action opens its control without putting a slide live or starting background work." },
       { kind: "Improved", text: "The separate Scripture reading room is gone: Read book now keeps one simple reading mode inside the Bible browser, with comfortable text, A−/A+ sizes from 14–22, chapter navigation, mark-read, and explicit add, copy, and bookmark actions." },
       { kind: "Improved", text: "The reader adapts to narrow layouts with a tighter toolbar and verse list, and offscreen verses skip layout and paint until scrolled into view, keeping long chapters light on low-power devices." },
-      { kind: "Improved", text: "The animated interactive tutorial swaps saved-verse lessons for a service-check lesson. Onboarding, Help, and What’s New all link to the reader and service-check topics." },
+      { kind: "Improved", text: "The interactive tutorial explains the service check alongside Scripture browsing, chapter progress, search, and presentation controls. Onboarding, Help, and What’s New can reopen the service-check lesson or Scripture tools." },
       { kind: "Fixed", text: "Continue reading returns to the last opened chapter without stale saved-verse state, and chapter navigation keeps keyboard focus predictable." },
     ],
   },

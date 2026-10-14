@@ -557,10 +557,14 @@ import {
 
   function handleServiceCheckAction(action: "playlist" | "output" | "stage"): void {
     serviceCheckOpen = false;
-    centralView = "slides";
-    showDetail = false;
     sourceOpen = false;
-    if (action === "playlist") use("playlist");
+    if (action === "playlist") {
+      centralView = "slides";
+      showDetail = false;
+      use("playlist");
+    }
+    const selector = action === "playlist" ? ".playlist-section" : action === "stage" ? ".stage-title" : ".output-panel";
+    void tick().then(() => document.querySelector<HTMLElement>(selector)?.scrollIntoView({ behavior: "smooth", block: "center" }));
   }
 
   // Render-ack heartbeat (Phase 1 of the live-thumbnail research): the latest
@@ -666,6 +670,7 @@ import {
   let itemLookBusy = $state(false);
 
   const project = $derived(appState?.project ?? null);
+  const outputTargetReady = $derived(displays !== null && displays.length > 0 && appState?.output.monitorIndex != null && displays.some((display) => display.index === appState?.output.monitorIndex));
   const serviceChecks = $derived<ServiceCheckItem[]>([
     {
       title: "Playlist has slides",
@@ -678,14 +683,28 @@ import {
     },
     {
       title: "Audience display chosen",
-      detail: appState?.output.monitorIndex != null
+      detail: displays === null
+        ? "Checking connected displays…"
+        : displays.length === 0
+          ? "No display is connected yet. You can still prepare the service."
+          : outputTargetReady
         ? `Output will use ${appState?.output.monitorName || `display ${Number(appState?.output.monitorIndex) + 1}`}.`
         : "Pick the projector or audience display in the Output panel.",
-      ready: appState?.output.monitorIndex != null,
+      ready: outputTargetReady,
       action: "output",
-      actionLabel: "Show output",
+      actionLabel: "Review Output controls",
+    },
+    {
+      title: "Output window",
+      detail: appState?.output.visible
+        ? "Output is open. Confirm the preview before presenting."
+        : "Output is hidden. Review the preview before choosing Show Output.",
+      ready: Boolean(appState?.output.visible),
+      action: "output",
+      actionLabel: "Review Output controls",
     },
   ]);
+  const serviceReadyCount = $derived(serviceChecks.filter((item) => item.ready).length);
   // Older/stale native backends may still return a ClientState without the
   // Phase 3.5 field. Keep the editor from crashing and explain the mismatch.
   const items = $derived(Array.isArray(appState?.items) ? appState.items : []);
@@ -3184,8 +3203,8 @@ import {
     <button class="ghost help-trigger" title="Help — guided tour and keyboard shortcuts" onclick={() => (helpOpen = true)}>
       ? Help
     </button>
-    <button class="ghost" title="Service check — playlist, display, and stage readiness" onclick={() => (serviceCheckOpen = true)}>
-      ✓ Service check
+    <button class="ghost service-check-trigger" class:tour-highlight={showTour && tourStep === 7} title="Service check — playlist, display, and Stage readiness" aria-label={`Service check: ${serviceReadyCount} of ${serviceChecks.length} essentials ready`} onclick={() => (serviceCheckOpen = true)}>
+      <span aria-hidden="true">✓</span><span class="service-check-label">Service check</span><span class="service-check-count">{serviceReadyCount}/{serviceChecks.length}</span>
     </button>
     <button class="ghost" title="Settings" onclick={() => (settingsOpen = true)}>
       &#9881; Settings
@@ -4901,6 +4920,7 @@ import {
     .search-trigger .kbd {
       display: none;
     }
+    .service-check-label { display: none; }
   }
 
   .search-trigger {
@@ -4944,6 +4964,18 @@ import {
     background: var(--panel-2);
     border-color: var(--border);
   }
+  .topbar button.service-check-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 9px;
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+    background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  }
+  .service-check-trigger > span:first-child { color: var(--accent); font-weight: 800; }
+  .service-check-count { padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); background: var(--panel-2); font-size: 9px; font-variant-numeric: tabular-nums; }
+  .topbar button.service-check-trigger:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--panel)); }
 
   .live-indicator {
     display: inline-flex;
@@ -7726,11 +7758,13 @@ import {
     .scripture-pane .browse-dock-right { min-height: 360px; }
     .scripture-pane .browse-dock .browse-books { max-height: 220px; }
     .reader-toolbar { align-items: flex-start; flex-direction: column; }
-    .reader-controls { width: 100%; }
+    .reader-controls { width: 100%; justify-content: flex-start; gap: 6px; }
+    .reader-controls :is(.reader-control, .reader-mode-toggle, .chapter-read-toggle) { min-height: 36px; }
     .reader-mode-toggle { margin-left: auto; }
     .continue-reading-card { width: 100%; }
     .continue-reading-action { font-size: 10px; }
   }
+  .browse-dock.reader-mode .browse-verse-row { contain-intrinsic-size: auto 72px; }
   @media (prefers-reduced-motion: reduce) {
     .continue-reading-card, .reading-rhythm-card, .book-progress-card { animation: none; transition: none; }
     .reading-rhythm-track span { transition: none; }

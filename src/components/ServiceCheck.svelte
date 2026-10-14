@@ -67,7 +67,7 @@
 
 <style>
   .service-check-layer { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: #080d10aa; backdrop-filter: blur(4px); animation: veil-in 160ms ease-out both; }
-  .service-check { width: min(560px, 100%); max-height: min(760px, calc(100dvh - 40px)); overflow-y: auto; padding: 22px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 24px 80px #0008; animation: card-in 220ms cubic-bezier(.2,.8,.2,1) both; }
+  .service-check { width: min(560px, 100%); max-height: min(760px, calc(100dvh - 40px)); overflow-y: auto; padding: 22px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 24px 80px #0008; }
   header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
   .eyebrow { color: var(--accent); font-size: 9px; font-weight: 800; letter-spacing: .13em; }
   h2 { margin: 5px 0 0; font-family: var(--font-display); font-size: 22px; letter-spacing: -.03em; }
@@ -95,7 +95,6 @@
   footer > span { color: var(--text-dim); font-size: 10px; }
   .done { padding: 8px 16px; border-color: var(--accent); color: var(--bg); background: var(--accent); }
   @keyframes veil-in { from { opacity: 0; } to { opacity: 1; } }
-  @keyframes card-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
   @media (max-width: 480px) { .service-check { padding: 17px; border-radius: 13px; } .check-item { grid-template-columns: 28px minmax(0,1fr); } .check-action { grid-column: 2; justify-self: start; } .stage-note { grid-template-columns: 28px minmax(0,1fr); } .text-action { grid-column: 2; justify-self: start; padding-left: 0; } footer > span { max-width: 190px; } }
-  @media (prefers-reduced-motion: reduce) { .service-check-layer, .service-check { animation: none; } .progress-track span { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .service-check-layer { animation: none; } .progress-track span { transition: none; } }
 </style>

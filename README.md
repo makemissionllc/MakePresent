@@ -1,10 +1,11 @@
 # MakrStudio (formerly MakePresent)
 
-## Changed (2026-10-14) — A calmer service check, a simpler Scripture flow
+## Changed (2026-10-14) — A clearer live workflow, a simpler Scripture flow
 
 - Service check brings playlist, audience-display, and Output readiness into one top-bar shortcut. Each action opens the relevant controls; Stage is optional, and the checklist never puts a slide live.
+- Follow live slide returns the editor to the current on-air slide after you select another slide to edit. It scrolls that slide into view and never changes Output.
 - Read book stays inside the Bible browser with responsive verse text, 14–22 text sizing, chapter navigation, and explicit preview/add actions. Completed chapter progress and Continue reading remain on this device.
-- The interactive tutorial, onboarding, Help, and Settings → What’s New all explain service readiness and open its actual controls. Video thumbnails use cached posters; offscreen slides and verses skip unnecessary rendering; hidden editor previews release media. These changes reduce avoidable rendering work; device temperature has not been measured.
+- The interactive tutorial, onboarding, Help, and Settings → What’s New explain service readiness and Follow live slide. Video thumbnails use cached posters; offscreen slides and verses skip unnecessary rendering; hidden editor previews release media. These changes reduce avoidable rendering work; device temperature has not been measured.
 - All prior release details remain in [CHANGELOG.md](CHANGELOG.md).
 
 ## Changed (2026-10-13) — A calmer Scripture reading flow

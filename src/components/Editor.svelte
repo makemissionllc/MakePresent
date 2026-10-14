@@ -797,6 +797,7 @@ import {
   const liveSlideIndex = $derived(project?.live
     ? project.slides.findIndex((slide) => slide.id === project.live)
     : -1);
+  const isFollowingLiveSlide = $derived(Boolean(project?.live && selected?.id === project.live));
   const canGoPrevious = $derived(liveSlideIndex > 0);
   const canGoNext = $derived(liveSlideIndex >= 0 && liveSlideIndex < (project?.slides.length ?? 0) - 1);
 
@@ -985,6 +986,23 @@ import {
 
   function stepLive(direction: "previous" | "next"): void {
     void run(() => direction === "next" ? api.nextSlide() : api.prevSlide());
+  }
+
+  function followLiveSlide(): void {
+    const liveId = project?.live;
+    const liveSlide = liveId ? project?.slides.find((slide) => slide.id === liveId) : null;
+    if (!liveId || !liveSlide) return;
+    selectedId = liveId;
+    selectedItemId = liveSlide.itemId ?? selectedItemId;
+    centralView = "slides";
+    showDetail = false;
+    detailFromGrid = false;
+    sourceOpen = false;
+    use("follow-live");
+    void tick().then(() => {
+      document.querySelector<HTMLElement>(`[data-drop-slide-id="${CSS.escape(liveId)}"]`)
+        ?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "nearest" });
+    });
   }
 
   function openDetail(slide: Slide): void {
@@ -3894,9 +3912,13 @@ import {
             {/if}
           </div>
           <span class="on-air-badge" class:on={isOnAir} class:off={!isOnAir}>{isOnAir ? "ON AIR" : "OFF"}</span>
-          <div class="preview-navigation" role="group" aria-label="Live slide navigation">
+          <div class="preview-navigation" role="group" aria-label="Live slide navigation" class:tour-highlight={showTour && tourStep === 14}>
             <button class="ghost" onclick={() => stepLive("previous")} disabled={!canGoPrevious} title="Previous live slide">← Previous</button>
             <button class="ghost" onclick={() => stepLive("next")} disabled={!canGoNext} title="Next live slide">Next →</button>
+            <button class="ghost follow-live-button" onclick={followLiveSlide} disabled={!project?.live || isFollowingLiveSlide} title={isFollowingLiveSlide ? "The editor is already on the live slide" : project?.live ? "Select the live slide in the editor without changing Output" : "Put a slide live to follow it here"}>
+              <span aria-hidden="true">{isFollowingLiveSlide ? "✓" : "↩"}</span>
+              {isFollowingLiveSlide ? "Following live" : "Follow live slide"}
+            </button>
           </div>
         </div>
 
@@ -7580,6 +7602,8 @@ import {
   .preview-navigation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); width: 100%; }
   .preview-navigation button { min-width: 0; padding: 8px 4px; font-size: 11px; }
   .preview-navigation button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .preview-navigation .follow-live-button { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 6px; border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .preview-navigation .follow-live-button:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 9%, var(--panel)); border-color: var(--accent); transform: translateY(-1px); }
 
   /* Phase 2: one bottom source bar; the main workspace shrinks when opened. */
   .sidebar:not(.output-panel) .playlist-section {

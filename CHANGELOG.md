@@ -2,17 +2,18 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
-## 2026-10-14 — A service check and lighter Scripture browsing
+## 2026-10-14 — A clearer live workflow and lighter Scripture browsing
 
 ### Added
 
 - Service check in the top bar reviews playlist slides, the selected audience display, and Output visibility in one animated checklist. Stage appears separately as optional; each action opens its control without putting a slide live or starting background work. It is covered in onboarding, Help, What’s New, and the interactive tutorial.
+- Follow live slide returns the editor to the slide already on air and scrolls it into view after you select another slide to edit. It changes editing selection only; Output is untouched. Onboarding, Help, What’s New, and the interactive tutorial explain the shortcut.
 
 ### Improved
 
 - The separate Scripture reading room is gone: Read book now keeps one simple reading mode inside the Bible browser, with comfortable text, A−/A+ sizes from 14–22, chapter navigation, mark-read, and explicit add, copy, and bookmark actions.
 - The reader adapts to narrow layouts with a tighter toolbar and verse list, and offscreen verses skip layout and paint until scrolled into view, keeping long chapters light on low-power devices.
-- The interactive tutorial explains the service check alongside Scripture browsing, chapter progress, search, and presentation controls. Onboarding, Help, and What’s New can reopen the service-check lesson or Scripture tools.
+- The interactive tutorial explains the service check and Follow live slide alongside Scripture browsing, chapter progress, search, and presentation controls. Onboarding, Help, and What’s New can reopen these lessons or Scripture tools.
 
 ### Fixed
 

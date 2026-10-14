@@ -20,6 +20,7 @@ export const CHANGELOG: ChangeLogRelease[] = [
       { kind: "New", text: "Ctrl+Shift+L (⌘⇧L on Mac) follows the live slide from the keyboard, including while Scripture reading is open; it never changes Output." },
       { kind: "Fixed", text: "Repeated identical log records no longer prevent Settings from opening when Logs is the last tab used." },
       { kind: "New", text: "Settings → Logs filters recent entries by timestamp, level, or message text on this device. Only matching lines render; copy and export still include the full log." },
+      { kind: "Improved", text: "View Hub now identifies the current autosaved View and offers Continue this View, making it clear how to return without creating a new workspace. Help, What’s New, and the interactive tutorial include this shortcut." },
       { kind: "Improved", text: "The separate Scripture reading room is gone: Read book now keeps one simple reading mode inside the Bible browser, with comfortable text, A−/A+ sizes from 14–22, chapter navigation, mark-read, and explicit add, copy, and bookmark actions." },
       { kind: "Improved", text: "The reader adapts to narrow layouts with a tighter toolbar and verse list, and offscreen verses skip layout and paint until scrolled into view, keeping long chapters light on low-power devices." },
       { kind: "Improved", text: "Scripture layout breakpoints follow the browser panel width, so split-pane layouts reflow correctly even in a wide application window." },

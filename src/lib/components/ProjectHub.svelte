@@ -12,9 +12,10 @@
     playlists: PlaylistTemplate[];
     presets: ServicePreset[];
     recentName?: string;
+    tutorialHighlightContinue?: boolean;
   }
 
-  let { open, onClose, onCreate, onCreateFromPlaylist, onDeletePlaylist, playlists = [], presets = [], recentName = "" }: Props = $props();
+  let { open, onClose, onCreate, onCreateFromPlaylist, onDeletePlaylist, playlists = [], presets = [], recentName = "", tutorialHighlightContinue = false }: Props = $props();
 
   const ASPECTS = [
     { id: "16:9", label: "16:9 Widescreen", sub: "Standard displays" },
@@ -142,7 +143,7 @@
           <div class="gallery-head">
             <h2>Starting Playlist</h2>
             {#if recentName}
-              <span class="recent-hint">Recent View: {recentName}</span>
+              <span class="recent-hint">Current View: {recentName}</span>
             {/if}
           </div>
           {#if hasSaved}
@@ -187,13 +188,18 @@
           </div>
 
           <div class="recent">
-            <h3>Recent View</h3>
+            <h3>Current View</h3>
             {#if recentName}
               <div class="recent-item">
                 <span class="dot"></span>
-                <span>{recentName}</span>
-                <span class="muted">— will be overwritten only on Create</span>
+                <div class="recent-copy">
+                  <strong>{recentName}</strong>
+                  <span class="muted">Autosaved here. Starting a new View replaces this workspace.</span>
+                </div>
               </div>
+              <button class="resume-current" class:tutorial-highlight={tutorialHighlightContinue} onclick={onClose} title="Return to this autosaved View without creating a new one" aria-label={`Continue editing ${recentName}`}>
+                <span>Continue this View</span><span aria-hidden="true">→</span>
+              </button>
             {:else}
               <span class="muted">No recent View yet — your new service will appear here next launch.</span>
             {/if}
@@ -282,9 +288,16 @@
   .card-meta{margin-top:auto; padding-right:28px; font-size:10px; color:var(--text-dim);}
   .delete-saved{position:absolute; right:8px; bottom:8px; z-index:2; width:24px; height:24px; padding:0; border-radius:6px; color:var(--text-dim);}
   .delete-saved:hover{border-color:var(--color-burgundy); background:var(--danger-bg); color:var(--danger-text);}
-  .recent{margin-top:16px; padding-top:12px; border-top:1px solid var(--border);}
-  .recent h3{margin:0 0 6px; font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--text-dim);}
-  .recent-item{display:flex; gap:8px; align-items:center; font-size:12px; color:var(--text);}
+  .recent{display:flex; flex-direction:column; gap:9px; margin-top:16px; padding-top:12px; border-top:1px solid var(--border);}
+  .recent h3{margin:0; font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--text-dim);}
+  .recent-item{display:flex; gap:9px; align-items:flex-start; font-size:12px; color:var(--text);}
+  .recent-copy{display:grid; gap:3px; min-width:0;}
+  .recent-copy strong{overflow-wrap:anywhere; font-size:12px;}
+  .resume-current{display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:10px 12px; border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:8px; background:color-mix(in srgb,var(--accent) 8%,var(--panel)); color:var(--accent); font-size:12px; font-weight:650; text-align:left; cursor:pointer; transition:background var(--motion-fast) var(--ease-out),border-color var(--motion-fast) var(--ease-out),transform var(--motion-fast) var(--ease-out);}
+  .resume-current:hover{border-color:var(--accent); background:color-mix(in srgb,var(--accent) 13%,var(--panel)); transform:translateY(-1px);}
+  .resume-current.tutorial-highlight{outline:2px solid var(--accent); outline-offset:2px; animation:resume-pulse 1.2s var(--ease-out) 2;}
+  @keyframes resume-pulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 18%,transparent);}}
+  @media (prefers-reduced-motion: reduce){.resume-current{transition:none}.resume-current.tutorial-highlight{animation:none}}
   .dot{width:8px; height:8px; border-radius:999px; background:var(--accent);}
   .muted{font-size:11px; color:var(--text-dim);}
   .inspector{padding:16px; overflow:auto; background:var(--panel); border-left:1px solid var(--border); display:flex; flex-direction:column; gap:14px; min-height:0;}

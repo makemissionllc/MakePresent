@@ -521,7 +521,8 @@ import {
     tourActionBusy = true;
     const active = () => tourActive && tourStep === step && !editorDisposed;
     try {
-      if (action === "search") globalSearchOpen = true;
+      if (action === "views") openHub();
+      else if (action === "search") globalSearchOpen = true;
       else if (action === "settings" || action === "whats-new" || action === "logs") {
         settingsRequestedTab = action === "settings" ? "plugins" : action === "logs" ? "logs" : "whats-new";
         settingsOpen = true;
@@ -4827,6 +4828,7 @@ import {
 <ProjectHub
   open={showHub}
   recentName={project?.name ?? ""}
+  tutorialHighlightContinue={tourActive && tourStep === 16}
   playlists={templates}
   presets={servicePresets}
   onClose={() => (showHub = false)}

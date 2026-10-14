@@ -48,7 +48,7 @@
       <p class="muted">A little preparation. A confident first service.</p>
       <button class="replay" onclick={() => { onClose(); onGettingStarted(); }}>Getting started</button>
       <p class="muted">
-        Explore at your own pace. The interactive tutorial covers playlists, Output, songs, Scripture, reading, search, media, Looks, live tools, connections, and updates. Jump to any topic and use its button to open the real controls.
+        Explore at your own pace. The interactive tutorial covers playlists, Output, songs, Scripture, reading, search, media, Looks, live tools, connections, updates, and returning to your current View. Jump to any topic and use its button to open the real controls.
       </p>
       <button
         class="replay"
@@ -63,6 +63,7 @@
       <button class="replay" onclick={() => { onReplayTour(7); onClose(); }}>Run the service check</button>
       <button class="replay" onclick={() => { onReplayTour(14); onClose(); }}>Follow the live slide</button>
       <button class="replay" onclick={() => { onReplayTour(15); onClose(); }}>Find entries in Logs</button>
+      <button class="replay" onclick={() => { onReplayTour(16); onClose(); }}>Continue your current View</button>
       <div class="section-title">Service check</div>
       <p class="muted">The ✓ Service check reviews playlist slides, the audience display, and whether Output is open. Stage is optional. Each item opens the real control, and checking never puts a slide live.</p>
       <div class="section-title">Return to the live slide</div>

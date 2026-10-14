@@ -10,6 +10,7 @@ User-facing features and fixes are also available in **Settings → What’s New
 - Follow live slide returns the editor to the slide already on air and scrolls it into view after you select another slide to edit. It changes editing selection only; Output is untouched. Onboarding, Help, What’s New, and the interactive tutorial explain the shortcut.
 - Ctrl+Shift+L (⌘⇧L on Mac) follows the live slide from the keyboard, including while Scripture reading is open; it never changes Output.
 - Settings → Logs now filters recent entries by timestamp, level, or message text without rendering lines that do not match. Help, What’s New, and the interactive tutorial point to the filter; copying and exporting still include the full log.
+- View Hub identifies the current autosaved View and offers **Continue this View**, so returning from New View is one clear action. Help, What’s New, and the interactive tutorial include the shortcut.
 
 ### Improved
 

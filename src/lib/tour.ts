@@ -1,4 +1,4 @@
-export type TourAction = "playlist" | "output" | "songs" | "scripture" | "reader" | "bookmarks" | "search" | "media" | "looks" | "settings" | "whats-new" | "logs" | "readiness";
+export type TourAction = "playlist" | "output" | "songs" | "scripture" | "reader" | "bookmarks" | "search" | "media" | "looks" | "settings" | "whats-new" | "logs" | "readiness" | "views";
 
 export interface TourStep {
   eyebrow: string;
@@ -26,5 +26,6 @@ export const TOUR_STEPS: TourStep[] = [
   { eyebrow: "What’s New", title: "Keep up with improvements", body: "Settings → What’s New keeps release notes in one place. Start the whole interactive tutorial there or jump straight to reading. Help (?) also lists shortcuts and reopens onboarding. Close Settings to return here.", action: "whats-new", actionLabel: "Open What’s New" },
   { eyebrow: "Follow live", title: "Return to the slide on screen", body: "When you select a different slide to edit, click Follow live slide or press Ctrl+Shift+L (⌘⇧L on Mac). The editor returns to the slide already on air and scrolls it into view. It only changes your editing selection; Output stays as it is.", action: "output", actionLabel: "Show live controls" },
   { eyebrow: "Logs", title: "Find the useful line", body: "Settings → Logs keeps recent diagnostic messages. Filter by timestamp, level, or text to narrow the list; the search runs on this device and only matching rows are displayed. Refresh for newer entries, then copy or export the full log when you need to share it.", action: "logs", actionLabel: "Open Logs" },
+  { eyebrow: "Current View", title: "Return to your autosaved service", body: "New View opens the starting-playlist picker. Continue this View closes it and returns to the service already autosaved on this device; choose a starting playlist and Create View only when you want to replace the current workspace.", action: "views", actionLabel: "Open Views" },
   { eyebrow: "You’re ready", title: "Pick up where service prep left off", body: "Your View autosaves, and reusable playlists keep services easy to start again. Recent searches, song libraries, and Scripture bookmarks keep useful content close. Revisit any topic here; finishing the tutorial never puts a slide live." },
 ];

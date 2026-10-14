@@ -1047,7 +1047,7 @@
             <span class="plugin-kicker">MAKRSTUDIO UPDATES</span>
             <h3>What’s new</h3>
             <p>Recent features and fixes, collected in one place.</p>
-            {#if onTutorial}<div class="tutorial-entry"><button onclick={() => onTutorial?.(0)}>Explore the interactive tutorial →</button><button onclick={() => onTutorial?.(4)}>Explore Scripture reading</button><button onclick={() => onTutorial?.(7)}>Run the service check</button><button onclick={() => onTutorial?.(14)}>Follow the live slide</button><button onclick={() => onTutorial?.(15)}>Find entries in Logs</button></div>{/if}
+            {#if onTutorial}<div class="tutorial-entry"><button onclick={() => onTutorial?.(0)}>Explore the interactive tutorial →</button><button onclick={() => onTutorial?.(4)}>Explore Scripture reading</button><button onclick={() => onTutorial?.(7)}>Run the service check</button><button onclick={() => onTutorial?.(14)}>Follow the live slide</button><button onclick={() => onTutorial?.(15)}>Find entries in Logs</button><button onclick={() => onTutorial?.(16)}>Continue your current View</button></div>{/if}
           </div>
           {#each CHANGELOG as release (`${release.date}:${release.title}`)}
             <article class="release-card">

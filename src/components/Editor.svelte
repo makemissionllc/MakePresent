@@ -51,6 +51,7 @@ import {
   const SCRIPTURE_READER_SIZE_KEY = "makrstudio.scripture-reader-size.v1";
   const SCRIPTURE_READER_LAYOUT_KEY = "makrstudio.scripture-reader-layout.v1";
   const RECENT_SONGS_KEY = "makrstudio.songs.recent.v1";
+  const FAVORITE_SONGS_KEY = "makrstudio.songs.favorites.v1";
   const RECENT_MEDIA_KEY = "makrstudio.media.recent.v1";
   const CONTENT_SHELF_KEY = "makrstudio.content-shelf.v1";
   type SourceTab = "songs" | "scripture" | "media";
@@ -83,6 +84,16 @@ import {
       const saved: unknown = JSON.parse(window.localStorage.getItem(RECENT_SONGS_KEY) ?? "[]");
       if (!Array.isArray(saved)) return [];
       return [...new Set(saved.filter((id): id is string => typeof id === "string" && id.trim().length > 0))].slice(0, 5);
+    } catch {
+      return [];
+    }
+  }
+
+  function readFavoriteSongIds(): string[] {
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(FAVORITE_SONGS_KEY) ?? "[]");
+      if (!Array.isArray(saved)) return [];
+      return [...new Set(saved.filter((id): id is string => typeof id === "string" && id.trim().length > 0 && id.length <= 200))];
     } catch {
       return [];
     }
@@ -286,6 +297,8 @@ import {
   let library = $state<Library | null>(null);
   let librarySearch = $state("");
   let recentSongIds = $state<string[]>(readRecentSongIds());
+  let favoriteSongIds = $state<string[]>(readFavoriteSongIds());
+  const favoriteSongSet = $derived(new Set(favoriteSongIds));
   // Per-song verse expansion — verses collapse to a chevron toggle so a big
   // library reads as compact song rows. Searching auto-expands every match
   // (discovery), clearing the search restores the manual toggle state.
@@ -872,15 +885,34 @@ import {
         }
       : null,
   );
-  const librarySongs = $derived(
-    (library?.songs ?? []).filter((song) =>
-      song.title.toLowerCase().includes(librarySearch.trim().toLowerCase()),
-    ),
-  );
+  const normalizedLibrarySongs = $derived((library?.songs ?? []).map((song) => ({ song, title: song.title.toLowerCase() })));
+  const librarySongs = $derived.by(() => {
+    const query = librarySearch.trim().toLowerCase();
+    const matches = normalizedLibrarySongs.filter((entry) => entry.title.includes(query)).map((entry) => entry.song);
+    const matchesById = new Map(matches.map((song) => [song.id, song]));
+    const favorites = favoriteSongIds.flatMap((id) => {
+      const song = matchesById.get(id);
+      return song ? [song] : [];
+    });
+    const favoriteIds = new Set(favorites.map((song) => song.id));
+    return [...favorites, ...matches.filter((song) => !favoriteIds.has(song.id))];
+  });
   const recentSongs = $derived.by(() => recentSongIds.flatMap((id) => {
+    if (favoriteSongSet.has(id)) return [];
     const song = library?.songs.find((item) => item.id === id);
     return song ? [song] : [];
   }));
+
+  function persistFavoriteSongIds(): void {
+    try { window.localStorage.setItem(FAVORITE_SONGS_KEY, JSON.stringify(favoriteSongIds)); } catch { /* favorites remain available for this session */ }
+  }
+
+  function toggleFavoriteSong(songId: string): void {
+    favoriteSongIds = favoriteSongSet.has(songId)
+      ? favoriteSongIds.filter((id) => id !== songId)
+      : [songId, ...favoriteSongIds];
+    persistFavoriteSongIds();
+  }
 
   function rememberRecentlyUsedSong(songId: string): void {
     if (!library?.songs.some((song) => song.id === songId)) return;
@@ -2730,7 +2762,13 @@ import {
   function deleteSong(song: LibrarySong): void {
     void api
       .deleteLibrarySong(song.id)
-      .then((l) => (library = l))
+      .then((l) => {
+        library = l;
+        if (!l.songs.some((item) => item.id === song.id) && favoriteSongSet.has(song.id)) {
+          favoriteSongIds = favoriteSongIds.filter((id) => id !== song.id);
+          persistFavoriteSongIds();
+        }
+      })
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
@@ -4398,7 +4436,10 @@ import {
                   </div>
                 </section>
               {/if}
-              <div class="section-title library-title">Library</div>
+              <div class="section-title library-title">
+                <span>Library</span>
+                <span class="favorite-hint">{favoriteSongIds.length > 0 ? "★ Favorites first" : "☆ Star songs to keep them at the top"}</span>
+              </div>
               <input
                 type="text"
                 class="search"
@@ -4437,16 +4478,25 @@ import {
                         style:background-position="center"
                         title={isLiveCamera(song.defaultBackground) ? `Live camera: ${song.defaultBackground.label || "camera"}` : undefined}
                       >{#if isLiveCamera(song.defaultBackground)}<span aria-hidden="true">🎥</span>{/if}</span>
-                        <span class="song-meta">
-                          <span class="song-label">{song.title || "Untitled"}</span>
-                          <span class="song-count">{getSongArrangementCount(song)} {getSongArrangementCount(song) === 1 ? "slide" : "slides"} · {getSongBlockCount(song)} blocks</span>
-                          {#if song.author || song.copyright || song.ccliNumber}
-                            <span class="song-credit-summary">{[song.author, song.copyright, song.ccliNumber ? `CCLI ${song.ccliNumber}` : null].filter(Boolean).join(" · ")}</span>
-                          {/if}
-                        </span>
-                      </button>
-                      <button class="credit-edit" title="Edit song credits" aria-label={`Edit credits for ${song.title}`} onclick={(e) => { e.stopPropagation(); editSongCredits(song); }}>Credits</button>
-                      <button
+                      <span class="song-meta">
+                        <span class="song-label">{song.title || "Untitled"}</span>
+                        <span class="song-count">{getSongArrangementCount(song)} {getSongArrangementCount(song) === 1 ? "slide" : "slides"} · {getSongBlockCount(song)} blocks</span>
+                        {#if song.author || song.copyright || song.ccliNumber}
+                          <span class="song-credit-summary">{[song.author, song.copyright, song.ccliNumber ? `CCLI ${song.ccliNumber}` : null].filter(Boolean).join(" · ")}</span>
+                        {/if}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      class="song-favorite"
+                      class:saved={favoriteSongSet.has(song.id)}
+                      aria-pressed={favoriteSongSet.has(song.id)}
+                      aria-label={favoriteSongSet.has(song.id) ? `Remove ${song.title || "Untitled song"} from favorites` : `Save ${song.title || "Untitled song"} as a favorite`}
+                      title={favoriteSongSet.has(song.id) ? "Remove from Favorites" : "Keep at top of Library on this device"}
+                      onclick={(e) => { e.stopPropagation(); toggleFavoriteSong(song.id); }}
+                    ><span aria-hidden="true">{favoriteSongSet.has(song.id) ? "★" : "☆"}</span></button>
+                    <button class="credit-edit" title="Edit song credits" aria-label={`Edit credits for ${song.title}`} onclick={(e) => { e.stopPropagation(); editSongCredits(song); }}>Credits</button>
+                    <button
                       class="delete"
                       title="Delete song"
                       onclick={(e) => {
@@ -6042,6 +6092,34 @@ import {
     padding: 5px 6px;
     color: var(--text-dim);
     font-size: 10px;
+  }
+  .song-favorite {
+    flex: none;
+    align-self: center;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 17px;
+    line-height: 1;
+    transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
+  }
+  .song-favorite:hover { border-color: var(--border); background: var(--panel); color: var(--accent); }
+  .song-favorite.saved { color: var(--accent); }
+  .song-favorite span { display: inline-block; transition: transform 140ms ease; }
+  .song-favorite:hover span { transform: scale(1.12); }
+  .song-favorite:active span { transform: scale(.88); }
+  .favorite-hint { margin-left: auto; color: var(--text-dim); font-size: 10px; font-weight: 500; }
+  @media (max-width: 700px) {
+    .song-favorite { width: 27px; height: 30px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .song-favorite { transition: none; }
+    .song-favorite span { transition: none; }
   }
   .song-list .song-credit-editor {
     display: grid;
@@ -8039,6 +8117,16 @@ import {
     .reader-mode-toggle { margin-left: auto; }
     .continue-reading-card { width: 100%; }
     .continue-reading-action { font-size: 10px; }
+  }
+  @container scripture-workspace (max-width: 260px) {
+    .source-pane.songs-pane { padding-inline: 8px; }
+    .favorite-hint { display: none; }
+    .songs-pane .song-list li { gap: 2px; }
+    .songs-pane .song-expand { width: 18px; }
+    .songs-pane .song-favorite { width: 24px; height: 28px; }
+    .songs-pane .song-list .credit-edit { width: 24px; padding: 4px 0; overflow: hidden; font-size: 0; }
+    .songs-pane .song-list .credit-edit::before { content: "✎"; font-size: 12px; }
+    .songs-pane .song-list .delete { padding: 4px 3px; }
   }
   @container scripture-workspace (max-width: 680px) {
     .scripture-pane .browse-dock.reader-mode { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: clamp(300px, 58vh, 620px); min-height: 300px; max-height: 74vh; overflow: hidden; }

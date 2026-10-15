@@ -330,6 +330,8 @@ import {
   let mediaLoading = $state(false);
   let mediaError = $state<string | null>(null);
   let mediaAdding = $state<string | null>(null);
+  let mediaImporting = $state(false);
+  let mediaImportMessage = $state<string | null>(null);
   let mediaThumbFailures = $state<Set<string>>(new Set());
   let mediaSearchTimer: ReturnType<typeof setTimeout> | null = null;
   let mediaSearchSeq = 0;
@@ -359,6 +361,48 @@ import {
       if (seq === mediaSearchSeq) mediaError = `Could not load media: ${String(e)}`;
     } finally {
       if (seq === mediaSearchSeq) mediaLoading = false;
+    }
+  }
+
+  async function importMediaToLibrary(): Promise<void> {
+    if (mediaImporting) return;
+    mediaError = null;
+    mediaImporting = true;
+    mediaImportMessage = "Choose files…";
+    try {
+      const picked = await open({ multiple: true, filters: MEDIA_FILTERS });
+      const paths = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+      if (paths.length === 0) {
+        mediaImportMessage = null;
+        return;
+      }
+
+      let imported = 0;
+      const failures: string[] = [];
+      for (const [index, path] of paths.entries()) {
+        mediaImportMessage = "Importing " + (index + 1) + " of " + paths.length + "…";
+        try {
+          await api.importMedia(path);
+          imported++;
+        } catch (error) {
+          failures.push(String(error));
+        }
+      }
+      if (imported > 0) {
+        await loadMedia();
+        mediaImportMessage = "Added " + imported + (imported === 1 ? " file" : " files") + " to your media library.";
+      } else {
+        mediaImportMessage = null;
+      }
+      if (failures.length > 0) {
+        mediaError = imported > 0
+          ? failures.length + (failures.length === 1 ? " file could" : " files could") + " not be imported: " + failures[0]
+          : "Could not import the selected media: " + failures[0];
+      }
+    } catch (error) {
+      mediaError = "Could not open the media picker: " + String(error);
+    } finally {
+      mediaImporting = false;
     }
   }
 
@@ -4995,7 +5039,13 @@ import {
           <div class="source-pane media-pane" in:fade={{ duration: prefersReducedMotion() ? 0 : 150 }}>
             <div class="media-bar-head">
               <div><strong>Imported media</strong><span>Click to add a slide, or drag a card into the Playlist.</span></div>
-              <input type="search" value={mediaQuery} oninput={onMediaQueryInput} placeholder="Search imported media" aria-label="Search imported media" />
+              <div class="media-bar-actions">
+                <input type="search" value={mediaQuery} oninput={onMediaQueryInput} placeholder="Search imported media" aria-label="Search imported media" />
+                <button class="media-import-btn" onclick={() => void importMediaToLibrary()} disabled={mediaImporting} aria-busy={mediaImporting}>
+                  {#if mediaImporting}<span class="media-spinner" aria-hidden="true"></span><span aria-live="polite" aria-atomic="true">{mediaImportMessage ?? "Importing…"}</span>
+                  {:else}＋ Import media{/if}
+                </button>
+              </div>
             </div>
             <div class="media-filter" role="group" aria-label="Filter media by type">
               <button class:active={mediaFilter === "all"} aria-pressed={mediaFilter === "all"} onclick={() => (mediaFilter = "all")}>All</button>
@@ -5003,6 +5053,7 @@ import {
               <button class:active={mediaFilter === "video"} aria-pressed={mediaFilter === "video"} onclick={() => (mediaFilter = "video")}>Videos</button>
             </div>
             {#if mediaError}<p class="media-bar-error" role="alert">{mediaError}</p>{/if}
+            {#if mediaImportMessage && !mediaImporting}<p class="media-import-status" aria-live="polite" in:fade={{ duration: prefersReducedMotion() ? 0 : 160 }}>{mediaImportMessage}</p>{/if}
             {#if !mediaQuery.trim() && visibleRecentMedia.length > 0}
               <section class="recent-media" aria-label="Recently used media" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 150, easing: cubicOut, axis: "y" }}>
                 <div class="recent-media-heading"><div><strong>Recently used</strong><span>Reuse a visual from another service</span></div><button class="ghost" onclick={clearRecentlyUsedMedia}>Clear</button></div>
@@ -5021,7 +5072,7 @@ import {
               </section>
             {/if}
             {#if mediaLoading}<p class="media-bar-hint">Searching media…</p>
-            {:else if mediaResults.length === 0}<p class="media-bar-hint">No imported media found. Drop an image or video on the Playlist, or use Add media in a slide.</p>
+            {:else if mediaResults.length === 0}<p class="media-bar-hint">{mediaQuery.trim() ? "No media matches “" + mediaQuery.trim() + "”. Clear the search to see your library." : "No media in your library yet. Use Import media above or drop files on the Playlist."}</p>
             {:else if visibleMediaResults.length === 0}<p class="media-bar-hint">No {mediaFilter === "image" ? "images" : "videos"} match this search.</p>
             {:else}
               <ul class="media-grid">
@@ -8037,10 +8088,15 @@ import {
   }
   .media-pane { width: min(100%, 980px); margin-inline: auto; }
   .media-bar-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-3); }
-  .media-bar-head > div { display: grid; gap: var(--space-1); }
+  .media-bar-head > div:first-child { display: grid; gap: var(--space-1); }
   .media-bar-head strong { color: var(--text); font-size: 13px; }
   .media-bar-head span, .media-bar-hint { color: var(--text-dim); font-size: 11px; }
-  .media-bar-head input { width: min(100%, 310px); padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); color: var(--text); }
+  .media-bar-actions { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .media-bar-actions input { flex: 1 1 240px; width: min(100%, 310px); min-width: 0; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); color: var(--text); }
+  .media-import-btn { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 7px 11px; border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); color: var(--text); font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .media-import-btn:hover:not(:disabled) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 17%, var(--panel)); }
+  .media-import-btn:disabled { cursor: progress; opacity: .75; }
+  .media-import-status { display: flex; align-items: center; gap: 7px; margin: 0 0 var(--space-2); color: var(--accent); font-size: 11px; }
   .media-bar-error { color: var(--semantic-error); font-size: 12px; }
   .recent-media { display: grid; gap: var(--space-2); margin-bottom: var(--space-3); padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border)); border-radius: 10px; background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 8%, var(--panel)), var(--panel)); }
   .recent-media-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -8097,10 +8153,17 @@ import {
     .source-pane { padding-inline: var(--space-3); }
     .scripture-pane .browse-dock { display: grid; grid-template-columns: 1fr; grid-template-rows: auto; height: auto; overflow: visible; }
     .media-bar-head { align-items: stretch; flex-direction: column; }
-    .media-bar-head input { width: 100%; }
+    .media-bar-actions { width: 100%; }
+    .media-bar-actions input { width: 100%; }
+  }
+  @container scripture-workspace (max-width: 520px) {
+    .media-bar-head { align-items: stretch; flex-direction: column; }
+    .media-bar-actions { width: 100%; }
+    .media-bar-actions input { width: 100%; }
   }
   @media (prefers-reduced-motion: reduce) {
     .source-bar { transition: none; }
+    .media-spinner { animation: none; }
   }
 
   @media (max-width: 1100px) {

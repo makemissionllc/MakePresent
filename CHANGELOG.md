@@ -7,6 +7,7 @@ User-facing features and fixes are also available in **Settings → What’s New
 ### Added
 
 - Songs keeps the five most recently added library songs at the top of the source panel. Click a song to add it to the current View without searching, or Clear the local shortcut list. Successful adds from the library, drag and drop, and global search all update the recent list.
+- Song Editor remembers Lines/slide and global alignment between songs on this device, so your next lyric arrangement starts with the same preferred layout.
 - Star any library song to keep it above the rest of the library on this device. Favorites stay pinned when the recent list changes; click the star again to unpin. Onboarding, Help, the interactive Songs tutorial, and Settings → What’s New explain it.
 - View Hub remembers the last starting playlist selected on this device and marks it **Last selected**. Choose another card any time; deleting the remembered playlist moves the selection to an available starting point.
 - View Hub also remembers your preferred slide ratio, Look, and transition on this device, reducing repeated setup for the next service. Filter a long starting-playlist list by name; a no-match state helps recover. The compact layout keeps the picker and settings reachable in narrow windows.
@@ -17,7 +18,7 @@ User-facing features and fixes are also available in **Settings → What’s New
 - Choosing a search scope skips irrelevant Scripture, media, online-lyrics, and song-ranking work and renders only that result group. Scope changes use a brief reduced-motion-aware fade to reduce avoidable search and layout work; device temperature was not measured.
 - Media keeps the five most recently used visuals ready in a compact horizontal row. Click one to add it to the current playlist, or Clear the on-device shortcut list. The row adapts to narrow panels.
 - Star reusable media such as a logo or background to keep it near the top of the library. Favorites filters to starred visuals and stays on this device; the Media tutorial, Help, and onboarding explain it.
-- First-run onboarding, Help, the interactive Songs and Media tutorial topics, and Settings → What’s New explain the shortcuts.
+- First-run onboarding, Help, the interactive Songs and Media tutorial topics, and Settings → What’s New explain the shortcuts and Song Editor layout preferences.
 
 ### Improved
 
@@ -29,6 +30,7 @@ User-facing features and fixes are also available in **Settings → What’s New
 - View Hub filtering stays on-device and reduces the number of cards laid out for long saved-playlist lists; device temperature was not measured.
 - Media imports selected files one at a time, reports progress, and refreshes the library once after the batch. Serial thumbnail conversion avoids overlapping media work; device temperature was not measured.
 - The Songs library renders its first 100 matches and appends more on request, reducing initial layout and paint work for large libraries; device temperature was not measured.
+- Song Editor arrangement cards defer layout and paint offscreen, and the editor reflows into scrollable input and preview panes on narrow windows. Device temperature was not measured.
 - Song search reuses normalized titles as you type instead of cleaning every title again on each keystroke. Favorites add no background polling; device temperature was not measured.
 - Switching source tabs fades in briefly, respects reduced-motion preferences, and keeps the existing responsive shelf resize animation.
 - The reduction in background work was implemented to lower the chance of unnecessary device heating; device temperature and power draw were not measured.

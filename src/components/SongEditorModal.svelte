@@ -35,6 +35,41 @@
     "Intro",
   ];
 
+  const SONG_EDITOR_PREFERENCES_KEY = "makrstudio.song-editor.preferences.v1";
+  interface SongEditorPreferences {
+    maxLines: 1 | 2 | 4;
+    globalVAlign: VAlign;
+    globalHAlign: HAlign;
+  }
+
+  function readSongEditorPreferences(): SongEditorPreferences {
+    const defaults: SongEditorPreferences = { maxLines: 2, globalVAlign: "center", globalHAlign: "center" };
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(SONG_EDITOR_PREFERENCES_KEY) ?? "null");
+      if (!saved || typeof saved !== "object" || Array.isArray(saved)) return defaults;
+      const value = saved as Partial<SongEditorPreferences>;
+      return {
+        maxLines: value.maxLines === 1 || value.maxLines === 2 || value.maxLines === 4 ? value.maxLines : defaults.maxLines,
+        globalVAlign: value.globalVAlign === "top" || value.globalVAlign === "center" || value.globalVAlign === "bottom" ? value.globalVAlign : defaults.globalVAlign,
+        globalHAlign: value.globalHAlign === "left" || value.globalHAlign === "center" || value.globalHAlign === "right" ? value.globalHAlign : defaults.globalHAlign,
+      };
+    } catch {
+      return defaults;
+    }
+  }
+
+  const initialSongEditorPreferences = readSongEditorPreferences();
+  let songEditorPreferences = $state(initialSongEditorPreferences);
+
+  function rememberSongEditorPreferences(next: SongEditorPreferences): void {
+    songEditorPreferences = next;
+    try {
+      window.localStorage.setItem(SONG_EDITOR_PREFERENCES_KEY, JSON.stringify(next));
+    } catch {
+      // The editor keeps the preference for this session when storage is unavailable.
+    }
+  }
+
   const SECTION_COLORS: Record<string, string> = {
     verse: "#4f8cff",
     "verse 1": "#4f8cff",
@@ -56,9 +91,9 @@
   let copyright = $state("");
   let ccliNumber = $state("");
   let showCreditLine = $state(false);
-  let maxLines = $state<1 | 2 | 4>(2);
-  let globalVAlign = $state<VAlign>("center");
-  let globalHAlign = $state<HAlign>("center");
+  let maxLines = $state<1 | 2 | 4>(initialSongEditorPreferences.maxLines);
+  let globalVAlign = $state<VAlign>(initialSongEditorPreferences.globalVAlign);
+  let globalHAlign = $state<HAlign>(initialSongEditorPreferences.globalHAlign);
   let textareaEl = $state<HTMLTextAreaElement | null>(null);
   let titleInputEl = $state<HTMLInputElement | null>(null);
   let lyricsQueryEl = $state<HTMLInputElement | null>(null);
@@ -112,6 +147,7 @@
     editableSlides = arrangementUndo.slides;
     globalVAlign = arrangementUndo.vAlign;
     globalHAlign = arrangementUndo.hAlign;
+    rememberSongEditorPreferences({ ...songEditorPreferences, globalVAlign, globalHAlign });
     arrangementUndo = null;
     selectedId = null;
     arrangementStatus = "Last arrangement change undone.";
@@ -147,9 +183,9 @@
       lyricsSearching = false;
       lyricsSearched = false;
       lyricsFetching = null;
-      maxLines = 2;
-      globalVAlign = "center";
-      globalHAlign = "center";
+      maxLines = songEditorPreferences.maxLines;
+      globalVAlign = songEditorPreferences.globalVAlign;
+      globalHAlign = songEditorPreferences.globalHAlign;
       draggedIdx = null;
       dragOverIdx = null;
       scheduleFocus(() => {
@@ -259,6 +295,12 @@
     globalVAlign = v;
     globalHAlign = h;
     editableSlides = editableSlides.map((s) => ({ ...s, positioning: { vAlign: globalVAlign, hAlign: globalHAlign } }));
+    rememberSongEditorPreferences({ ...songEditorPreferences, globalVAlign: v, globalHAlign: h });
+  }
+
+  function changeLineCount(value: 1 | 2 | 4): void {
+    maxLines = value;
+    rememberSongEditorPreferences({ ...songEditorPreferences, maxLines: value });
   }
 
   function insertTag(tag: string): void {
@@ -400,7 +442,7 @@
 
       <div class="controls">
         <label>Lines/slide
-          <select value={maxLines} onchange={(e)=> maxLines = Number((e.target as HTMLSelectElement).value) as 1|2|4}>
+          <select value={maxLines} onchange={(e)=> changeLineCount(Number((e.target as HTMLSelectElement).value) as 1|2|4)}>
             <option value={1}>1 line</option>
             <option value={2}>2 lines (default)</option>
             <option value={4}>4 lines</option>
@@ -420,7 +462,7 @@
             <option value="right">Right</option>
           </select>
         </label>
-        <span class="hint">{effectiveTitle}</span>
+        <span class="hint" title="Lines per slide and global alignment are saved on this device.">{effectiveTitle} · Saved setup</span>
       </div>
 
       <div class="body">
@@ -575,10 +617,11 @@
   .close:hover{background:var(--panel); color:var(--text);}
   .controls{display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--panel); font-size:12px; color:var(--text-dim);}
   .controls label{display:flex; gap:6px; align-items:center; font-size:12px;}
-  .controls select{background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:4px 8px; color:var(--text); font-size:12px;}
+  .controls select{background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:4px 8px; color:var(--text); font-size:12px; transition:border-color var(--motion-fast) var(--ease-out),box-shadow var(--motion-fast) var(--ease-out);}
+  .controls select:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 15%,transparent);}
   .controls .hint{margin-left:auto; font-size:11px; color:var(--text-dim); max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .body{display:grid; grid-template-columns: 420px 1fr; gap:0; min-height:0; flex:1; overflow:hidden;}
-  @media (max-width:860px){ .body{grid-template-columns:1fr;} .preview-pane{border-left:none; border-top:1px solid var(--border); max-height:42vh;} }
+  .body{display:grid; grid-template-columns: minmax(0,420px) minmax(0,1fr); grid-template-rows:minmax(0,1fr); gap:0; min-height:0; flex:1; overflow:hidden;}
+  @media (max-width:860px){ .body{grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr) minmax(120px,38vh);} .editor-pane{border-right:none;} .preview-pane{border-left:none; border-top:1px solid var(--border); max-height:none;} }
   .editor-pane{padding:14px; display:flex; flex-direction:column; gap:10px; overflow:auto; min-height:0; border-right:1px solid var(--border);}
   .lyrics-finder{display:grid; gap:9px; padding:12px; border:1px solid rgba(129,170,149,.22); border-radius:11px; background:linear-gradient(135deg,rgba(129,170,149,.09),rgba(129,170,149,.015) 70%);}
   .finder-heading{display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--text); font-size:12px;}
@@ -635,7 +678,8 @@
   .banner-count{background:var(--panel-2); padding:2px 6px; border-radius:999px; font-size:10px; color:var(--text-dim);}
   .ghost.small{font-size:10px; padding:3px 7px; border-radius:999px; margin-left:auto;}
   .cards{display:grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr)); gap:10px;}
-  .card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:6px; cursor:grab;}
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:6px; cursor:grab; content-visibility:auto; contain-intrinsic-size:auto 200px; transition:transform var(--motion-fast) var(--ease-out),border-color var(--motion-fast) var(--ease-out),box-shadow var(--motion-fast) var(--ease-out);}
+  .card:hover:not(:active){transform:translateY(-1px); border-color:var(--accent);}
   .card:active{cursor:grabbing;}
   .card.selected{box-shadow:0 0 0 2px currentColor;}
   .card.dragging{opacity:0.5;}
@@ -660,4 +704,16 @@
   button.ghost:hover{background:var(--panel-2);}
   button.primary{background:var(--accent); border-color:var(--accent); color:white;}
   button.primary:disabled{opacity:0.45; cursor:not-allowed;}
+  @media (max-width:640px){
+    .dialog{width:100vw; height:100dvh; max-height:100dvh; border-radius:0;}
+    .dialog-head{padding:10px 12px;}
+    .controls{gap:7px; padding:8px 10px;}
+    .controls label{flex:1 1 150px; justify-content:space-between; min-width:0;}
+    .controls select{max-width:58%; min-width:0;}
+    .controls .hint{flex:1 1 100%; max-width:none; margin:0;}
+    .editor-pane{padding:10px;}
+    .actions{gap:6px; padding:8px 10px; flex-wrap:wrap;}
+    .duplicate-warn{flex:1 1 100%;}
+  }
+  @media (prefers-reduced-motion:reduce){.controls select,.card{transition:none}.card:hover:not(:active){transform:none}}
 </style>

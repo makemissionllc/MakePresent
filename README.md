@@ -4,6 +4,8 @@
 
 - Songs and Media keep up to five recently used items ready for one-click reuse in the current View. Successful additions update each local list; Clear removes the shortcuts. The first-run guide, Help, interactive tutorial, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) describe them.
 - Star library songs to keep them pinned above the rest of the library on this device. Recent-song shortcuts continue to update independently; the star in each row adds or removes a favorite.
+- Song Editor remembers Lines/slide and global alignment between songs on this device; offscreen arrangement cards defer paint until you scroll near them.
+- The song editor uses separate scrollable lyric and arrangement panes in compact windows, with brief, reduced-motion-aware focus and hover feedback.
 - Star frequently reused media such as logos and backgrounds, then use Favorites to show only those visuals. Media favorites stay on this device and are covered in onboarding, Help, the interactive tutorial, and Settings → What’s New.
 - View Hub remembers your last selected starting playlist and marks it for quick return. Reopening the Hub reuses the loaded saved-playlist list instead of fetching it again.
 - View Hub remembers your preferred slide ratio, Look, and transition on this device. Its picker and setup controls remain reachable in compact windows.

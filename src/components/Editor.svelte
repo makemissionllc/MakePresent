@@ -296,6 +296,8 @@ import {
   let noticeDismissed = $state(false);
   let library = $state<Library | null>(null);
   let librarySearch = $state("");
+  const SONG_LIST_BATCH = 100;
+  let librarySongLimit = $state(SONG_LIST_BATCH);
   let recentSongIds = $state<string[]>(readRecentSongIds());
   let favoriteSongIds = $state<string[]>(readFavoriteSongIds());
   const favoriteSongSet = $derived(new Set(favoriteSongIds));
@@ -945,6 +947,7 @@ import {
     const favoriteIds = new Set(favorites.map((song) => song.id));
     return [...favorites, ...matches.filter((song) => !favoriteIds.has(song.id))];
   });
+  const visibleLibrarySongs = $derived(librarySongs.slice(0, librarySongLimit));
   const recentSongs = $derived.by(() => recentSongIds.flatMap((id) => {
     if (favoriteSongSet.has(id)) return [];
     const song = library?.songs.find((item) => item.id === id);
@@ -4501,13 +4504,18 @@ import {
                 <span class="favorite-hint">{favoriteSongIds.length > 0 ? "★ Favorites first" : "☆ Star songs to keep them at the top"}</span>
               </div>
               <input
-                type="text"
+                type="search"
                 class="search"
                 placeholder="Search songs"
-                bind:value={librarySearch}
+                value={librarySearch}
+                aria-label="Search songs in your library"
+                oninput={(event) => {
+                  librarySearch = (event.currentTarget as HTMLInputElement).value;
+                  librarySongLimit = SONG_LIST_BATCH;
+                }}
               />
               <ul class="song-list">
-                {#each librarySongs as song (song.id)}
+                {#each visibleLibrarySongs as song (song.id)}
                   {@const songExpanded = isSongExpanded(song)}
                   <li>
                     <button
@@ -4630,10 +4638,24 @@ import {
                   {/if}
                   {/if}
                 {:else}
-                  <li class="empty">No songs yet. Add one below.</li>
+                  {#if librarySearch.trim()}
+                    <li class="empty song-no-results" in:fade={{ duration: prefersReducedMotion() ? 0 : 140 }}>
+                      <span>No songs match “{librarySearch.trim()}”.</span>
+                      <button type="button" class="song-search-reset" onclick={() => { librarySearch = ""; librarySongLimit = SONG_LIST_BATCH; }}>Clear search</button>
+                      <small>Or choose Add song below to create one.</small>
+                    </li>
+                  {:else}
+                    <li class="empty" in:fade={{ duration: prefersReducedMotion() ? 0 : 140 }}>No songs yet. Add one below.</li>
+                  {/if}
                 {/each}
               </ul>
-              {#if librarySongs.length === 0 && showHint(onboarding, "songs")}
+              {#if visibleLibrarySongs.length < librarySongs.length}
+                <div class="song-list-more" in:fade={{ duration: prefersReducedMotion() ? 0 : 140 }}>
+                  <span>Showing {visibleLibrarySongs.length} of {librarySongs.length} songs</span>
+                  <button class="ghost" onclick={() => (librarySongLimit += SONG_LIST_BATCH)}>Show more</button>
+                </div>
+              {/if}
+              {#if librarySongs.length === 0 && !librarySearch.trim() && showHint(onboarding, "songs")}
                 <p class="hint-line">Songs live here — + Add song, or drop .pro / .cho / .usr files.<button class="hint-x" title="Dismiss" aria-label="Dismiss library hint" onclick={() => dismiss("songs")}>×</button></p>
               {/if}
               <button class="add" onclick={() => addLibrarySong()}>+ Add song</button>
@@ -6272,6 +6294,11 @@ import {
     color: var(--text-dim);
     padding: 4px;
   }
+  .song-list .song-no-results { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+  .song-no-results span { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+  .song-no-results small { flex-basis: 100%; color: var(--text-dim); font-size: 10px; }
+  .song-search-reset, .song-list-more button { padding: 5px 8px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 6px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); color: var(--accent); font-size: 10px; font-weight: 700; }
+  .song-list-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 2px; color: var(--text-dim); font-size: 10px; }
 
   .editor {
     padding: 16px;

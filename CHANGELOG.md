@@ -10,6 +10,7 @@ User-facing features and fixes are also available in **Settings → What’s New
 - Star any library song to keep it above the rest of the library on this device. Favorites stay pinned when the recent list changes; click the star again to unpin. Onboarding, Help, the interactive Songs tutorial, and Settings → What’s New explain it.
 - View Hub remembers the last starting playlist selected on this device and marks it **Last selected**. Choose another card any time; deleting the remembered playlist moves the selection to an available starting point.
 - **Import media** in the Media tab adds one or more images or videos directly to the reusable library. The empty state, onboarding, Help, and interactive Media tutorial explain the path.
+- Songs search offers **Clear search** when nothing matches. Large libraries show 100 results first; **Show more** appends another batch. Help and the interactive Songs tutorial explain how to find the rest.
 - Media keeps the five most recently used visuals ready in a compact horizontal row. Click one to add it to the current playlist, or Clear the on-device shortcut list. The row adapts to narrow panels.
 - First-run onboarding, Help, the interactive Songs and Media tutorial topics, and Settings → What’s New explain the shortcuts.
 
@@ -20,6 +21,7 @@ User-facing features and fixes are also available in **Settings → What’s New
 - The Songs, Scripture, and Media shelf remembers its last tab and whether it was open. Media loads on launch only when the shelf was left open on Media; the preference stays on this device.
 - View Hub reuses its saved-playlist list after the first successful load instead of requesting it on every open. Failed loads retry the next time the Hub opens; selecting a starting playlist uses a brief reduced-motion-aware animation.
 - Media imports selected files one at a time, reports progress, and refreshes the library once after the batch. Serial thumbnail conversion avoids overlapping media work; device temperature was not measured.
+- The Songs library renders its first 100 matches and appends more on request, reducing initial layout and paint work for large libraries; device temperature was not measured.
 - Song search reuses normalized titles as you type instead of cleaning every title again on each keystroke. Favorites add no background polling; device temperature was not measured.
 - Switching source tabs fades in briefly, respects reduced-motion preferences, and keeps the existing responsive shelf resize animation.
 - The reduction in background work was implemented to lower the chance of unnecessary device heating; device temperature and power draw were not measured.

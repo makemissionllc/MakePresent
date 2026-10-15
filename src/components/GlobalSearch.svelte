@@ -14,9 +14,10 @@
     onClose: () => void;
     onImportLyrics: (hit: LyricsHit) => void;
     onSongUsed?: (songId: string) => void;
+    onMediaUsed?: (mediaHash: string) => void;
   }
 
-  let { open, library, onClose, onImportLyrics, onSongUsed = () => {} }: Props = $props();
+  let { open, library, onClose, onImportLyrics, onSongUsed = () => {}, onMediaUsed = () => {} }: Props = $props();
 
   let query = $state("");
   const HISTORY_KEY = "makrstudio.search.recent.v1";
@@ -283,6 +284,7 @@
     inserting = `media-${asset.hash}`;
     try {
       await addCachedMediaSlide(asset);
+      onMediaUsed(asset.hash);
       rememberQuery(term);
       if (open && session === paletteGeneration && query === term) onClose();
     } catch (e) {

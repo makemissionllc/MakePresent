@@ -13,11 +13,13 @@ export interface ChangeLogRelease {
 export const CHANGELOG: ChangeLogRelease[] = [
   {
     date: "October 15, 2026",
-    title: "Quicker song reuse, lighter audio status updates",
+    title: "Quicker content reuse, lighter background work",
     items: [
       { kind: "New", text: "Songs now keeps your five most recently added library songs at the top of the source panel. Click one to add it to the current View without searching; Clear removes the local shortcut list. Successful adds from the library, drag and drop, and global search all update it." },
-      { kind: "Improved", text: "The interactive Songs tutorial, Help, and first-run onboarding explain the recent-song shortcuts. Settings → What’s New keeps this release with the rest of the app’s user-facing changes." },
+      { kind: "New", text: "Media keeps the five most recently used visuals ready in a compact, horizontally scrollable row. Click one to add it to this playlist; Clear removes the on-device shortcuts. The row works at narrow widths and the Media tutorial, Help, and first-run onboarding explain it." },
+      { kind: "Improved", text: "The interactive Songs tutorial explains recent-song shortcuts, while the interactive Media tutorial covers recent visuals and the responsive quick-add row. Settings → What’s New keeps this release with the rest of the app’s user-facing changes." },
       { kind: "Improved", text: "Audio playback position refreshes once per second instead of twice, and pauses while the app window is hidden. This reduces background IPC and UI work while keeping the displayed track position current to the second; device temperature was not measured." },
+      { kind: "Improved", text: "Media-library thumbnails load as they approach the viewport instead of all at once, keeping large libraries lighter to browse. The still thumbnails avoid starting video decoders; device temperature was not measured." },
     ],
   },
   {

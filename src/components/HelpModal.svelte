@@ -73,6 +73,7 @@
       <p class="muted">Settings → Logs shows recent entries. Filter by timestamp, level, or message text; Refresh for newer lines, or copy/export the full log for troubleshooting.</p>
       <div class="section-title">Backgrounds</div>
       <p class="muted">Pick a Look for Songs, Scripture and Text in Looks, or choose one for a single item from the item menu.</p>
+      <p class="muted">The Media tab keeps your five most recently used visuals ready to add to another View. Clear removes this on-device shortcut list. Media thumbnails load as you scroll so a large library does less work at once.</p>
       <p class="muted">
         Inheriting text slides use the playlist item's background, then the default Look for their kind. A slide with its own custom background keeps it. Open Background in the slide grid to choose a color or imported media for an item.
       </p>

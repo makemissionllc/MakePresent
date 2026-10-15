@@ -51,6 +51,7 @@ import {
   const SCRIPTURE_READER_SIZE_KEY = "makrstudio.scripture-reader-size.v1";
   const SCRIPTURE_READER_LAYOUT_KEY = "makrstudio.scripture-reader-layout.v1";
   const RECENT_SONGS_KEY = "makrstudio.songs.recent.v1";
+  const RECENT_MEDIA_KEY = "makrstudio.media.recent.v1";
   type ScriptureReaderLayout = "auto" | "single" | "split";
 
   function readRecentSongIds(): string[] {
@@ -58,6 +59,16 @@ import {
       const saved: unknown = JSON.parse(window.localStorage.getItem(RECENT_SONGS_KEY) ?? "[]");
       if (!Array.isArray(saved)) return [];
       return [...new Set(saved.filter((id): id is string => typeof id === "string" && id.trim().length > 0))].slice(0, 5);
+    } catch {
+      return [];
+    }
+  }
+
+  function readRecentMediaHashes(): string[] {
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(RECENT_MEDIA_KEY) ?? "[]");
+      if (!Array.isArray(saved)) return [];
+      return [...new Set(saved.filter((hash): hash is string => typeof hash === "string" && hash.trim().length > 0))].slice(0, 5);
     } catch {
       return [];
     }
@@ -268,10 +279,18 @@ import {
   let sourceOpen = $state(false);
   let mediaQuery = $state("");
   let mediaResults = $state<MediaAsset[]>([]);
+  let recentMediaHashes = $state<string[]>(readRecentMediaHashes());
   let mediaFilter = $state<"all" | "image" | "video">("all");
   const visibleMediaResults = $derived(mediaFilter === "all"
     ? mediaResults
     : mediaResults.filter((asset) => asset.kind === mediaFilter));
+  const recentMedia = $derived.by(() => recentMediaHashes.flatMap((hash) => {
+    const asset = mediaResults.find((item) => item.hash === hash);
+    return asset ? [asset] : [];
+  }));
+  const visibleRecentMedia = $derived(mediaFilter === "all"
+    ? recentMedia
+    : recentMedia.filter((asset) => asset.kind === mediaFilter));
   let mediaLoading = $state(false);
   let mediaError = $state<string | null>(null);
   let mediaAdding = $state<string | null>(null);
@@ -333,6 +352,7 @@ import {
     mediaError = null;
     try {
       appState = await addCachedMediaSlide(asset);
+      rememberRecentlyUsedMedia(asset.hash);
     } catch (e) {
       mediaError = `Could not add ${asset.fileName}: ${String(e)}`;
       errorMsg = mediaError;
@@ -343,6 +363,16 @@ import {
 
   function onMediaThumbError(hash: string): void {
     mediaThumbFailures = new Set([...mediaThumbFailures, hash]);
+  }
+
+  function rememberRecentlyUsedMedia(hash: string): void {
+    recentMediaHashes = [hash, ...recentMediaHashes.filter((item) => item !== hash)].slice(0, 5);
+    try { window.localStorage.setItem(RECENT_MEDIA_KEY, JSON.stringify(recentMediaHashes)); } catch { /* recents remain available for this session */ }
+  }
+
+  function clearRecentlyUsedMedia(): void {
+    recentMediaHashes = [];
+    try { window.localStorage.removeItem(RECENT_MEDIA_KEY); } catch { /* clear the in-session list even if storage is unavailable */ }
   }
   let settingsOpen = $state(false);
   let settingsRequestedTab = $state<"plugins" | "logs" | "whats-new" | null>(null);
@@ -1877,7 +1907,7 @@ import {
   async function useMediaAsItemBackground(asset: MediaAsset): Promise<void> {
     if (!selectedItem) { mediaError = "Select a playlist item before using media as a background."; return; }
     mediaError = null;
-    try { appState = await api.setItemBackground(selectedItem.id, asset.background); }
+    try { appState = await api.setItemBackground(selectedItem.id, asset.background); rememberRecentlyUsedMedia(asset.hash); }
     catch (error) { mediaError = `Could not set item background: ${String(error)}`; }
   }
 
@@ -1933,7 +1963,7 @@ import {
     }
     if (payload.type === "cached-media" && located.kind === "slide" && located.id) {
       const asset = mediaResults.find((entry) => entry.hash === payload.hash);
-      if (asset) void api.updateSlide(located.id, { background: asset.background }).then((s) => (appState = s)).catch((e: unknown) => (errorMsg = String(e)));
+      if (asset) void api.updateSlide(located.id, { background: asset.background }).then((s) => { appState = s; rememberRecentlyUsedMedia(asset.hash); }).catch((e: unknown) => (errorMsg = String(e)));
       else errorMsg = "That media item is no longer available. Reopen the Media tab and try again.";
       pointerDragCancel();
       return;
@@ -2072,7 +2102,7 @@ import {
         mediaAdding = asset.hash;
         mediaError = null;
         void addCachedMediaSlide(asset, targetItemIdx)
-          .then((state) => (appState = state))
+          .then((state) => { appState = state; rememberRecentlyUsedMedia(asset.hash); })
           .catch((err: unknown) => {
             mediaError = `Could not add ${asset.fileName}: ${String(err)}`;
             errorMsg = mediaError;
@@ -2164,6 +2194,7 @@ import {
           const itemId = appState?.project.slides.find((x) => x.id === newId)?.itemId;
           if (!itemId) throw new Error("Could not identify the new media Playlist item.");
           appState = await api.reorderItem(itemId, insertItemIdx++);
+          rememberRecentlyUsedMedia(asset.hash);
           errorMsg = null;
           use("dragdrop");
         } catch (err) {
@@ -4874,6 +4905,23 @@ import {
               <button class:active={mediaFilter === "video"} aria-pressed={mediaFilter === "video"} onclick={() => (mediaFilter = "video")}>Videos</button>
             </div>
             {#if mediaError}<p class="media-bar-error" role="alert">{mediaError}</p>{/if}
+            {#if !mediaQuery.trim() && visibleRecentMedia.length > 0}
+              <section class="recent-media" aria-label="Recently used media" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 150, easing: cubicOut, axis: "y" }}>
+                <div class="recent-media-heading"><div><strong>Recently used</strong><span>Reuse a visual from another service</span></div><button class="ghost" onclick={clearRecentlyUsedMedia}>Clear</button></div>
+                <div class="recent-media-list">
+                  {#each visibleRecentMedia as asset (asset.hash)}
+                    <button class="recent-media-card" onclick={() => void addMediaFromBar(asset)} disabled={mediaAdding !== null} title={`Add ${asset.fileName} to this playlist`}>
+                      <span class="recent-media-thumb">
+                        {#if isMedia(asset.background) && !mediaThumbFailures.has(asset.hash)}
+                          <img src={fileUrl(asset.background.thumb)} alt="" loading="lazy" draggable="false" onerror={() => onMediaThumbError(asset.hash)} />
+                        {:else}<span aria-hidden="true">▧</span>{/if}
+                      </span>
+                      <span class="recent-media-copy"><strong>{asset.fileName}</strong><small>{asset.kind === "video" ? "Video" : "Image"} · Add slide</small></span>
+                    </button>
+                  {/each}
+                </div>
+              </section>
+            {/if}
             {#if mediaLoading}<p class="media-bar-hint">Searching media…</p>
             {:else if mediaResults.length === 0}<p class="media-bar-hint">No imported media found. Drop an image or video on the Playlist, or use Add media in a slide.</p>
             {:else if visibleMediaResults.length === 0}<p class="media-bar-hint">No {mediaFilter === "image" ? "images" : "videos"} match this search.</p>
@@ -4891,7 +4939,7 @@ import {
                     >
                       <span class="media-card-preview" aria-hidden="true">
                         {#if isMedia(asset.background) && !mediaThumbFailures.has(asset.hash)}
-                          <img src={fileUrl(asset.background.thumb)} alt="" draggable="false" onerror={() => onMediaThumbError(asset.hash)} />
+                          <img src={fileUrl(asset.background.thumb)} alt="" loading="lazy" draggable="false" onerror={() => onMediaThumbError(asset.hash)} />
                         {:else}
                           <span class="media-card-no-preview">Preview unavailable</span>
                         {/if}
@@ -4962,7 +5010,7 @@ import {
   onCancel={() => (showSavePlaylistModal = false)}
 />
 
-<GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} onImportLyrics={importLyricsFromSearch} onSongUsed={rememberRecentlyUsedSong} />
+<GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} onImportLyrics={importLyricsFromSearch} onSongUsed={rememberRecentlyUsedSong} onMediaUsed={rememberRecentlyUsedMedia} />
 
 {#if serviceCheckOpen}
   <ServiceCheck
@@ -7867,6 +7915,21 @@ import {
   .media-bar-head span, .media-bar-hint { color: var(--text-dim); font-size: 11px; }
   .media-bar-head input { width: min(100%, 310px); padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); color: var(--text); }
   .media-bar-error { color: var(--semantic-error); font-size: 12px; }
+  .recent-media { display: grid; gap: var(--space-2); margin-bottom: var(--space-3); padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border)); border-radius: 10px; background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 8%, var(--panel)), var(--panel)); }
+  .recent-media-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .recent-media-heading > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+  .recent-media-heading strong { font-size: 11px; }
+  .recent-media-heading span { color: var(--text-dim); font-size: 10px; }
+  .recent-media-heading button { flex: none; padding: 3px 7px; color: var(--text-dim); font-size: 10px; }
+  .recent-media-list { display: flex; gap: 7px; min-width: 0; overflow-x: auto; padding-bottom: 2px; }
+  .recent-media-card { flex: 0 0 min(220px, 76vw); display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 54px; padding: 6px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--panel-2) 84%, transparent); color: var(--text); text-align: left; scroll-snap-align: start; }
+  .recent-media-card:hover:not(:disabled) { border-color: var(--accent); background: var(--panel-2); }
+  .recent-media-card:disabled { opacity: .65; cursor: wait; }
+  .recent-media-thumb { flex: none; display: grid; place-items: center; width: 66px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 5px; background: #000; color: var(--text-dim); }
+  .recent-media-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .recent-media-copy { display: grid; gap: 3px; min-width: 0; }
+  .recent-media-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+  .recent-media-copy small { color: var(--accent); font-size: 9px; }
   .media-filter { display: flex; gap: var(--space-1); margin-bottom: var(--space-4); }
   .media-filter button { padding: 7px 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-dim); font-size: 11px; font-weight: 650; }
   .media-filter button:hover { background: var(--panel-2); color: var(--text); }

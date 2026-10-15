@@ -585,7 +585,11 @@ import {
 
   // Saved playlists (reusable slide sequences) — surfaced in the View Hub + Save-as-Playlist
   let templates = $state<PlaylistTemplate[]>([]);
+  let templatesLoaded = false;
+  let templatesReady = $state(false);
+  let templatesLoading = false;
   let servicePresets = $state<ServicePreset[]>([]);
+  let presetsReady = $state(false);
   let showSavePlaylistModal = $state(false);
 
   // Global search (Ctrl/Cmd+K) — library + all Bibles + media cache
@@ -2851,7 +2855,7 @@ import {
 
   function openHub(): void {
     showHub = true;
-    void refreshPlaylists();
+    if (!templatesLoaded) void refreshPlaylists();
   }
 
   async function handleHubCreate(
@@ -2894,11 +2898,17 @@ import {
   }
 
   async function refreshPlaylists(): Promise<void> {
+    if (templatesLoaded || templatesLoading) return;
+    templatesLoading = true;
     try {
       errorMsg = null;
       templates = await api.listTemplates();
+      templatesLoaded = true;
     } catch (e) {
       errorMsg = String(e);
+    } finally {
+      templatesLoading = false;
+      templatesReady = true;
     }
   }
 
@@ -2913,6 +2923,7 @@ import {
     try {
       errorMsg = null;
       templates = await api.saveTemplate(trimmed);
+      templatesLoaded = true;
       showSavePlaylistModal = false;
     } catch (e) {
       errorMsg = String(e);
@@ -2923,6 +2934,7 @@ import {
     try {
       errorMsg = null;
       templates = await api.deleteTemplate(playlistId);
+      templatesLoaded = true;
     } catch (e) {
       errorMsg = String(e);
     }
@@ -3274,8 +3286,12 @@ import {
       if (!workspaceExtrasStarted) {
         workspaceExtrasStarted = true;
         void api.listPresets().then((items) => {
-          if (!cancelled) servicePresets = items;
+          if (!cancelled) {
+            servicePresets = items;
+            presetsReady = true;
+          }
         }).catch((e: unknown) => {
+          if (!cancelled) presetsReady = true;
           if (!cancelled) errorMsg = `Could not load starting playlists: ${String(e)}`;
         });
         void refreshPlaylists();
@@ -5074,6 +5090,7 @@ import {
   tutorialHighlightContinue={tourActive && tourStep === 16}
   playlists={templates}
   presets={servicePresets}
+  startingPointsReady={templatesReady && presetsReady}
   onClose={() => (showHub = false)}
   onCreate={handleHubCreate}
   onCreateFromPlaylist={handleHubCreateFromPlaylist}

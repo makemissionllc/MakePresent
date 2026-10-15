@@ -11,11 +11,23 @@
     onDeletePlaylist: (playlistId: string) => void;
     playlists: PlaylistTemplate[];
     presets: ServicePreset[];
+    startingPointsReady?: boolean;
     recentName?: string;
     tutorialHighlightContinue?: boolean;
   }
 
-  let { open, onClose, onCreate, onCreateFromPlaylist, onDeletePlaylist, playlists = [], presets = [], recentName = "", tutorialHighlightContinue = false }: Props = $props();
+  let { open, onClose, onCreate, onCreateFromPlaylist, onDeletePlaylist, playlists = [], presets = [], recentName = "", tutorialHighlightContinue = false, startingPointsReady = false }: Props = $props();
+
+  const LAST_STARTING_POINT_KEY = "makrstudio.view-hub.last-starting-point.v1";
+
+  function readLastStartingPoint(): string | null {
+    try {
+      const saved = window.localStorage.getItem(LAST_STARTING_POINT_KEY);
+      return saved && saved.trim().length > 0 && saved.length <= 200 ? saved : null;
+    } catch {
+      return null;
+    }
+  }
 
   const ASPECTS = [
     { id: "16:9", label: "16:9 Widescreen", sub: "Standard displays" },
@@ -73,8 +85,10 @@
 
   const hasSaved = $derived(playlists.length > 0);
 
-  let selectedId = $state<string>("sunday-morning");
-  const selected = $derived(gallery.find((g) => g.id === selectedId) ?? gallery[0] ?? null);
+  const initialStartingPointId = readLastStartingPoint();
+  let lastStartingPointId = $state(initialStartingPointId);
+  let selectedId = $state<string>(initialStartingPointId ?? "sunday-morning");
+  const selected = $derived(gallery.find((g) => g.id === selectedId) ?? (lastStartingPointId && !startingPointsReady ? null : gallery[0] ?? null));
 
   let title = $state("");
   let aspect = $state("16:9");
@@ -97,7 +111,10 @@
       title = "";
     }
     if (!selected) return;
-    if (!gallery.some((item) => item.id === selectedId)) selectedId = selected.id;
+    if (!gallery.some((item) => item.id === selectedId)) {
+      selectedId = selected.id;
+      if (lastStartingPointId) chooseStartingPoint(selected.id);
+    }
     if (selected.id !== lastSelectedId) {
       if (!title.trim() || title === lastAutoTitle) {
         title = `${selected.name} - ${todayLabel()}`;
@@ -116,6 +133,31 @@
     } else if (selected.presetId) {
       onCreate(selected.presetId, { title: t, aspect, theme, transition });
     }
+  }
+
+  function chooseStartingPoint(id: string): void {
+    selectedId = id;
+    lastStartingPointId = id;
+    try {
+      window.localStorage.setItem(LAST_STARTING_POINT_KEY, id);
+    } catch {
+      // Keep the selection for this session when local storage is unavailable.
+    }
+  }
+
+  function deletePlaylist(id: string): void {
+    if (lastStartingPointId === id) {
+      const replacement = gallery.find((item) => item.id !== id);
+      lastStartingPointId = replacement?.id ?? null;
+      selectedId = replacement?.id ?? "";
+      try {
+        if (replacement) window.localStorage.setItem(LAST_STARTING_POINT_KEY, replacement.id);
+        else window.localStorage.removeItem(LAST_STARTING_POINT_KEY);
+      } catch {
+        // The deleted choice is cleared for this session even when storage is unavailable.
+      }
+    }
+    onDeletePlaylist(id);
   }
 
   function onKey(e: KeyboardEvent): void {
@@ -156,7 +198,7 @@
                   class="card"
                   class:selected={item.id === selectedId}
                   data-kind={item.kind}
-                  onclick={() => (selectedId = item.id)}
+                  onclick={() => chooseStartingPoint(item.id)}
                   aria-pressed={item.id === selectedId}
                 >
                   <span class="card-badge" data-kind={item.kind} data-category={item.category}>{item.category}</span>
@@ -169,6 +211,9 @@
                     {/if}
                   </span>
                   <span class="card-title">{item.name}</span>
+                  {#if item.id === lastStartingPointId}
+                    <span class="last-starting-tag" in:surface={{ duration: 160, distance: 3, scale: 0.99 }}>Last selected</span>
+                  {/if}
                   <span class="card-desc">{item.description}</span>
                   <span class="card-meta">{item.slideCount} slides · {item.defaultAspect}</span>
                 </button>
@@ -177,7 +222,7 @@
                     class="delete-saved"
                     aria-label={`Delete saved playlist ${item.name}`}
                     title="Delete saved playlist"
-                    onclick={(e) => { e.stopPropagation(); onDeletePlaylist(item.playlistId!); }}
+                    onclick={(e) => { e.stopPropagation(); deletePlaylist(item.playlistId!); }}
                   >×</button>
                 {/if}
               </div>
@@ -284,6 +329,7 @@
   .card-badge[data-kind="playlist"]{background: var(--accent); border-color: var(--accent); color:white;}
   .card-icon{font-size:20px; margin-top:6px; opacity:0.8;}
   .card-title{font-family:var(--font-display); font-size:13px; font-weight:700; line-height:1.2; color:var(--text);}
+  .last-starting-tag{align-self:flex-start; padding:3px 7px; border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:999px; background:color-mix(in srgb,var(--accent) 8%,var(--panel)); color:var(--accent); font-size:9px; font-weight:650; line-height:1.2;}
   .card-desc{font-size:11px; color:var(--text-dim); line-height:1.35; white-space:pre-line;}
   .card-meta{margin-top:auto; padding-right:28px; font-size:10px; color:var(--text-dim);}
   .delete-saved{position:absolute; right:8px; bottom:8px; z-index:2; width:24px; height:24px; padding:0; border-radius:6px; color:var(--text-dim);}

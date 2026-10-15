@@ -43,6 +43,54 @@
     { id: "push", label: "Push (left)" },
   ] as const;
 
+  const VIEW_PREFERENCES_KEY = "makrstudio.view-hub.preferences.v1";
+
+  interface ViewPreferences {
+    aspect?: string;
+    theme?: (typeof THEMES)[number];
+    transition?: (typeof TRANSITIONS)[number]["id"];
+  }
+
+  function readViewPreferences(): ViewPreferences {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(VIEW_PREFERENCES_KEY) ?? "null") as Partial<ViewPreferences> | null;
+      return {
+        ...(ASPECTS.some((option) => option.id === parsed?.aspect) ? { aspect: parsed!.aspect } : {}),
+        ...(THEMES.includes(parsed?.theme as (typeof THEMES)[number]) ? { theme: parsed!.theme } : {}),
+        ...(TRANSITIONS.some((option) => option.id === parsed?.transition) ? { transition: parsed!.transition } : {}),
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  const initialViewPreferences = readViewPreferences();
+  let viewPreferences = $state<ViewPreferences>(initialViewPreferences);
+
+  function rememberPreference<K extends keyof ViewPreferences>(key: K, value: NonNullable<ViewPreferences[K]>): void {
+    viewPreferences = { ...viewPreferences, [key]: value };
+    try {
+      window.localStorage.setItem(VIEW_PREFERENCES_KEY, JSON.stringify(viewPreferences));
+    } catch {
+      // Keep the choice for this session if local storage is unavailable.
+    }
+  }
+
+  function chooseAspect(value: string): void {
+    aspect = value;
+    rememberPreference("aspect", value);
+  }
+
+  function chooseTheme(value: (typeof THEMES)[number]): void {
+    theme = value;
+    rememberPreference("theme", value);
+  }
+
+  function chooseTransition(value: (typeof TRANSITIONS)[number]["id"]): void {
+    transition = value;
+    rememberPreference("transition", value);
+  }
+
   function todayLabel(): string {
     const d = new Date();
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -84,6 +132,12 @@
   ]);
 
   const hasSaved = $derived(playlists.length > 0);
+  let galleryQuery = $state("");
+  const visibleGallery = $derived.by(() => {
+    const query = galleryQuery.trim().toLocaleLowerCase();
+    if (!query) return gallery;
+    return gallery.filter((item) => `${item.name} ${item.category} ${item.description}`.toLocaleLowerCase().includes(query));
+  });
 
   const initialStartingPointId = readLastStartingPoint();
   let lastStartingPointId = $state(initialStartingPointId);
@@ -91,9 +145,9 @@
   const selected = $derived(gallery.find((g) => g.id === selectedId) ?? (lastStartingPointId && !startingPointsReady ? null : gallery[0] ?? null));
 
   let title = $state("");
-  let aspect = $state("16:9");
-  let theme = $state("Dark");
-  let transition = $state("cut");
+  let aspect = $state(initialViewPreferences.aspect ?? "16:9");
+  let theme = $state(initialViewPreferences.theme ?? "Dark");
+  let transition = $state(initialViewPreferences.transition ?? "cut");
   let lastSelectedId: string | null = null;
   let lastAutoTitle = "";
   let wasOpen = false;
@@ -122,7 +176,7 @@
       }
       lastSelectedId = selected.id;
     }
-    aspect = selected.defaultAspect;
+    aspect = viewPreferences.aspect ?? selected.defaultAspect;
   });
 
   function create(): void {
@@ -191,8 +245,15 @@
           {#if hasSaved}
             <p class="gallery-note">Built-in starting points below; your saved Playlists appear at the top of the list.</p>
           {/if}
+          {#if gallery.length > 5}
+            <label class="gallery-search">
+              <span class="sr-only">Filter starting playlists</span>
+              <input type="search" bind:value={galleryQuery} placeholder="Find a starting playlist" autocomplete="off" />
+              {#if galleryQuery.trim()}<span class="search-count" aria-live="polite">{visibleGallery.length} of {gallery.length}</span>{/if}
+            </label>
+          {/if}
           <div class="grid">
-            {#each gallery as item}
+            {#each visibleGallery as item}
               <div class="card-wrap">
                 <button
                   class="card"
@@ -227,7 +288,9 @@
                 {/if}
               </div>
             {/each}
-            {#if gallery.length === 0}
+            {#if gallery.length > 0 && visibleGallery.length === 0}
+              <p class="muted empty-search">No starting playlists match “{galleryQuery.trim()}”.</p>
+            {:else if gallery.length === 0}
               <p class="muted">Loading starting playlists…</p>
             {/if}
           </div>
@@ -268,7 +331,7 @@
             <span>Slide aspect ratio</span>
             <div class="toggles">
               {#each ASPECTS as a}
-                <button class:selected={aspect===a.id} onclick={()=> aspect=a.id}>
+                <button class:selected={aspect===a.id} aria-pressed={aspect===a.id} onclick={()=> chooseAspect(a.id)}>
                   <strong>{a.label}</strong><span>{a.sub}</span>
                 </button>
               {/each}
@@ -277,16 +340,17 @@
 
           <label class="field">
             <span>Primary Theme / Look</span>
-            <select value={theme} onchange={(e)=> theme=(e.target as HTMLSelectElement).value}>
+            <select value={theme} onchange={(e)=> chooseTheme((e.target as HTMLSelectElement).value as (typeof THEMES)[number])}>
               {#each THEMES as t}<option value={t}>{t}</option>{/each}
             </select>
           </label>
 
           <label class="field">
             <span>Default Transition</span>
-            <select value={transition} onchange={(e)=> transition=(e.target as HTMLSelectElement).value}>
+            <select value={transition} onchange={(e)=> chooseTransition((e.target as HTMLSelectElement).value as (typeof TRANSITIONS)[number]["id"])}>
               {#each TRANSITIONS as t}<option value={t.id}>{t.label}</option>{/each}
             </select>
+            <span class="help">Your aspect, Look, and transition are remembered on this device.</span>
           </label>
 
           <div class="inspector-actions">
@@ -308,18 +372,24 @@
   .brand p{margin:2px 0 0; font-size:11px; color:var(--text-dim);}
   .close{width:32px; height:32px; border-radius:8px; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); font-size:18px;}
   .close:hover{background:var(--panel); color:var(--text);}
-  .hub-body{display:grid; grid-template-columns: 1fr 340px; gap:0; min-height:0; flex:1; overflow:hidden;}
-  @media (max-width:900px){ .hub-body{grid-template-columns:1fr;} .inspector{border-left:none; border-top:1px solid var(--border);} }
+  .hub-body{display:grid; grid-template-columns: minmax(0,1fr) 340px; grid-template-rows:minmax(0,1fr); gap:0; min-height:0; flex:1; overflow:hidden;}
+  @media (max-width:900px){ .hub-body{grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr) minmax(230px,42vh);} .inspector{border-left:none; border-top:1px solid var(--border);} }
   .gallery{padding:18px; overflow:auto; background: var(--panel-2); min-height:0;}
   .gallery-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px;}
   .gallery-head h2{margin:0; font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-dim);}
   .gallery-note{font-size:11px; color:var(--text-dim); margin:-4px 0 10px;}
+  .gallery-search{display:flex; align-items:center; gap:10px; margin:0 0 10px;}
+  .gallery-search input{flex:1; min-width:0; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); font-size:12px;}
+  .gallery-search input:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  .search-count{flex:none; color:var(--text-dim); font-size:10px; font-variant-numeric:tabular-nums;}
+  .empty-search{grid-column:1/-1; margin:10px 0;}
+  .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
   .recent-hint{font-size:11px; color:var(--text-dim);}
   .grid{display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px;}
   @media (max-width:640px){ .grid{grid-template-columns:1fr;} }
   .card-wrap{position:relative; min-width:0;}
-  .card{position:relative; width:100%; text-align:left; padding:14px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color var(--motion-normal) var(--ease-out),border-color var(--motion-normal) var(--ease-out),box-shadow var(--motion-normal) var(--ease-out);}
-  .card:hover{border-color:#46514e; background:var(--panel);}
+  .card{position:relative; width:100%; text-align:left; padding:14px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color var(--motion-normal) var(--ease-out),border-color var(--motion-normal) var(--ease-out),box-shadow var(--motion-normal) var(--ease-out),transform var(--motion-fast) var(--ease-out);}
+  .card:hover{border-color:#46514e; background:var(--panel); transform:translateY(-1px);}
   .card.selected{border-color:var(--accent); background:#202825; box-shadow:0 0 0 2px rgba(129,170,149,0.12);}
   .card-badge{position:absolute; top:10px; right:10px; font-size:9px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:3px 7px; border-radius:999px; border:1px solid transparent; color:white;}
   .card-badge[data-category="Sunday Service"]{background: var(--color-green); border-color: var(--color-green);}
@@ -363,4 +433,27 @@
   button.ghost{background:transparent;}
   button.primary{background:#456b58; border-color:#527962; color:#f4faf6; flex:1;}
   button.primary:hover{background:#527962;}
+  button:focus-visible, .field input:focus-visible, .field select:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  button:disabled{opacity:.55; cursor:not-allowed;}
+  @media (max-width:640px){
+    .hub{width:100vw; height:100dvh; max-height:100dvh; border-radius:0;}
+    .hub-head{padding:12px 14px; gap:10px;}
+    .brand{gap:10px;}
+    .brand p{max-width:48ch; line-height:1.35;}
+    .gallery{padding:14px;}
+    .gallery-head{align-items:flex-start; gap:8px; flex-direction:column;}
+    .grid{grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;}
+    .card{min-height:132px; padding:11px;}
+    .card-badge{top:8px; right:8px;}
+    .inspector{padding:12px 14px; gap:10px;}
+    .toggles{grid-template-columns:repeat(3,minmax(0,1fr));}
+    .toggles button{padding:7px;}
+    .inspector-actions{position:sticky; bottom:-12px; padding:10px 0 12px; background:var(--panel);}
+  }
+  @media (max-width:380px){
+    .grid{grid-template-columns:1fr;}
+    .card{min-height:112px;}
+    .toggles{grid-template-columns:1fr 1fr;}
+  }
+  @media (prefers-reduced-motion:reduce){.card{transition:none}.card:hover{transform:none}}
 </style>

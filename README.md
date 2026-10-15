@@ -5,6 +5,8 @@
 - Songs and Media keep up to five recently used items ready for one-click reuse in the current View. Successful additions update each local list; Clear removes the shortcuts. The first-run guide, Help, interactive tutorial, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) describe them.
 - Star library songs to keep them pinned above the rest of the library on this device. Recent-song shortcuts continue to update independently; the star in each row adds or removes a favorite.
 - View Hub remembers your last selected starting playlist and marks it for quick return. Reopening the Hub reuses the loaded saved-playlist list instead of fetching it again.
+- View Hub remembers your preferred slide ratio, Look, and transition on this device. Its picker and setup controls remain reachable in compact windows.
+- Filter long starting-playlist lists by name; the on-device filter keeps the picker easier to scan and does not poll in the background.
 - Import one or more images or videos directly from the Media library; batch imports run sequentially and refresh the list once when complete.
 - Song search makes no-match recovery one click, and renders large libraries in batches of 100 to keep the source panel lighter.
 - Browse Scripture keeps the five passages you most recently added ready for one-click reuse, including additions from bookmarks, global search, and drag and drop. Clear removes the local shortcuts; onboarding, Help, the interactive tutorial, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) explain the feature.

@@ -66,7 +66,7 @@
       <button class="replay" onclick={() => { onReplayTour(15); onClose(); }}>Find entries in Logs</button>
       <button class="replay" onclick={() => { onReplayTour(16); onClose(); }}>Continue your current View</button>
       <div class="section-title">Start a service again</div>
-      <p class="muted">View Hub marks your last selected starting playlist and remembers it on this device. Pick another card any time. Reusing the saved-playlist list also avoids reloading it every time you open the Hub.</p>
+      <p class="muted">View Hub marks your last selected starting playlist and remembers it on this device. Filter a long list by name, and keep your preferred slide ratio, Look, and transition for the next service. Pick another card any time. Reusing the saved-playlist list also avoids reloading it every time you open the Hub.</p>
       <div class="section-title">Service check</div>
       <p class="muted">The ✓ Service check reviews playlist slides, the audience display, and whether Output is open. Stage is optional. Each item opens the real control, and checking never puts a slide live.</p>
       <div class="section-title">Return to the live slide</div>

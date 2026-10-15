@@ -60,6 +60,7 @@ import {
   const RECENT_SONGS_KEY = "makrstudio.songs.recent.v1";
   const FAVORITE_SONGS_KEY = "makrstudio.songs.favorites.v1";
   const RECENT_MEDIA_KEY = "makrstudio.media.recent.v1";
+  const FAVORITE_MEDIA_KEY = "makrstudio.media.favorites.v1";
   const CONTENT_SHELF_KEY = "makrstudio.content-shelf.v1";
   type SourceTab = "songs" | "scripture" | "media";
 
@@ -111,6 +112,16 @@ import {
       const saved: unknown = JSON.parse(window.localStorage.getItem(RECENT_MEDIA_KEY) ?? "[]");
       if (!Array.isArray(saved)) return [];
       return [...new Set(saved.filter((hash): hash is string => typeof hash === "string" && hash.trim().length > 0))].slice(0, 5);
+    } catch {
+      return [];
+    }
+  }
+
+  function readFavoriteMediaHashes(): string[] {
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(FAVORITE_MEDIA_KEY) ?? "[]");
+      if (!Array.isArray(saved)) return [];
+      return [...new Set(saved.filter((hash): hash is string => typeof hash === "string" && hash.trim().length > 0 && hash.length <= 200))];
     } catch {
       return [];
     }
@@ -340,10 +351,16 @@ import {
   let mediaQuery = $state("");
   let mediaResults = $state<MediaAsset[]>([]);
   let recentMediaHashes = $state<string[]>(readRecentMediaHashes());
+  let favoriteMediaHashes = $state<string[]>(readFavoriteMediaHashes());
+  const favoriteMediaSet = $derived(new Set(favoriteMediaHashes));
   let mediaFilter = $state<"all" | "image" | "video">("all");
-  const visibleMediaResults = $derived(mediaFilter === "all"
-    ? mediaResults
-    : mediaResults.filter((asset) => asset.kind === mediaFilter));
+  let favoriteMediaOnly = $state(false);
+  const visibleMediaResults = $derived.by(() => {
+    const matching = mediaResults.filter((asset) => mediaFilter === "all" || asset.kind === mediaFilter);
+    if (favoriteMediaOnly) return matching.filter((asset) => favoriteMediaSet.has(asset.hash));
+    const favorites = matching.filter((asset) => favoriteMediaSet.has(asset.hash));
+    return favorites.length > 0 ? [...favorites, ...matching.filter((asset) => !favoriteMediaSet.has(asset.hash))] : matching;
+  });
   const recentMedia = $derived.by(() => recentMediaHashes.flatMap((hash) => {
     const asset = mediaResults.find((item) => item.hash === hash);
     return asset ? [asset] : [];
@@ -485,6 +502,13 @@ import {
   function clearRecentlyUsedMedia(): void {
     recentMediaHashes = [];
     try { window.localStorage.removeItem(RECENT_MEDIA_KEY); } catch { /* clear the in-session list even if storage is unavailable */ }
+  }
+
+  function toggleFavoriteMedia(hash: string): void {
+    favoriteMediaHashes = favoriteMediaSet.has(hash)
+      ? favoriteMediaHashes.filter((savedHash) => savedHash !== hash)
+      : [...favoriteMediaHashes, hash];
+    try { window.localStorage.setItem(FAVORITE_MEDIA_KEY, JSON.stringify(favoriteMediaHashes)); } catch { /* favorites remain available for this session */ }
   }
   let settingsOpen = $state(false);
   let settingsRequestedTab = $state<"plugins" | "logs" | "whats-new" | null>(null);
@@ -5137,10 +5161,11 @@ import {
               <button class:active={mediaFilter === "all"} aria-pressed={mediaFilter === "all"} onclick={() => (mediaFilter = "all")}>All</button>
               <button class:active={mediaFilter === "image"} aria-pressed={mediaFilter === "image"} onclick={() => (mediaFilter = "image")}>Images</button>
               <button class:active={mediaFilter === "video"} aria-pressed={mediaFilter === "video"} onclick={() => (mediaFilter = "video")}>Videos</button>
+              <button class:active={favoriteMediaOnly} aria-pressed={favoriteMediaOnly} onclick={() => (favoriteMediaOnly = !favoriteMediaOnly)}>★ Favorites</button>
             </div>
             {#if mediaError}<p class="media-bar-error" role="alert">{mediaError}</p>{/if}
             {#if mediaImportMessage && !mediaImporting}<p class="media-import-status" aria-live="polite" in:fade={{ duration: prefersReducedMotion() ? 0 : 160 }}>{mediaImportMessage}</p>{/if}
-            {#if !mediaQuery.trim() && visibleRecentMedia.length > 0}
+            {#if !mediaQuery.trim() && !favoriteMediaOnly && visibleRecentMedia.length > 0}
               <section class="recent-media" aria-label="Recently used media" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 150, easing: cubicOut, axis: "y" }}>
                 <div class="recent-media-heading"><div><strong>Recently used</strong><span>Reuse a visual from another service</span></div><button class="ghost" onclick={clearRecentlyUsedMedia}>Clear</button></div>
                 <div class="recent-media-list">
@@ -5159,7 +5184,7 @@ import {
             {/if}
             {#if mediaLoading}<p class="media-bar-hint">Searching media…</p>
             {:else if mediaResults.length === 0}<p class="media-bar-hint">{mediaQuery.trim() ? "No media matches “" + mediaQuery.trim() + "”. Clear the search to see your library." : "No media in your library yet. Use Import media above or drop files on the Playlist."}</p>
-            {:else if visibleMediaResults.length === 0}<p class="media-bar-hint">No {mediaFilter === "image" ? "images" : "videos"} match this search.</p>
+            {:else if visibleMediaResults.length === 0}<p class="media-bar-hint">{favoriteMediaOnly ? (favoriteMediaHashes.length > 0 ? "No favorites match these filters." : "No favorites yet. Star a media card to keep it here.") : `No ${mediaFilter === "image" ? "images" : "videos"} match this search.`}</p>
             {:else}
               <ul class="media-grid">
                 {#each visibleMediaResults as asset (asset.hash)}
@@ -5185,6 +5210,14 @@ import {
                         <span class="media-card-action">{mediaAdding === asset.hash ? "Adding…" : "Add slide →"}</span>
                       </span>
                     </button>
+                    <button
+                      class="media-favorite-toggle"
+                      class:favorite={favoriteMediaSet.has(asset.hash)}
+                      aria-pressed={favoriteMediaSet.has(asset.hash)}
+                      aria-label={favoriteMediaSet.has(asset.hash) ? `Remove ${asset.fileName} from favorites` : `Add ${asset.fileName} to favorites`}
+                      title={favoriteMediaSet.has(asset.hash) ? "Remove from Favorites" : "Add to Favorites"}
+                      onclick={() => toggleFavoriteMedia(asset.hash)}
+                    >{favoriteMediaSet.has(asset.hash) ? "★" : "☆"}</button>
                     <button class="ghost media-card-background" disabled={!selectedItem} onclick={() => void useMediaAsItemBackground(asset)} title={selectedItem ? `Use as background for ${selectedItem.name}` : "Select a playlist item first"}>Use as background</button>
                   </li>
                 {/each}
@@ -8214,13 +8247,13 @@ import {
   .recent-media-copy { display: grid; gap: 3px; min-width: 0; }
   .recent-media-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
   .recent-media-copy small { color: var(--accent); font-size: 9px; }
-  .media-filter { display: flex; gap: var(--space-1); margin-bottom: var(--space-4); }
+  .media-filter { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-4); }
   .media-filter button { padding: 7px 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-dim); font-size: 11px; font-weight: 650; }
   .media-filter button:hover { background: var(--panel-2); color: var(--text); }
   .media-filter button.active { border-color: var(--semantic-live-border); background: var(--semantic-live-bg); color: var(--text); }
   .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap: var(--space-3); margin: 0; padding: 0 0 var(--space-3); list-style: none; }
   .media-grid li { min-width: 0; }
-  .media-card-item { display: flex; flex-direction: column; gap: 6px; }
+  .media-card-item { position: relative; display: flex; flex-direction: column; gap: 6px; }
   .media-card-background { align-self: flex-start; padding: 5px 8px; font-size: 10px; }
   .media-card { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel-2); color: var(--text); text-align: left; cursor: grab; }
   .media-card:hover { border-color: var(--accent); box-shadow: var(--shadow-soft); }
@@ -8231,6 +8264,11 @@ import {
   .media-card-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .media-card-no-preview { color: var(--text-dim); font-size: 11px; }
   .media-card-type { position: absolute; top: var(--space-2); left: var(--space-2); padding: 4px 7px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); font-size: 10px; font-weight: 700; }
+  .media-favorite-toggle { position: absolute; z-index: 2; top: 8px; right: 8px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid color-mix(in srgb, white 28%, var(--border)); border-radius: 999px; background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--text); font-size: 17px; line-height: 1; cursor: pointer; transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .media-favorite-toggle:hover { transform: scale(1.08); background: var(--panel); }
+  .media-favorite-toggle.favorite { color: var(--brand-orange-500); animation: favorite-pop 180ms var(--ease-out); }
+  .media-favorite-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @keyframes favorite-pop { 50% { transform: scale(1.2); } }
   .media-card-footer { display: grid; gap: var(--space-2); width: 100%; padding: var(--space-3); }
   .media-card-name { overflow: hidden; font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
   .media-card-action { color: var(--accent); font-size: 11px; font-weight: 700; }
@@ -8256,6 +8294,11 @@ import {
     .media-bar-head { align-items: stretch; flex-direction: column; }
     .media-bar-actions { width: 100%; }
     .media-bar-actions input { width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .media-favorite-toggle { transition: none; }
+    .media-favorite-toggle:hover { transform: none; }
+    .media-favorite-toggle.favorite { animation: none; }
   }
   @container scripture-workspace (max-width: 520px) {
     .media-bar-head { align-items: stretch; flex-direction: column; }

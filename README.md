@@ -7,6 +7,7 @@
 - View Hub remembers your last selected starting playlist and marks it for quick return. Reopening the Hub reuses the loaded saved-playlist list instead of fetching it again.
 - Import one or more images or videos directly from the Media library; batch imports run sequentially and refresh the list once when complete.
 - Song search makes no-match recovery one click, and renders large libraries in batches of 100 to keep the source panel lighter.
+- Browse Scripture keeps the five passages you most recently added ready for one-click reuse, including additions from bookmarks, global search, and drag and drop. Clear removes the local shortcuts; onboarding, Help, the interactive tutorial, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) explain the feature.
 - The Songs, Scripture, and Media shelf remembers its last tab and whether it was open. Media loads on launch only if the shelf was left open on Media; tab changes animate briefly and respect reduced-motion settings.
 - Media thumbnails load as they approach the viewport. Audio position refreshes once per second while its Settings tab is visible and pauses with the app window hidden, reducing unnecessary background work. Device temperature was not measured.
 - Song search reuses normalized titles during typing; local favorites add no background polling.

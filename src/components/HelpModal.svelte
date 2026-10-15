@@ -85,6 +85,7 @@
       </p>
       <div class="section-title">Scripture bookmarks</div>
       <p class="muted">In Scripture, open Browse Scripture → Bookmarks. Search by reference, translation, or words from the passage, then choose Add slide. Selected verses use compact references such as John 3:16–18, 20.</p>
+      <p class="muted">Recently added keeps the five passages you most recently added from Scripture search, Browse Scripture, bookmarks, or drag and drop. Select a reference chip to add it again; Clear removes the on-device shortcuts. Bookmarks remain saved separately.</p>
       <div class="section-title">Find your place and read a chapter</div>
       <p class="muted">Use Find a book to rank exact names, prefixes, and close spellings. Choose a chapter, then Read book for comfortable text that keeps clicks from adding slides by accident. Choose Auto, One, or Two columns; Auto fits the panel, and narrow layouts stay in one column. A−/A+ keeps your chosen text size (14–22) on this device. Select a verse to preview it; choose Add as slide only when you want to present it.</p>
       <p class="muted">The Scripture panel remembers the last chapter you opened. Continue reading reopens that translation, book, and chapter in one step. Your reading position and text size stay on this device.</p>

@@ -45,7 +45,14 @@ import {
     text: string;
   }
 
+  interface RecentScripturePassage {
+    id: string;
+    reference: string;
+    text: string;
+  }
+
   const SCRIPTURE_BOOKMARKS_KEY = "makrstudio.scripture-bookmarks";
+  const RECENT_SCRIPTURE_KEY = "makrstudio.scripture.recent.v1";
   const SCRIPTURE_READING_POSITION_KEY = "makrstudio.scripture-reading-position.v1";
   const SCRIPTURE_READING_PROGRESS_KEY = "makrstudio.scripture-reading-progress.v1";
   const SCRIPTURE_READER_SIZE_KEY = "makrstudio.scripture-reader-size.v1";
@@ -217,6 +224,21 @@ import {
         seen.add(item.id);
         return true;
       }) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function readRecentScripturePassages(): RecentScripturePassage[] {
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(RECENT_SCRIPTURE_KEY) ?? "[]");
+      if (!Array.isArray(saved)) return [];
+      const seen = new Set<string>();
+      return saved.filter((item): item is RecentScripturePassage => {
+        if (!item || typeof item.id !== "string" || typeof item.reference !== "string" || typeof item.text !== "string" || seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      }).slice(0, 5);
     } catch {
       return [];
     }
@@ -495,6 +517,7 @@ import {
   let previewVerse = $state<ChapterVerse | null>(null);
   let browseCopyStatus = $state<string | null>(null);
   let scriptureBookmarks = $state<ScriptureBookmark[]>(readScriptureBookmarks());
+  let recentScripturePassages = $state<RecentScripturePassage[]>(readRecentScripturePassages());
   let lastReadingPosition = $state<ScriptureReadingPosition | null>(readScriptureReadingPosition());
   let scriptureReadingProgress = $state<ScriptureReadingProgress>(readScriptureReadingProgress());
   let readingTodayKey = $state(localDayKey());
@@ -1091,14 +1114,39 @@ import {
     return d.toLocaleTimeString();
   }
 
-  async function run(fn: () => Promise<ClientState>): Promise<void> {
+  async function run(fn: () => Promise<ClientState>, onSuccess?: () => void): Promise<void> {
     try {
       errorMsg = null;
       appState = await fn();
       followLiveItem(appState);
+      onSuccess?.();
     } catch (e) {
       errorMsg = String(e);
     }
+  }
+
+  function rememberRecentScripturePassage(reference: string, text: string): void {
+    const cleanReference = reference.trim();
+    if (!cleanReference || !text.trim()) return;
+    const id = cleanReference.toLocaleLowerCase();
+    recentScripturePassages = [{ id, reference: cleanReference, text }, ...recentScripturePassages.filter((passage) => passage.id !== id)].slice(0, 5);
+    try {
+      window.localStorage.setItem(RECENT_SCRIPTURE_KEY, JSON.stringify(recentScripturePassages));
+    } catch {
+      // Keep the shortcut for this session when local storage is unavailable.
+    }
+  }
+
+  function clearRecentScripturePassages(): void {
+    recentScripturePassages = [];
+    try { window.localStorage.removeItem(RECENT_SCRIPTURE_KEY); } catch { /* the in-memory list is already clear */ }
+  }
+
+  function addScriptureSlide(reference: string, text: string): void {
+    void run(
+      () => api.addSlide(reference, text, undefined, "scripture"),
+      () => rememberRecentScripturePassage(reference, text),
+    );
   }
 
   function followLiveItem(state: ClientState | null): void {
@@ -1391,7 +1439,7 @@ import {
     scriptureResults = [];
     scriptureOpen = false;
     scriptureIdx = -1;
-    void run(() => api.addSlide(scriptureTitle(match), match.text, undefined, "scripture"));
+    addScriptureSlide(scriptureTitle(match), match.text);
   }
 
   function onScriptureKeydown(e: KeyboardEvent): void {
@@ -1729,13 +1777,13 @@ import {
     const bible = bibles.find((item) => item.id === selectedBibleId);
     const version = bible?.shortName?.trim() || bible?.name?.trim();
     const ref = `${selectedBook} ${selectedChapter}:${v.verse}${version ? ` · ${version}` : ""}`;
-    void run(() => api.addSlide(ref, v.text, undefined, "scripture"));
+    addScriptureSlide(ref, v.text);
   }
 
   function insertBrowseRange(): void {
     const passage = getSelectedVerseRange();
     if (!passage) return;
-    void run(() => api.addSlide(passage.reference, passage.body, undefined, "scripture"));
+    addScriptureSlide(passage.reference, passage.body);
   }
 
   function getSelectedVerseRange(): { reference: string; body: string } | null {
@@ -1774,7 +1822,7 @@ import {
     const version = bible?.shortName?.trim() || bible?.name?.trim();
     const ref = `${selectedBook} ${selectedChapter}${version ? ` · ${version}` : ""}`;
     const body = chapterVerses.map((verse) => `${verse.verse}. ${verse.text}`).join("\n");
-    void run(() => api.addSlide(ref, body, undefined, "scripture"));
+    addScriptureSlide(ref, body);
   }
 
   async function copyBrowseText(reference: string, body: string, successMessage: string): Promise<void> {
@@ -1835,7 +1883,7 @@ import {
   }
 
   function addBookmarkedPassage(bookmark: ScriptureBookmark): void {
-    void run(() => api.addSlide(bookmark.reference, bookmark.text, undefined, "scripture"));
+    addScriptureSlide(bookmark.reference, bookmark.text);
   }
 
   function toggleVerseSelection(verse: number): void {
@@ -1866,7 +1914,7 @@ import {
 
   function addSelectedVerses(): void {
     const passage = getSelectedChapterPassage();
-    if (passage) void run(() => api.addSlide(passage.reference, passage.body, undefined, "scripture"));
+    if (passage) addScriptureSlide(passage.reference, passage.body);
   }
 
   function copySelectedVerses(): void {
@@ -1876,7 +1924,7 @@ import {
 
   function addVerseTextResult(match: ScriptureMatch): void {
     const translation = match.translation?.trim() || "KJV";
-    void run(() => api.addSlide(`${match.reference} · ${translation}`, match.text, undefined, "scripture"));
+    addScriptureSlide(match.reference + " · " + translation, match.text);
   }
 
   function bookmarkVerseTextResult(match: ScriptureMatch): void {
@@ -2204,6 +2252,7 @@ import {
         try {
           const s = await api.addSlide(payload.reference, payload.text, undefined, "scripture");
           appState = s;
+          rememberRecentScripturePassage(payload.reference, payload.text);
           const newId = s.project.slides.at(-1)?.id;
           const itemId=s.project.slides.find(x=>x.id===newId)?.itemId; if (itemId) appState=await api.reorderItem(itemId,targetItemIdx);
         } catch (err: unknown) { errorMsg = String(err); }
@@ -4807,6 +4856,21 @@ import {
                   {#if bibleBookQuery.trim()}
                     <p class="book-search-count" role="status">{visibleBibleBooks.length} {visibleBibleBooks.length === 1 ? "book" : "books"} found</p>
                   {/if}
+                  {#if recentScripturePassages.length > 0}
+                    <section class="recent-scripture" aria-label="Recently added Scripture passages">
+                      <div class="recent-scripture-heading">
+                        <strong>Recently added</strong>
+                        <button class="recent-scripture-clear" onclick={clearRecentScripturePassages} aria-label="Clear recent Scripture passages">Clear</button>
+                      </div>
+                      <div class="recent-scripture-list" aria-label="Add a recent passage again">
+                        {#each recentScripturePassages as passage (passage.id)}
+                          <button class="recent-scripture-chip" title={"Add " + passage.reference + " again"} aria-label={"Add " + passage.reference + " to the Playlist again"} onclick={() => addScriptureSlide(passage.reference, passage.text)} transition:fade={{ duration: prefersReducedMotion() ? 0 : 150 }}>
+                            <span>{passage.reference}</span><span aria-hidden="true">↗</span>
+                          </button>
+                        {/each}
+                      </div>
+                    </section>
+                  {/if}
                   <section class="scripture-bookmarks" aria-label="Saved Scripture bookmarks">
                     <button class="scripture-bookmarks-toggle" aria-expanded={bookmarksOpen} onclick={() => (bookmarksOpen = !bookmarksOpen)}>
                       <span>{bookmarksOpen ? "▾" : "▸"} Bookmarks</span><span>{scriptureBookmarks.length}</span>
@@ -5182,7 +5246,7 @@ import {
   onCancel={() => (showSavePlaylistModal = false)}
 />
 
-<GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} onImportLyrics={importLyricsFromSearch} onSongUsed={rememberRecentlyUsedSong} onMediaUsed={rememberRecentlyUsedMedia} />
+<GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} onImportLyrics={importLyricsFromSearch} onSongUsed={rememberRecentlyUsedSong} onMediaUsed={rememberRecentlyUsedMedia} onScriptureUsed={rememberRecentScripturePassage} />
 
 {#if serviceCheckOpen}
   <ServiceCheck
@@ -6751,6 +6815,16 @@ import {
   .bible-download-state { color: var(--muted, #9aa6ae); font-size: 11px; }
   .bible-download-success { color: var(--accent, #83cbb0); font-size: 11px; }
   .scripture-bookmarks { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
+  .recent-scripture { min-width: 0; padding: 8px 9px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
+  .recent-scripture-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; color: var(--text-dim); font-size: 10px; }
+  .recent-scripture-clear { padding: 2px 5px; border: 0; border-radius: 4px; color: var(--text-dim); background: transparent; font: inherit; cursor: pointer; }
+  .recent-scripture-clear:hover { color: var(--text); background: var(--panel-2); }
+  .recent-scripture-list { display: flex; gap: 6px; min-width: 0; overflow-x: auto; padding: 1px 1px 4px; scrollbar-width: thin; }
+  .recent-scripture-chip { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; max-width: min(260px, 78vw); padding: 6px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text); background: var(--panel); font: inherit; font-size: 10px; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .recent-scripture-chip span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .recent-scripture-chip span:last-child { flex: none; color: var(--accent); }
+  .recent-scripture-chip:hover { border-color: var(--accent); background: var(--panel-2); transform: translateY(-1px); }
+  .recent-scripture-chip:focus-visible, .recent-scripture-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .scripture-bookmarks-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 9px; border: 0; color: var(--text); background: transparent; font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
   .scripture-bookmarks-toggle:hover { background: var(--panel-2); }
   .bookmark-empty { margin: 6px 9px; color: var(--text-dim); font-size: 10px; }
@@ -8241,7 +8315,7 @@ import {
   }
   .browse-dock.reader-mode .browse-verse-row { contain-intrinsic-size: auto 72px; }
   @media (prefers-reduced-motion: reduce) {
-    .continue-reading-card, .reading-rhythm-card, .book-progress-card { animation: none; transition: none; }
+    .continue-reading-card, .reading-rhythm-card, .book-progress-card, .recent-scripture-chip { animation: none; transition: none; }
     .reading-rhythm-track span { transition: none; }
     .book-progress-track span { transition: none; }
     .reader-pages { animation: none; }

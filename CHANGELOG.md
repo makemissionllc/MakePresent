@@ -11,6 +11,7 @@ User-facing features and fixes are also available in **Settings → What’s New
 - View Hub remembers the last starting playlist selected on this device and marks it **Last selected**. Choose another card any time; deleting the remembered playlist moves the selection to an available starting point.
 - **Import media** in the Media tab adds one or more images or videos directly to the reusable library. The empty state, onboarding, Help, and interactive Media tutorial explain the path.
 - Songs search offers **Clear search** when nothing matches. Large libraries show 100 results first; **Show more** appends another batch. Help and the interactive Songs tutorial explain how to find the rest.
+- Browse Scripture keeps the five passages most recently added from browsing, bookmarks, global search, or drag and drop ready for one-click reuse. Clear removes the on-device shortcuts; onboarding, Help, and the interactive Scripture tutorial explain the feature.
 - Media keeps the five most recently used visuals ready in a compact horizontal row. Click one to add it to the current playlist, or Clear the on-device shortcut list. The row adapts to narrow panels.
 - First-run onboarding, Help, the interactive Songs and Media tutorial topics, and Settings → What’s New explain the shortcuts.
 

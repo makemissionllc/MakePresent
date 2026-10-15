@@ -15,9 +15,10 @@
     onImportLyrics: (hit: LyricsHit) => void;
     onSongUsed?: (songId: string) => void;
     onMediaUsed?: (mediaHash: string) => void;
+    onScriptureUsed?: (reference: string, text: string) => void;
   }
 
-  let { open, library, onClose, onImportLyrics, onSongUsed = () => {}, onMediaUsed = () => {} }: Props = $props();
+  let { open, library, onClose, onImportLyrics, onSongUsed = () => {}, onMediaUsed = () => {}, onScriptureUsed = () => {} }: Props = $props();
 
   let query = $state("");
   const HISTORY_KEY = "makrstudio.search.recent.v1";
@@ -267,7 +268,9 @@
     inserting = `scr-${m.reference}`;
     try {
       const translation = m.translation?.trim() || "KJV";
-      await api.addSlide(`${m.reference} · ${translation}`, m.text, undefined, "scripture");
+      const reference = m.reference + " · " + translation;
+      await api.addSlide(reference, m.text, undefined, "scripture");
+      onScriptureUsed(reference, m.text);
       rememberQuery(term);
       if (open && session === paletteGeneration && query === term) onClose();
     } catch (e) {

@@ -12,6 +12,8 @@ User-facing features and fixes are also available in **Settings → What’s New
 - **Import media** in the Media tab adds one or more images or videos directly to the reusable library. The empty state, onboarding, Help, and interactive Media tutorial explain the path.
 - Songs search offers **Clear search** when nothing matches. Large libraries show 100 results first; **Show more** appends another batch. Help and the interactive Songs tutorial explain how to find the rest.
 - Browse Scripture keeps the five passages most recently added from browsing, bookmarks, global search, or drag and drop ready for one-click reuse. Clear removes the on-device shortcuts; onboarding, Help, and the interactive Scripture tutorial explain the feature.
+- Global search adds All, Songs, Scripture, and Media scopes with live result counts. Scoped searches skip unrelated lookups and hide unrelated result groups; the scope bar and search dialog adapt to narrow windows. Onboarding, Help, and the interactive Search tutorial explain it.
+- Choosing a search scope skips irrelevant Scripture, media, online-lyrics, and song-ranking work and renders only that result group. Scope changes use a brief reduced-motion-aware fade to reduce avoidable search and layout work; device temperature was not measured.
 - Media keeps the five most recently used visuals ready in a compact horizontal row. Click one to add it to the current playlist, or Clear the on-device shortcut list. The row adapts to narrow panels.
 - First-run onboarding, Help, the interactive Songs and Media tutorial topics, and Settings → What’s New explain the shortcuts.
 

@@ -20,7 +20,9 @@
 
   let { open, library, onClose, onImportLyrics, onSongUsed = () => {}, onMediaUsed = () => {}, onScriptureUsed = () => {} }: Props = $props();
 
+  type SearchCategory = "all" | "songs" | "scripture" | "media";
   let query = $state("");
+  let activeCategory = $state<SearchCategory>("all");
   const HISTORY_KEY = "makrstudio.search.recent.v1";
   function readRecentQueries(): string[] {
     try {
@@ -117,7 +119,15 @@
   }
 
   const songIndex = $derived(indexSongs(library?.songs ?? []));
-  const libraryResults = $derived(rankSongs(songIndex, query));
+  const libraryResults = $derived(
+    activeCategory === "all" || activeCategory === "songs" ? rankSongs(songIndex, query) : [],
+  );
+  const searchCounts = $derived({
+    all: libraryResults.length + onlineSongs.length + scriptureResults.length + mediaResults.length,
+    songs: libraryResults.length + onlineSongs.length,
+    scripture: scriptureResults.length,
+    media: mediaResults.length,
+  });
 
   function songVerseCount(s: any): number {
     return s.arrangement?.length ?? (s.blocks ? Object.keys(s.blocks).length : (s.slides?.length ?? 0));
@@ -133,6 +143,7 @@
     let focusFrame = 0;
     if (open) {
       query = "";
+      activeCategory = "all";
       scriptureResults = [];
       mediaResults = [];
       onlineSongs = [];
@@ -163,6 +174,37 @@
   });
 
   let debounce: ReturnType<typeof setTimeout> | null = null;
+  function scopeCount(category: SearchCategory): number | null {
+    return activeCategory === "all" || activeCategory === category ? searchCounts[category] : null;
+  }
+
+  function selectCategory(category: SearchCategory): void {
+    if (category === activeCategory) return;
+    const narrowingCompletedSearch = activeCategory === "all" && Boolean(query.trim()) && debounce === null;
+    activeCategory = category;
+    activeIndex = -1;
+    if (narrowingCompletedSearch) {
+      // The All lookup is in flight or complete; avoid launching a second set.
+      errorMsg = null;
+      return;
+    }
+    seq++;
+    if (debounce) clearTimeout(debounce);
+    debounce = null;
+    scriptureResults = [];
+    mediaResults = [];
+    onlineSongs = [];
+    onlineError = null;
+    onlineLoading = false;
+    errorMsg = null;
+    loading = Boolean(query.trim());
+    const nextQuery = query;
+    debounce = setTimeout(() => {
+      debounce = null;
+      void doSearch(nextQuery);
+    }, 140);
+  }
+
   function onInput(e: Event): void {
     const v = (e.target as HTMLInputElement).value;
     query = v;
@@ -174,7 +216,7 @@
     loading = v.trim().length > 0;
     onlineSongs = [];
     onlineError = null;
-    onlineLoading = v.trim().length >= 3;
+    onlineLoading = (activeCategory === "all" || activeCategory === "songs") && v.trim().length >= 3;
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(() => void doSearch(v), 420);
   }
@@ -182,15 +224,20 @@
   async function doSearch(q: string): Promise<void> {
     const cur = ++seq;
     const trimmed = q.trim();
+    const category = activeCategory;
     errorMsg = null;
     onlineError = null;
     onlineLoading = false;
     if (!trimmed) {
-      // Empty query: show recent media, clear scripture/media filtered to empty? Keep top media
       scriptureResults = [];
       onlineSongs = [];
       onlineError = null;
       onlineLoading = false;
+      if (category !== "all" && category !== "media") {
+        mediaResults = [];
+        loading = false;
+        return;
+      }
       try {
         const all = await withTimeout(api.listMedia(), 15000, "Media list did not respond.");
         if (cur !== seq) return;
@@ -205,16 +252,22 @@
     errorMsg = null;
     // Local library is immediate. Keep online results optional so a service
     // outage never interferes with Scripture or cached media search.
-    if (trimmed.length >= 3) {
+    if ((category === "all" || category === "songs") && trimmed.length >= 3) {
       onlineLoading = true;
       void withTimeout(api.searchLyrics(trimmed), 15000, "Online lyrics search timed out. Try again.")
         .then((found) => { if (cur === seq) onlineSongs = found.filter((hit) => hit.hasLyrics).slice(0, 6); })
         .catch((e: unknown) => { if (cur === seq) onlineError = String(e); })
         .finally(() => { if (cur === seq) onlineLoading = false; });
     }
+    const scriptureRequest = category === "media"
+      ? Promise.resolve<ScriptureMatch[]>([])
+      : withTimeout(api.searchScripture(trimmed), 15000, "Scripture search timed out. Try again.");
+    const mediaRequest = category === "scripture"
+      ? Promise.resolve<MediaAsset[]>([])
+      : withTimeout(api.searchMedia(trimmed), 15000, "Media search timed out. Try again.");
     const [scr, med] = await Promise.allSettled([
-      withTimeout(api.searchScripture(trimmed), 15000, "Scripture search timed out. Try again."),
-      withTimeout(api.searchMedia(trimmed), 15000, "Media search timed out. Try again."),
+      scriptureRequest,
+      mediaRequest,
     ]);
     if (cur !== seq) return;
     if (med.status === "fulfilled") mediaResults = med.value.slice(0, 8);
@@ -362,6 +415,21 @@
         <button class="close" aria-label="Close" onclick={onClose}>&times;</button>
       </header>
 
+      <nav class="search-scopes" aria-label="Search within">
+        <button type="button" class:active={activeCategory === "all"} aria-pressed={activeCategory === "all"} aria-label="All results" onclick={() => selectCategory("all")}>
+          <span>All</span>{#if scopeCount("all") !== null}<span class="scope-count" aria-hidden="true">{searchCounts.all}</span>{/if}
+        </button>
+        <button type="button" class:active={activeCategory === "songs"} aria-pressed={activeCategory === "songs"} aria-label="Songs" onclick={() => selectCategory("songs")}>
+          <span>Songs</span>{#if scopeCount("songs") !== null}<span class="scope-count" aria-hidden="true">{searchCounts.songs}</span>{/if}
+        </button>
+        <button type="button" class:active={activeCategory === "scripture"} aria-pressed={activeCategory === "scripture"} aria-label="Scripture" onclick={() => selectCategory("scripture")}>
+          <span>Scripture</span>{#if scopeCount("scripture") !== null}<span class="scope-count" aria-hidden="true">{searchCounts.scripture}</span>{/if}
+        </button>
+        <button type="button" class:active={activeCategory === "media"} aria-pressed={activeCategory === "media"} aria-label="Media" onclick={() => selectCategory("media")}>
+          <span>Media</span>{#if scopeCount("media") !== null}<span class="scope-count" aria-hidden="true">{searchCounts.media}</span>{/if}
+        </button>
+      </nav>
+
       {#if errorMsg}
         <div class="palette-error" role="alert">{errorMsg}
           {#if query.trim()}<button disabled={loading} onclick={() => void doSearch(query)}>Retry search</button>{/if}
@@ -369,22 +437,25 @@
       {/if}
 
       <div class="palette-body">
-        {#if !query.trim() && recentQueries.length}
-          <section class="category recent-searches" aria-label="Recent searches">
-            <h3>Recent searches <button onclick={() => { recentQueries = []; saveRecentQueries(); }}>Clear history</button></h3>
-            <div>{#each recentQueries as term (term)}<button onclick={() => useQuery(term)}>{term}</button>{/each}</div>
-            <p class="empty">Stored on this device. Choose a search to run it again.</p>
-          </section>
-        {/if}
-        {#if historyStatus}<p class="empty" role="status">{historyStatus}</p>{/if}
-        {#if !query.trim() && libraryResults.length === 0 && scriptureResults.length === 0 && mediaResults.length === 0 && !loading}
-          <p class="empty-hint">Search your songs, online lyrics, Bibles, and media. Choose an online song to review its slides before adding it.</p>
-        {/if}
+        {#key activeCategory}
+          <div class="search-results" in:surface={{ duration: 160, distance: 4 }}>
+            {#if activeCategory === "all" && !query.trim() && recentQueries.length}
+              <section class="category recent-searches" aria-label="Recent searches">
+                <h3>Recent searches <button onclick={() => { recentQueries = []; saveRecentQueries(); }}>Clear history</button></h3>
+                <div>{#each recentQueries as term (term)}<button onclick={() => useQuery(term)}>{term}</button>{/each}</div>
+                <p class="empty">Stored on this device. Choose a search to run it again.</p>
+              </section>
+            {/if}
+            {#if historyStatus}<p class="empty" role="status">{historyStatus}</p>{/if}
+            {#if activeCategory === "all" && !query.trim() && libraryResults.length === 0 && scriptureResults.length === 0 && mediaResults.length === 0 && !loading}
+              <p class="empty-hint">Search songs, Scripture, and media. Choose Songs, Scripture, or Media to search just that source.</p>
+            {/if}
 
         {#if loading}
           <p class="loading-hint" role="status"><span class="mini-spinner" aria-hidden="true"></span> Searching…</p>
         {/if}
 
+        {#if activeCategory === "all" || activeCategory === "songs"}
         <!-- Songs / Library -->
         <section class="category">
           <h3>Songs — Library <span class="count">{libraryResults.length}</span></h3>
@@ -434,7 +505,9 @@
             </ul>
           {/if}
         </section>
+        {/if}
 
+        {#if activeCategory === "all" || activeCategory === "scripture"}
         <!-- Scripture / Bibles -->
         <section class="category">
           <h3>Scripture — {scriptureTranslation} <span class="count">{scriptureResults.length}</span></h3>
@@ -460,7 +533,9 @@
             </ul>
           {/if}
         </section>
+        {/if}
 
+        {#if activeCategory === "all" || activeCategory === "media"}
         <!-- Media cache -->
         <section class="category">
           <h3>Media — Cache <span class="count">{mediaResults.length}</span></h3>
@@ -493,6 +568,9 @@
             </ul>
           {/if}
         </section>
+        {/if}
+          </div>
+        {/key}
       </div>
 
       <footer class="palette-foot">
@@ -601,9 +679,27 @@
     flex: 1;
     overflow: auto;
     padding: 14px;
+    min-height: 0;
+  }
+  .search-results {
     display: flex;
     flex-direction: column;
     gap: 18px;
+    min-height: 100%;
+  }
+  @media (max-width: 560px) {
+    .overlay { align-items: flex-start; padding: max(8px, env(safe-area-inset-top)) 8px 8px; }
+    .palette { width: 100%; max-height: calc(100dvh - 16px); }
+    .palette-head { gap: 7px; padding: 9px; }
+    .search-row { gap: 7px; padding: 8px; }
+    .hint { display: none; }
+    .search-scopes { padding: 7px 9px; }
+    .palette-body { padding: 10px; }
+    .search-results { gap: 14px; }
+    .palette-foot { flex-wrap: wrap; gap: 6px 12px; padding: 8px 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .search-scopes button { transition: none; }
   }
   .empty-hint, .loading-hint, .empty {
     color: var(--text-dim);
@@ -622,6 +718,9 @@
     margin-right: 6px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .mini-spinner { animation: none; border-color: var(--accent); }
+  }
   .category h3 {
     margin: 0 0 8px;
     font-size: 11px;
@@ -665,6 +764,13 @@
   .online-note { margin: -3px 0 8px; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
   .online-action { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--accent); font-size: 10px; font-weight: 700; white-space: nowrap; }
   @media (max-width: 560px) { .online-result { padding-right: 10px; } .online-action { position: static; transform: none; margin-top: 4px; } }
+  .search-scopes { display: flex; gap: 6px; min-width: 0; overflow-x: auto; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--panel); scrollbar-width: thin; }
+  .search-scopes button { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); background: var(--panel-2); font: inherit; font-size: 11px; cursor: pointer; transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .search-scopes button:hover { border-color: var(--accent); color: var(--text); }
+  .search-scopes button.active { border-color: color-mix(in srgb, var(--accent) 65%, var(--border)); color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+  .search-scopes button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .scope-count { min-width: 15px; padding: 1px 4px; border-radius: 999px; color: var(--text-dim); background: var(--panel); text-align: center; font-size: 9px; font-variant-numeric: tabular-nums; }
+  .search-scopes button.active .scope-count { color: var(--accent); }
   .result:disabled { opacity: 0.6; }
   .result-title { font-size: 13px; font-weight: 600; color: var(--text); }
   .result-meta, .result-preview {

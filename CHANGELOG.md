@@ -14,7 +14,11 @@ User-facing features and fixes are also available in **Settings → What’s New
 
 - Audio playback position refreshes once per second instead of twice and pauses while the app window is hidden, reducing background IPC and UI work while keeping the visible position current to the second.
 - Media-library thumbnails load as they approach the viewport. The media list uses cached still images and does not start a video decoder for its preview cards.
+- The Songs, Scripture, and Media shelf remembers its last tab and whether it was open. Media loads on launch only when the shelf was left open on Media; the preference stays on this device.
+- Switching source tabs fades in briefly, respects reduced-motion preferences, and keeps the existing responsive shelf resize animation.
 - The reduction in background work was implemented to lower the chance of unnecessary device heating; device temperature and power draw were not measured.
+
+The first-run guide, Help, the interactive Media tutorial, and Settings → What’s New describe the remembered shelf state.
 
 ## 2026-10-14 — Smoother settings, service prep, and Scripture browsing
 

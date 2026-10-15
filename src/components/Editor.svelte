@@ -52,7 +52,31 @@ import {
   const SCRIPTURE_READER_LAYOUT_KEY = "makrstudio.scripture-reader-layout.v1";
   const RECENT_SONGS_KEY = "makrstudio.songs.recent.v1";
   const RECENT_MEDIA_KEY = "makrstudio.media.recent.v1";
+  const CONTENT_SHELF_KEY = "makrstudio.content-shelf.v1";
+  type SourceTab = "songs" | "scripture" | "media";
+
+  interface ContentShelfPreference {
+    tab: SourceTab;
+    open: boolean;
+  }
+
+  function readContentShelfPreference(): ContentShelfPreference {
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(CONTENT_SHELF_KEY) ?? "null");
+      if (!saved || typeof saved !== "object" || Array.isArray(saved)) return { tab: "songs", open: false };
+      const value = saved as Partial<ContentShelfPreference>;
+      return {
+        tab: value.tab === "scripture" || value.tab === "media" ? value.tab : "songs",
+        open: value.open === true,
+      };
+    } catch {
+      return { tab: "songs", open: false };
+    }
+  }
+
   type ScriptureReaderLayout = "auto" | "single" | "split";
+
+  const savedContentShelf = readContentShelfPreference();
 
   function readRecentSongIds(): string[] {
     try {
@@ -274,9 +298,8 @@ import {
     return expandedSongs.has(song.id) || librarySearch.trim().length > 0;
   }
   // Content sources share one bottom bar; the running Playlist stays on the left.
-  type SourceTab = "songs" | "scripture" | "media";
-  let sourceTab = $state<SourceTab>("songs");
-  let sourceOpen = $state(false);
+  let sourceTab = $state<SourceTab>(savedContentShelf.tab);
+  let sourceOpen = $state(savedContentShelf.open);
   let mediaQuery = $state("");
   let mediaResults = $state<MediaAsset[]>([]);
   let recentMediaHashes = $state<string[]>(readRecentMediaHashes());
@@ -297,6 +320,14 @@ import {
   let mediaThumbFailures = $state<Set<string>>(new Set());
   let mediaSearchTimer: ReturnType<typeof setTimeout> | null = null;
   let mediaSearchSeq = 0;
+
+  $effect(() => {
+    try {
+      window.localStorage.setItem(CONTENT_SHELF_KEY, JSON.stringify({ tab: sourceTab, open: sourceOpen }));
+    } catch {
+      // The shelf still works for this session if local storage is unavailable.
+    }
+  });
   type BackgroundApplyScope = "item" | "songs" | "scripture" | "all";
   let backgroundPopoverOpen = $state(false);
   let backgroundApplyScope = $state<BackgroundApplyScope>("item");
@@ -3061,6 +3092,7 @@ import {
     let workspaceExtrasStarted = false;
     workspaceRetry = () => { void loadWorkspaceState(); };
     void loadWorkspaceState();
+    if (sourceOpen && sourceTab === "media") void loadMedia();
 
     const nextHour = new Date();
     nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
@@ -4332,7 +4364,7 @@ import {
     {#if sourceOpen}
       <div class="source-panel" role="region" aria-label={`${sourceTab} content`}>
         {#if sourceTab === "songs"}
-          <div class="source-pane songs-pane">
+          <div class="source-pane songs-pane" in:fade={{ duration: prefersReducedMotion() ? 0 : 150 }}>
             <div
               class="sidebar-section library-section"
               role="region"
@@ -4518,7 +4550,7 @@ import {
             </div>
           </div>
         {:else if sourceTab === "scripture"}
-          <div class="source-pane scripture-pane" class:browsing={!browseCollapsed}>
+          <div class="source-pane scripture-pane" class:browsing={!browseCollapsed} in:fade={{ duration: prefersReducedMotion() ? 0 : 150 }}>
             <div class="scripture-tools">
               <div class="sidebar-section scripture-section" class:has-content={scriptureOpen || scriptureQuery.trim().length > 0} class:active={scriptureOpen}>
                 <div class="section-title scripture-title">Add Scripture</div>
@@ -4894,7 +4926,7 @@ import {
             {/if}
           </div>
         {:else}
-          <div class="source-pane media-pane">
+          <div class="source-pane media-pane" in:fade={{ duration: prefersReducedMotion() ? 0 : 150 }}>
             <div class="media-bar-head">
               <div><strong>Imported media</strong><span>Click to add a slide, or drag a card into the Playlist.</span></div>
               <input type="search" value={mediaQuery} oninput={onMediaQueryInput} placeholder="Search imported media" aria-label="Search imported media" />

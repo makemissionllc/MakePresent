@@ -3,6 +3,7 @@
 ## Changed (2026-10-15) — Faster content reuse and lighter background work
 
 - Songs and Media keep up to five recently used items ready for one-click reuse in the current View. Successful additions update each local list; Clear removes the shortcuts. The first-run guide, Help, interactive tutorial, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) describe them.
+- The Songs, Scripture, and Media shelf remembers its last tab and whether it was open. Media loads on launch only if the shelf was left open on Media; tab changes animate briefly and respect reduced-motion settings.
 - Media thumbnails load as they approach the viewport. Audio position refreshes once per second while its Settings tab is visible and pauses with the app window hidden, reducing unnecessary background work. Device temperature was not measured.
 - All prior release details remain in [CHANGELOG.md](CHANGELOG.md).
 

@@ -74,6 +74,7 @@
       <div class="section-title">Backgrounds</div>
       <p class="muted">Pick a Look for Songs, Scripture and Text in Looks, or choose one for a single item from the item menu.</p>
       <p class="muted">The Media tab keeps your five most recently used visuals ready to add to another View. Clear removes this on-device shortcut list. Media thumbnails load as you scroll so a large library does less work at once.</p>
+      <p class="muted">The content shelf remembers the last tab you used and whether it was open, so Songs, Scripture, or Media is ready where you left it next time. This preference stays on this device.</p>
       <p class="muted">
         Inheriting text slides use the playlist item's background, then the default Look for their kind. A slide with its own custom background keeps it. Open Background in the slide grid to choose a color or imported media for an item.
       </p>

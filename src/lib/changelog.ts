@@ -20,6 +20,7 @@ export const CHANGELOG: ChangeLogRelease[] = [
       { kind: "Improved", text: "The interactive Songs tutorial explains recent-song shortcuts, while the interactive Media tutorial covers recent visuals and the responsive quick-add row. Settings → What’s New keeps this release with the rest of the app’s user-facing changes." },
       { kind: "Improved", text: "Audio playback position refreshes once per second instead of twice, and pauses while the app window is hidden. This reduces background IPC and UI work while keeping the displayed track position current to the second; device temperature was not measured." },
       { kind: "Improved", text: "Media-library thumbnails load as they approach the viewport instead of all at once, keeping large libraries lighter to browse. The still thumbnails avoid starting video decoders; device temperature was not measured." },
+      { kind: "Improved", text: "The Songs, Scripture, and Media shelf remembers its last tab and whether it was open, so you can return to the same workspace. Media loads on launch only when the shelf was left open on Media. The preference stays on this device." },
     ],
   },
   {

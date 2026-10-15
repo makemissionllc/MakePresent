@@ -13,9 +13,10 @@
     library: Library | null;
     onClose: () => void;
     onImportLyrics: (hit: LyricsHit) => void;
+    onSongUsed?: (songId: string) => void;
   }
 
-  let { open, library, onClose, onImportLyrics }: Props = $props();
+  let { open, library, onClose, onImportLyrics, onSongUsed = () => {} }: Props = $props();
 
   let query = $state("");
   const HISTORY_KEY = "makrstudio.search.recent.v1";
@@ -248,6 +249,7 @@
     inserting = `song-${songId}`;
     try {
       await api.addSongToPlaylist(songId);
+      onSongUsed(songId);
       rememberQuery(term);
       if (open && session === paletteGeneration && query === term) onClose();
     } catch (e) {

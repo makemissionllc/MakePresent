@@ -57,7 +57,7 @@
       {:else if step === 1}
         <p class="intro">A View is your service workspace. Its playlist holds everything in the order you’ll present it.</p>
         <ol class="guide">
-          <li><span class="guide-icon">1</span><div><strong>Build your playlist</strong><p>Choose a starting playlist or begin blank. Add songs, verses, and media, then drag to reorder.</p></div></li>
+          <li><span class="guide-icon">1</span><div><strong>Build your playlist</strong><p>Choose a starting playlist or begin blank. Add songs, verses, and media, then drag to reorder. Recently used songs stay ready for your next service.</p></div></li>
           <li><span class="guide-icon">2</span><div><strong>Give it a Look</strong><p>Use Looks to set fonts, backgrounds, and layouts for your Output and Stage Display.</p></div></li>
           <li><span class="guide-icon">3</span><div><strong>Keep your place</strong><p>Your current View saves automatically. Save a reusable playlist before creating your next View.</p></div></li>
           <li><span class="guide-icon">4</span><div><strong>Read and return</strong><p>Find a Bible book by name, open Read book for comfortable text, and choose Auto, One, or Two columns to fit your panel. Mark read &amp; next saves a chapter and takes you onward. Your layout, text size, and progress stay on this device.</p></div></li>

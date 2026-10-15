@@ -50,7 +50,18 @@ import {
   const SCRIPTURE_READING_PROGRESS_KEY = "makrstudio.scripture-reading-progress.v1";
   const SCRIPTURE_READER_SIZE_KEY = "makrstudio.scripture-reader-size.v1";
   const SCRIPTURE_READER_LAYOUT_KEY = "makrstudio.scripture-reader-layout.v1";
+  const RECENT_SONGS_KEY = "makrstudio.songs.recent.v1";
   type ScriptureReaderLayout = "auto" | "single" | "split";
+
+  function readRecentSongIds(): string[] {
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(RECENT_SONGS_KEY) ?? "[]");
+      if (!Array.isArray(saved)) return [];
+      return [...new Set(saved.filter((id): id is string => typeof id === "string" && id.trim().length > 0))].slice(0, 5);
+    } catch {
+      return [];
+    }
+  }
 
   interface ScriptureReadingPosition {
     bibleId: string;
@@ -239,6 +250,7 @@ import {
   let noticeDismissed = $state(false);
   let library = $state<Library | null>(null);
   let librarySearch = $state("");
+  let recentSongIds = $state<string[]>(readRecentSongIds());
   // Per-song verse expansion — verses collapse to a chevron toggle so a big
   // library reads as compact song rows. Searching auto-expands every match
   // (discovery), clearing the search restores the manual toggle state.
@@ -804,6 +816,21 @@ import {
       song.title.toLowerCase().includes(librarySearch.trim().toLowerCase()),
     ),
   );
+  const recentSongs = $derived.by(() => recentSongIds.flatMap((id) => {
+    const song = library?.songs.find((item) => item.id === id);
+    return song ? [song] : [];
+  }));
+
+  function rememberRecentlyUsedSong(songId: string): void {
+    if (!library?.songs.some((song) => song.id === songId)) return;
+    recentSongIds = [songId, ...recentSongIds.filter((id) => id !== songId)].slice(0, 5);
+    try { window.localStorage.setItem(RECENT_SONGS_KEY, JSON.stringify(recentSongIds)); } catch { /* recents remain available for this session */ }
+  }
+
+  function clearRecentlyUsedSongs(): void {
+    recentSongIds = [];
+    try { window.localStorage.removeItem(RECENT_SONGS_KEY); } catch { /* clear the in-session list even if storage is unavailable */ }
+  }
 
   // Output preview (reuses SlideRender at small size, no new backend) — near "Live on display" status
   const outputPreviewSlide = $derived.by(() => {
@@ -2000,7 +2027,11 @@ import {
           const beforeLen = project.slides.length;
           const s = await api.addSongToPlaylist(payload.songId);
           appState = s;
-          if (s.project.slides.length > beforeLen) { const id=s.project.slides.at(-1)?.itemId; if (id) appState=await api.reorderItem(id,targetItemIdx); }
+          if (s.project.slides.length > beforeLen) {
+            rememberRecentlyUsedSong(payload.songId);
+            const id=s.project.slides.at(-1)?.itemId;
+            if (id) appState=await api.reorderItem(id,targetItemIdx);
+          }
         } catch (err: unknown) { errorMsg = String(err); }
       })();
     } else if (payload.type === "library-verse" && payload.songId && payload.slideId) {
@@ -2567,7 +2598,7 @@ import {
     use("songs");
     void api
       .addSongToPlaylist(song.id)
-      .then((s) => (appState = s))
+      .then((s) => { appState = s; rememberRecentlyUsedSong(song.id); })
       .catch((e: unknown) => (errorMsg = String(e)));
   }
 
@@ -4287,6 +4318,23 @@ import {
                 if ((e.dataTransfer?.files?.length ?? 0) > 0) void handleLibraryFiles(e.dataTransfer!.files);
               }}
             >
+              {#if recentSongs.length > 0 && !librarySearch.trim()}
+                <section class="recent-songs" aria-label="Recently used songs" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 150, easing: cubicOut, axis: "y" }}>
+                  <div class="recent-songs-heading">
+                    <div><strong>Recently used</strong><span>Quick add to this View</span></div>
+                    <button class="ghost" onclick={clearRecentlyUsedSongs}>Clear</button>
+                  </div>
+                  <div class="recent-song-list">
+                    {#each recentSongs as song (song.id)}
+                      <button class="recent-song" title={`Add ${song.title || "Untitled song"} to this playlist`} onclick={() => addToPlaylist(song)}>
+                        <span class="recent-song-icon" aria-hidden="true">♫</span>
+                        <span class="recent-song-name">{song.title || "Untitled song"}</span>
+                        <span class="recent-song-add" aria-hidden="true">+ Add</span>
+                      </button>
+                    {/each}
+                  </div>
+                </section>
+              {/if}
               <div class="section-title library-title">Library</div>
               <input
                 type="text"
@@ -4914,7 +4962,7 @@ import {
   onCancel={() => (showSavePlaylistModal = false)}
 />
 
-<GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} onImportLyrics={importLyricsFromSearch} />
+<GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} onImportLyrics={importLyricsFromSearch} onSongUsed={rememberRecentlyUsedSong} />
 
 {#if serviceCheckOpen}
   <ServiceCheck
@@ -7772,6 +7820,18 @@ import {
     gap: var(--space-2);
     overflow: hidden;
   }
+  .recent-songs { display: grid; gap: 7px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border)); border-radius: 10px; background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 8%, var(--panel)), var(--panel)); }
+  .recent-songs-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .recent-songs-heading > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+  .recent-songs-heading strong { font-size: 11px; }
+  .recent-songs-heading span { color: var(--text-dim); font-size: 10px; }
+  .recent-songs-heading button { flex: none; padding: 3px 7px; color: var(--text-dim); font-size: 10px; }
+  .recent-song-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 72px; overflow-y: auto; }
+  .recent-song { display: inline-flex; align-items: center; gap: 7px; min-width: min(180px, 100%); max-width: 260px; min-height: 32px; padding: 5px 8px; border-color: var(--border); background: color-mix(in srgb, var(--panel-2) 84%, transparent); text-align: left; }
+  .recent-song:hover { border-color: var(--accent); background: var(--panel-2); }
+  .recent-song-icon { flex: none; color: var(--accent); }
+  .recent-song-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  .recent-song-add { flex: none; margin-left: auto; color: var(--accent); font-size: 10px; font-weight: 700; }
   .songs-pane .song-list {
     flex: 1 1 auto;
     min-height: 80px;

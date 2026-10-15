@@ -1,6 +1,6 @@
 <script lang="ts">
   import { surface, veil } from "../lib/motion";
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import {
     api,
@@ -62,12 +62,20 @@
   let { app: appState, onclose, onBrowseMedia = () => {}, onOpenSearch, onUpdate = () => {}, initialTab = null, onTutorial, tourInProgress = false }: Props = $props();
 
   let tab = $state<SettingsTab>(readLastSettingsTab());
+  let documentVisible = $state(true);
   $effect(() => { if (initialTab) tab = initialTab; });
   let status = $state<{ kind: "ok" | "err"; text: string } | null>(null);
   let logs = $state<LogEntry[]>([]);
   let logFilter = $state("");
   let logsMsg = $state<string | null>(null);
   let lookErr = $state<string | null>(null);
+
+  onMount(() => {
+    const refreshVisibility = () => { documentVisible = !document.hidden; };
+    refreshVisibility();
+    document.addEventListener("visibilitychange", refreshVisibility);
+    return () => document.removeEventListener("visibilitychange", refreshVisibility);
+  });
 
   const visibleLogs = $derived.by(() => {
     const query = logFilter.trim().toLowerCase();
@@ -800,8 +808,9 @@
     if (audio) audioView = audio;
   });
 
+  // Track position only needs second-level precision; stop IPC while hidden.
   $effect(() => {
-    if (tab !== "audio" || audioView.status !== "playing") return;
+    if (tab !== "audio" || audioView.status !== "playing" || !documentVisible) return;
     let cancelled = false;
     let polling = false;
     let failures = 0;
@@ -820,7 +829,7 @@
         failures++;
         if (failures >= 3) audioErr = "Could not refresh the track position. Pause and Play to reconnect.";
       }).finally(() => { polling = false; });
-    }, 500);
+    }, 1000);
     return () => {
       cancelled = true;
       window.clearInterval(poll);

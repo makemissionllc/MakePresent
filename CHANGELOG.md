@@ -2,6 +2,18 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
+## 2026-10-15 — Quicker song reuse, lighter audio status updates
+
+### Added
+
+- Songs keeps the five most recently added library songs at the top of the source panel. Click a song to add it to the current View without searching, or Clear the local shortcut list. Successful adds from the library, drag and drop, and global search all update the recent list.
+- First-run onboarding, Help, the interactive Songs tutorial, and Settings → What’s New explain the new shortcut.
+
+### Improved
+
+- Audio playback position refreshes once per second instead of twice and pauses while the app window is hidden, reducing background IPC and UI work while keeping the visible position current to the second.
+- The reduction in background work was implemented to lower the chance of unnecessary device heating; device temperature and power draw were not measured.
+
 ## 2026-10-14 — Smoother settings, service prep, and Scripture browsing
 
 ### Added

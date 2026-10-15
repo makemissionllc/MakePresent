@@ -12,6 +12,15 @@ export interface ChangeLogRelease {
 /** User-facing release notes shared by the Settings page and project changelog. */
 export const CHANGELOG: ChangeLogRelease[] = [
   {
+    date: "October 15, 2026",
+    title: "Quicker song reuse, lighter audio status updates",
+    items: [
+      { kind: "New", text: "Songs now keeps your five most recently added library songs at the top of the source panel. Click one to add it to the current View without searching; Clear removes the local shortcut list. Successful adds from the library, drag and drop, and global search all update it." },
+      { kind: "Improved", text: "The interactive Songs tutorial, Help, and first-run onboarding explain the recent-song shortcuts. Settings → What’s New keeps this release with the rest of the app’s user-facing changes." },
+      { kind: "Improved", text: "Audio playback position refreshes once per second instead of twice, and pauses while the app window is hidden. This reduces background IPC and UI work while keeping the displayed track position current to the second; device temperature was not measured." },
+    ],
+  },
+  {
     date: "October 14, 2026",
     title: "Smoother settings, service prep, and Scripture browsing",
     items: [

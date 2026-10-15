@@ -1,5 +1,11 @@
 # MakrStudio (formerly MakePresent)
 
+## Changed (2026-10-15) — Faster song reuse and lighter audio updates
+
+- Songs keeps up to five recently used library songs ready for one-click reuse in the current View. Successful library, drag-and-drop, and global-search additions update the local list; Clear removes the shortcuts. The first-run guide, Help, interactive tutorial, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) describe the feature.
+- Audio position refreshes once per second while its Settings tab is visible and pauses with the app window hidden, reducing unnecessary background work. Device temperature was not measured.
+- All prior release details remain in [CHANGELOG.md](CHANGELOG.md).
+
 ## Changed (2026-10-14) — Smoother settings, service prep, and Scripture flow
 
 - Service check brings playlist, audience-display, and Output readiness into one top-bar shortcut. Each action opens the relevant controls; Stage is optional, and the checklist never puts a slide live.

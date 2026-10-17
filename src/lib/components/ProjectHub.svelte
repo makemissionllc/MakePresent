@@ -181,12 +181,26 @@
   let theme = $state(initialViewPreferences.theme ?? "Dark");
   let transition = $state(initialViewPreferences.transition ?? "cut");
   let creating = $state(false);
+  let hubElement = $state<HTMLDivElement | null>(null);
+  let previouslyFocused: HTMLElement | null = null;
+  let focusManaged = false;
   let lastSelectedId: string | null = null;
   let lastAutoTitle = "";
   let wasOpen = false;
 
   // Auto-name for a new selection, but preserve a title the operator has edited.
   $effect(() => {
+    if (open && hubElement && !focusManaged) {
+      previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      focusManaged = true;
+      hubElement.focus();
+    } else if (!open && focusManaged) {
+      focusManaged = false;
+      const target = previouslyFocused;
+      previouslyFocused = null;
+      if (target?.isConnected) requestAnimationFrame(() => target.focus());
+    }
+
     if (!open) {
       wasOpen = false;
       return;
@@ -259,13 +273,39 @@
   }
 
   function onKey(e: KeyboardEvent): void {
-    if (e.key === "Escape" && !creating) onClose();
+    if (e.key === "Escape" && !creating) {
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    if (e.key !== "Tab") return;
+
+    const focusable = Array.from(hubElement?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter((element) => element.getClientRects().length > 0);
+    if (focusable.length === 0) {
+      e.preventDefault();
+      hubElement?.focus();
+      return;
+    }
+
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === hubElement || !hubElement?.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !hubElement?.contains(active))) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 </script>
 
 {#if open}
   <div class="hub-overlay" role="presentation" transition:veil={{ duration: 200 }} onkeydown={onKey}>
-    <div class="hub" role="dialog" aria-modal="true" aria-busy={creating} aria-label="View Hub" tabindex="-1" in:surface={{ duration: 300, distance: 16 }}>
+    <div bind:this={hubElement} class="hub" role="dialog" aria-modal="true" aria-busy={creating} aria-label="View Hub" tabindex="-1" in:surface={{ duration: 300, distance: 16 }}>
       <header class="hub-head">
         <div class="brand">
           <BrandLockup />
@@ -353,7 +393,7 @@
             {#if gallery.length > 0 && visibleGallery.length === 0}
               <div class="empty-search">
                 <p class="muted">{favoritesOnly && favoriteCount === 0 ? "No favorites yet. Star a starting playlist to keep it here." : favoritesOnly ? "No favorite starting playlists match that search." : `No starting playlists match “${galleryQuery.trim()}”.`}</p>
-                {#if favoritesOnly}<button class="show-all" onclick={() => { favoritesOnly = false; galleryQuery = ""; }}>Show all starting playlists</button>{/if}
+                {#if favoritesOnly}<button class="show-all" onclick={() => { favoritesOnly = false; galleryQuery = ""; }} disabled={creating}>Show all starting playlists</button>{/if}
               </div>
             {:else if gallery.length === 0}
               <p class="muted">Loading starting playlists…</p>

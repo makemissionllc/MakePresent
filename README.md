@@ -1,5 +1,10 @@
 # MakrStudio (formerly MakePresent)
 
+## Changed (2026-10-17) — A quicker return to regular services
+
+- Star regular starting playlists in View Hub to pin them near the top; use Favorites to focus on those choices and search by name to find another. Favorites stay on this device.
+- The interactive View Hub tutorial, first-run guide, Help, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) explain the new shortcut. Local filtering adds no background polling; device temperature was not measured.
+
 ## Changed (2026-10-15) — Faster content reuse and lighter background work
 
 - Songs and Media keep up to five recently used items ready for one-click reuse in the current View. Successful additions update each local list; Clear removes the shortcuts. The first-run guide, Help, interactive tutorial, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) describe them.

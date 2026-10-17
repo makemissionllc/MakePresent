@@ -19,6 +19,7 @@
   let { open, onClose, onCreate, onCreateFromPlaylist, onDeletePlaylist, playlists = [], presets = [], recentName = "", tutorialHighlightContinue = false, startingPointsReady = false }: Props = $props();
 
   const LAST_STARTING_POINT_KEY = "makrstudio.view-hub.last-starting-point.v1";
+  const FAVORITE_STARTING_POINTS_KEY = "makrstudio.view-hub.favorite-starting-points.v1";
 
   function readLastStartingPoint(): string | null {
     try {
@@ -26,6 +27,16 @@
       return saved && saved.trim().length > 0 && saved.length <= 200 ? saved : null;
     } catch {
       return null;
+    }
+  }
+
+  function readFavoriteStartingPoints(): string[] {
+    try {
+      const saved: unknown = JSON.parse(window.localStorage.getItem(FAVORITE_STARTING_POINTS_KEY) ?? "[]");
+      if (!Array.isArray(saved)) return [];
+      return [...new Set(saved.filter((id): id is string => typeof id === "string" && id.trim().length > 0 && id.length <= 200))];
+    } catch {
+      return [];
     }
   }
 
@@ -133,11 +144,32 @@
 
   const hasSaved = $derived(playlists.length > 0);
   let galleryQuery = $state("");
+  let favoritesOnly = $state(false);
+  let favoriteStartingPointIds = $state(readFavoriteStartingPoints());
+  const favoriteStartingPointSet = $derived(new Set(favoriteStartingPointIds));
+  const favoriteCount = $derived(gallery.filter((item) => favoriteStartingPointSet.has(item.id)).length);
   const visibleGallery = $derived.by(() => {
     const query = galleryQuery.trim().toLocaleLowerCase();
-    if (!query) return gallery;
-    return gallery.filter((item) => `${item.name} ${item.category} ${item.description}`.toLocaleLowerCase().includes(query));
+    const ordered = [
+      ...gallery.filter((item) => favoriteStartingPointSet.has(item.id)),
+      ...gallery.filter((item) => !favoriteStartingPointSet.has(item.id)),
+    ];
+    return ordered.filter((item) => {
+      if (favoritesOnly && !favoriteStartingPointSet.has(item.id)) return false;
+      return !query || `${item.name} ${item.category} ${item.description}`.toLocaleLowerCase().includes(query);
+    });
   });
+
+  function toggleFavoriteStartingPoint(id: string): void {
+    favoriteStartingPointIds = favoriteStartingPointSet.has(id)
+      ? favoriteStartingPointIds.filter((favoriteId) => favoriteId !== id)
+      : [...favoriteStartingPointIds, id];
+    try {
+      window.localStorage.setItem(FAVORITE_STARTING_POINTS_KEY, JSON.stringify(favoriteStartingPointIds));
+    } catch {
+      // Keep favorites for this session if local storage is unavailable.
+    }
+  }
 
   const initialStartingPointId = readLastStartingPoint();
   let lastStartingPointId = $state(initialStartingPointId);
@@ -200,6 +232,7 @@
   }
 
   function deletePlaylist(id: string): void {
+    if (favoriteStartingPointSet.has(id)) toggleFavoriteStartingPoint(id);
     if (lastStartingPointId === id) {
       const replacement = gallery.find((item) => item.id !== id);
       lastStartingPointId = replacement?.id ?? null;
@@ -245,15 +278,22 @@
           {#if hasSaved}
             <p class="gallery-note">Built-in starting points below; your saved Playlists appear at the top of the list.</p>
           {/if}
-          {#if gallery.length > 5}
-            <label class="gallery-search">
-              <span class="sr-only">Filter starting playlists</span>
-              <input type="search" bind:value={galleryQuery} placeholder="Find a starting playlist" autocomplete="off" />
-              {#if galleryQuery.trim()}<span class="search-count" aria-live="polite">{visibleGallery.length} of {gallery.length}</span>{/if}
-            </label>
+          {#if gallery.length > 5 || favoriteCount > 0}
+            <div class="gallery-tools">
+              {#if gallery.length > 5}
+                <label class="gallery-search">
+                  <span class="sr-only">Filter starting playlists</span>
+                  <input type="search" bind:value={galleryQuery} placeholder="Find a starting playlist" autocomplete="off" />
+                  {#if galleryQuery.trim()}<span class="search-count" aria-live="polite">{visibleGallery.length} of {gallery.length}</span>{/if}
+                </label>
+              {/if}
+              <button class="favorites-filter" class:active={favoritesOnly} aria-pressed={favoritesOnly} onclick={() => favoritesOnly = !favoritesOnly}>
+                <span aria-hidden="true">★</span> Favorites <span class="favorite-count">{favoriteCount}</span>
+              </button>
+            </div>
           {/if}
           <div class="grid">
-            {#each visibleGallery as item}
+            {#each visibleGallery as item (item.kind + ":" + item.id)}
               <div class="card-wrap">
                 <button
                   class="card"
@@ -278,6 +318,14 @@
                   <span class="card-desc">{item.description}</span>
                   <span class="card-meta">{item.slideCount} slides · {item.defaultAspect}</span>
                 </button>
+                <button
+                  class="favorite-starting-point"
+                  class:favorited={favoriteStartingPointSet.has(item.id)}
+                  aria-label={favoriteStartingPointSet.has(item.id) ? `Remove ${item.name} from favorites` : `Add ${item.name} to favorites`}
+                  aria-pressed={favoriteStartingPointSet.has(item.id)}
+                  title={favoriteStartingPointSet.has(item.id) ? "Remove from favorites" : "Add to favorites"}
+                  onclick={() => toggleFavoriteStartingPoint(item.id)}
+                ><span aria-hidden="true">{favoriteStartingPointSet.has(item.id) ? "★" : "☆"}</span></button>
                 {#if item.kind === "playlist" && item.playlistId}
                   <button
                     class="delete-saved"
@@ -289,7 +337,10 @@
               </div>
             {/each}
             {#if gallery.length > 0 && visibleGallery.length === 0}
-              <p class="muted empty-search">No starting playlists match “{galleryQuery.trim()}”.</p>
+              <div class="empty-search">
+                <p class="muted">{favoritesOnly && favoriteCount === 0 ? "No favorites yet. Star a starting playlist to keep it here." : favoritesOnly ? "No favorite starting playlists match that search." : `No starting playlists match “${galleryQuery.trim()}”.`}</p>
+                {#if favoritesOnly}<button class="show-all" onclick={() => { favoritesOnly = false; galleryQuery = ""; }}>Show all starting playlists</button>{/if}
+              </div>
             {:else if gallery.length === 0}
               <p class="muted">Loading starting playlists…</p>
             {/if}
@@ -378,11 +429,17 @@
   .gallery-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px;}
   .gallery-head h2{margin:0; font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-dim);}
   .gallery-note{font-size:11px; color:var(--text-dim); margin:-4px 0 10px;}
-  .gallery-search{display:flex; align-items:center; gap:10px; margin:0 0 10px;}
+  .gallery-tools{display:flex; align-items:center; gap:8px; margin:0 0 10px; flex-wrap:wrap;}
+  .gallery-search{display:flex; align-items:center; gap:10px; flex:1 1 220px; min-width:0; margin:0;}
   .gallery-search input{flex:1; min-width:0; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); font-size:12px;}
   .gallery-search input:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
   .search-count{flex:none; color:var(--text-dim); font-size:10px; font-variant-numeric:tabular-nums;}
-  .empty-search{grid-column:1/-1; margin:10px 0;}
+  .favorites-filter{display:flex; align-items:center; justify-content:center; gap:5px; min-height:34px; padding:6px 10px; border-radius:8px; color:var(--text-dim); font-size:11px; white-space:nowrap;}
+  .favorites-filter:hover,.favorites-filter.active{border-color:color-mix(in srgb,var(--accent) 55%,var(--border)); color:var(--text); background:color-mix(in srgb,var(--accent) 10%,var(--panel));}
+  .favorites-filter>span:first-child{color:var(--accent);}
+  .favorite-count{min-width:16px; padding:1px 5px; border-radius:999px; background:var(--panel); color:var(--text-dim); font-size:10px; font-variant-numeric:tabular-nums;}
+  .empty-search{grid-column:1/-1; display:grid; justify-items:start; gap:6px; margin:10px 0;}
+  .show-all{padding:5px 8px; color:var(--accent); font-size:11px;}
   .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
   .recent-hint{font-size:11px; color:var(--text-dim);}
   .grid{display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px;}
@@ -391,7 +448,7 @@
   .card{position:relative; width:100%; text-align:left; padding:14px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color var(--motion-normal) var(--ease-out),border-color var(--motion-normal) var(--ease-out),box-shadow var(--motion-normal) var(--ease-out),transform var(--motion-fast) var(--ease-out);}
   .card:hover{border-color:#46514e; background:var(--panel); transform:translateY(-1px);}
   .card.selected{border-color:var(--accent); background:#202825; box-shadow:0 0 0 2px rgba(129,170,149,0.12);}
-  .card-badge{position:absolute; top:10px; right:10px; font-size:9px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:3px 7px; border-radius:999px; border:1px solid transparent; color:white;}
+  .card-badge{position:absolute; top:10px; right:42px; font-size:9px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:3px 7px; border-radius:999px; border:1px solid transparent; color:white;}
   .card-badge[data-category="Sunday Service"]{background: var(--color-green); border-color: var(--color-green);}
   .card-badge[data-category="Midweek"]{background: #1e3a4d; border-color: #234a5e; color: white;}
   .card-badge[data-category="Youth"]{background: var(--brand-orange-500); border-color: var(--brand-orange-500); color:white;}
@@ -402,6 +459,11 @@
   .last-starting-tag{align-self:flex-start; padding:3px 7px; border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:999px; background:color-mix(in srgb,var(--accent) 8%,var(--panel)); color:var(--accent); font-size:9px; font-weight:650; line-height:1.2;}
   .card-desc{font-size:11px; color:var(--text-dim); line-height:1.35; white-space:pre-line;}
   .card-meta{margin-top:auto; padding-right:28px; font-size:10px; color:var(--text-dim);}
+  .favorite-starting-point{position:absolute; top:8px; right:8px; z-index:2; display:grid; place-items:center; width:28px; height:28px; padding:0; border-radius:8px; background:var(--panel-2); color:var(--text-dim); font-size:16px; line-height:1; transition:color var(--motion-fast) var(--ease-out),border-color var(--motion-fast) var(--ease-out),background-color var(--motion-fast) var(--ease-out),transform var(--motion-fast) var(--ease-out);}
+  .favorite-starting-point:hover{border-color:var(--accent); color:var(--text); transform:scale(1.04);}
+  .favorite-starting-point.favorited{color:var(--accent); border-color:color-mix(in srgb,var(--accent) 45%,var(--border));}
+  .favorite-starting-point.favorited span{animation:favorite-pop 220ms var(--ease-out) both;}
+  @keyframes favorite-pop{50%{transform:scale(1.3)}}
   .delete-saved{position:absolute; right:8px; bottom:8px; z-index:2; width:24px; height:24px; padding:0; border-radius:6px; color:var(--text-dim);}
   .delete-saved:hover{border-color:var(--color-burgundy); background:var(--danger-bg); color:var(--danger-text);}
   .recent{display:flex; flex-direction:column; gap:9px; margin-top:16px; padding-top:12px; border-top:1px solid var(--border);}
@@ -444,7 +506,7 @@
     .gallery-head{align-items:flex-start; gap:8px; flex-direction:column;}
     .grid{grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;}
     .card{min-height:132px; padding:11px;}
-    .card-badge{top:8px; right:8px;}
+    .card-badge{top:8px; right:42px;}
     .inspector{padding:12px 14px; gap:10px;}
     .toggles{grid-template-columns:repeat(3,minmax(0,1fr));}
     .toggles button{padding:7px;}
@@ -455,5 +517,5 @@
     .card{min-height:112px;}
     .toggles{grid-template-columns:1fr 1fr;}
   }
-  @media (prefers-reduced-motion:reduce){.card{transition:none}.card:hover{transform:none}}
+  @media (prefers-reduced-motion:reduce){.card,.favorite-starting-point{transition:none}.card:hover,.favorite-starting-point:hover{transform:none}.favorite-starting-point.favorited span{animation:none}}
 </style>

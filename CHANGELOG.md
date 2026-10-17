@@ -2,6 +2,16 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
+## 2026-10-17 — A quicker return to regular services
+
+### Added
+
+- Star a starting playlist in View Hub to pin it near the top and use **Favorites** to focus on regular service setups. Favorites are saved on this device, work with name search, and are covered in onboarding, Help, and the interactive View Hub tutorial.
+
+### Improved
+
+- View Hub filters and reorders its existing playlist cards locally, with no background polling or extra content loads. The compact filter controls wrap on narrow layouts, the favorite toggle respects reduced-motion settings, and an empty state offers a one-click way back to all starting points. Device temperature was not measured.
+
 ## 2026-10-15 — Quicker content reuse, lighter background work
 
 ### Added

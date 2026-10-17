@@ -12,11 +12,18 @@ export interface ChangeLogRelease {
 /** User-facing release notes shared by the Settings page and project changelog. */
 export const CHANGELOG: ChangeLogRelease[] = [
   {
+    date: "October 17, 2026",
+    title: "A quicker return to regular services",
+    items: [
+      { kind: "New", text: "Star a starting playlist in View Hub to pin it near the top and use Favorites to focus on regular service setups. Favorites are saved on this device, work with name search, and are covered in onboarding, Help, and the interactive View Hub tutorial." },
+      { kind: "Improved", text: "The View Hub gallery filters and reorders its existing playlist cards locally, with no background polling or extra content loads. The compact filter controls wrap on narrow layouts, the favorite toggle has a reduced-motion-aware animation, and an empty state offers a one-click way back to all starting points. Device temperature was not measured." },
+    ],
+  },
+  {
     date: "October 15, 2026",
     title: "Quicker content reuse, lighter background work",
     items: [
       { kind: "New", text: "Songs now keeps your five most recently added library songs at the top of the source panel. Click one to add it to the current View without searching; Clear removes the local shortcut list. Successful adds from the library, drag and drop, and global search all update it." },
-      { kind: "New", text: "Song Editor remembers your Lines/slide count and global vertical and horizontal alignment on this device. Start the next song with the same readable layout, and change those choices any time." },
       { kind: "New", text: "Song Editor remembers your Lines/slide count and global vertical and horizontal alignment on this device. Start the next song with the same readable layout, and change those choices any time." },
       { kind: "New", text: "Media keeps the five most recently used visuals ready in a compact, horizontally scrollable row. Click one to add it to this playlist; Clear removes the on-device shortcuts. The row works at narrow widths and the Media tutorial, Help, and first-run onboarding explain it." },
       { kind: "New", text: "Star reusable media such as a logo or background to keep it near the top of the library. The Favorites filter shows only starred images and videos, and favorites stay on this device." },
@@ -39,7 +46,6 @@ export const CHANGELOG: ChangeLogRelease[] = [
       { kind: "Improved", text: "Media imports selected files one at a time, reports batch progress, and refreshes the library once at the end. Serial thumbnail conversion avoids overlapping media work; device temperature was not measured." },
       { kind: "Improved", text: "The Songs library renders its first 100 matching rows and appends more only when requested, reducing initial layout and paint work for large libraries. Device temperature was not measured." },
       { kind: "Improved", text: "Offscreen Song Editor arrangement cards defer layout and paint until they approach the viewport, keeping long lyric previews lighter to browse. The modal reflows into scrollable editing and preview panes on narrow windows; device temperature was not measured." },
-      { kind: "Improved", text: "Offscreen Song Editor arrangement cards defer layout and paint until they approach the viewport. This keeps a large lyric preview lighter to browse; device temperature was not measured." },
     ],
   },
   {

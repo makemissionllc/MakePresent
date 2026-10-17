@@ -684,6 +684,7 @@ import {
   let servicePresets = $state<ServicePreset[]>([]);
   let presetsReady = $state(false);
   let showSavePlaylistModal = $state(false);
+  let savedPlaylistName = $state("");
 
   // Global search (Ctrl/Cmd+K) — library + all Bibles + media cache
   let globalSearchOpen = $state(false);
@@ -3034,6 +3035,7 @@ import {
 
   // Save-as-Playlist (reuse existing save_template backend — the "save it for next service" loop)
   function openSavePlaylist(): void {
+    savedPlaylistName = "";
     showSavePlaylistModal = true;
   }
 
@@ -3044,6 +3046,7 @@ import {
       errorMsg = null;
       templates = await api.saveTemplate(trimmed);
       templatesLoaded = true;
+      savedPlaylistName = trimmed;
       showSavePlaylistModal = false;
     } catch (e) {
       errorMsg = String(e);
@@ -3691,6 +3694,14 @@ import {
         <div class="template-actions">
           <button class="ghost template-btn" onclick={() => openSavePlaylist()} title="Save this View's playlist as a reusable Playlist">Save as Playlist</button>
         </div>
+        {#if savedPlaylistName}
+          <div class="template-save-success" role="status" transition:fade={{ duration: prefersReducedMotion() ? 0 : 160 }}>
+            <span class="template-save-check" aria-hidden="true">✓</span>
+            <span class="template-save-copy"><strong>Saved for next service</strong><small>{savedPlaylistName}</small></span>
+            <button class="template-save-open" onclick={openHub}>Open Views <span aria-hidden="true">→</span></button>
+            <button class="template-save-dismiss" aria-label="Dismiss saved playlist message" title="Dismiss" onclick={() => savedPlaylistName = ""}>×</button>
+          </div>
+        {/if}
         <div
           class="external-drop-zone"
           role="region"
@@ -5270,9 +5281,9 @@ import {
 <Modal
   open={showSavePlaylistModal}
   title="Save as Playlist"
-  label="Playlist name — e.g. Pre-Service Loop, Worship, Sermon"
+  label="Playlist name — starts with this View's title; edit if needed"
   placeholder="e.g. Worship"
-  initialValue=""
+  initialValue={project?.name ?? ""}
   confirmLabel="Save"
   cancelLabel="Cancel"
   onConfirm={handleSavePlaylistConfirm}
@@ -7342,6 +7353,26 @@ import {
     font-size: 11px;
     padding: 6px 8px;
   }
+  .template-save-success {
+    display: grid;
+    grid-template-columns: 20px minmax(0, 1fr) auto 26px;
+    align-items: center;
+    gap: 7px;
+    margin-top: 8px;
+    padding: 8px;
+    border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  }
+  .template-save-check { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 16%, var(--panel)); color: var(--accent); font-size: 11px; font-weight: 800; }
+  .template-save-copy { display: grid; gap: 2px; min-width: 0; }
+  .template-save-copy strong { color: var(--text); font-size: 10px; }
+  .template-save-copy small { overflow: hidden; color: var(--text-dim); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+  .template-save-open { padding: 5px 7px; border-color: transparent; color: var(--accent); background: transparent; font-size: 10px; font-weight: 700; white-space: nowrap; }
+  .template-save-open:hover { border-color: var(--border); background: var(--panel); }
+  .template-save-dismiss { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; color: var(--text-dim); background: transparent; font-size: 16px; line-height: 1; }
+  .template-save-success button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-width: 420px) { .template-save-success { grid-template-columns: 20px minmax(0,1fr) 26px; } .template-save-open { grid-column: 2; justify-self: start; } .template-save-dismiss { grid-column: 3; grid-row: 1; } }
 
   .field-hint {
     font-size: 11px;

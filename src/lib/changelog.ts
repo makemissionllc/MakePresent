@@ -16,6 +16,7 @@ export const CHANGELOG: ChangeLogRelease[] = [
     title: "A quicker return to regular services",
     items: [
       { kind: "New", text: "Star a starting playlist in View Hub to pin it near the top and use Favorites to focus on regular service setups. Favorites are saved on this device, work with name search, and are covered in onboarding, Help, and the interactive View Hub tutorial." },
+      { kind: "New", text: "Save as Playlist starts with the current View title so you can reuse the service without typing its name again. A brief confirmation shows what was saved and offers Open Views to check the reusable starting point." },
       { kind: "Improved", text: "The View Hub gallery filters and reorders its existing playlist cards locally, with no background polling or extra content loads. The compact filter controls wrap on narrow layouts, the favorite toggle has a reduced-motion-aware animation, and an empty state offers a one-click way back to all starting points. Device temperature was not measured." },
     ],
   },

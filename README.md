@@ -3,7 +3,7 @@
 ## Changed (2026-10-17) — A quicker return to regular services
 
 - Star regular starting playlists in View Hub to pin them near the top; use Favorites to focus on those choices and search by name to find another. Favorites stay on this device.
-- The interactive View Hub tutorial, first-run guide, Help, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) explain the new shortcut. Local filtering adds no background polling; device temperature was not measured.
+- Save as Playlist starts with your current View title, then confirms where to find it and offers Open Views. The interactive tutorial, first-run guide, Help, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) explain these repeat-service shortcuts. Local filtering adds no background polling; device temperature was not measured.
 
 ## Changed (2026-10-15) — Faster content reuse and lighter background work
 

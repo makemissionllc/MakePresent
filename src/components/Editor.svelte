@@ -685,6 +685,11 @@ import {
   let presetsReady = $state(false);
   let showSavePlaylistModal = $state(false);
   let savedPlaylistName = $state("");
+  let savePlaylistDraft = $state("");
+  let savePlaylistError = $state<string | null>(null);
+  let playlistOverwrite = $state<{ name: string; existingName: string } | null>(null);
+  let overwriteCancelButton = $state<HTMLButtonElement | null>(null);
+  let overwriteConfirmButton = $state<HTMLButtonElement | null>(null);
 
   // Global search (Ctrl/Cmd+K) — library + all Bibles + media cache
   let globalSearchOpen = $state(false);
@@ -3036,22 +3041,87 @@ import {
   // Save-as-Playlist (reuse existing save_template backend — the "save it for next service" loop)
   function openSavePlaylist(): void {
     savedPlaylistName = "";
+    savePlaylistDraft = project?.name ?? "";
+    savePlaylistError = null;
     showSavePlaylistModal = true;
   }
 
   async function handleSavePlaylistConfirm(name: string): Promise<void> {
     const trimmed = name.trim();
     if (!trimmed) return;
+    savePlaylistDraft = trimmed;
+    savePlaylistError = null;
+    try {
+      if (!templatesLoaded) {
+        templates = await api.listTemplates();
+        templatesLoaded = true;
+        templatesReady = true;
+      }
+    } catch (e) {
+      savePlaylistError = `Could not check saved playlists: ${String(e)}`;
+      return;
+    }
+
+    const existing = templates.find((template) => template.name.trim().toLowerCase() === trimmed.toLowerCase());
+    if (existing) {
+      playlistOverwrite = { name: trimmed, existingName: existing.name };
+      showSavePlaylistModal = false;
+      return;
+    }
+
+    await savePlaylistNow(trimmed);
+  }
+
+  async function savePlaylistNow(name: string): Promise<void> {
     try {
       errorMsg = null;
-      templates = await api.saveTemplate(trimmed);
+      templates = await api.saveTemplate(name);
       templatesLoaded = true;
-      savedPlaylistName = trimmed;
+      templatesReady = true;
+      savedPlaylistName = name;
+      savePlaylistError = null;
       showSavePlaylistModal = false;
     } catch (e) {
-      errorMsg = String(e);
+      savePlaylistError = String(e);
+      savePlaylistDraft = name;
+      showSavePlaylistModal = true;
     }
   }
+
+  function chooseAnotherPlaylistName(): void {
+    if (!playlistOverwrite) return;
+    savePlaylistDraft = playlistOverwrite.name;
+    playlistOverwrite = null;
+    savePlaylistError = null;
+    showSavePlaylistModal = true;
+  }
+
+  function handlePlaylistOverwriteKeydown(event: KeyboardEvent): void {
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      chooseAnotherPlaylistName();
+    } else if (event.key === "Tab" && event.shiftKey && document.activeElement === overwriteCancelButton) {
+      event.preventDefault();
+      overwriteConfirmButton?.focus();
+    } else if (event.key === "Tab" && !event.shiftKey && document.activeElement === overwriteConfirmButton) {
+      event.preventDefault();
+      overwriteCancelButton?.focus();
+    }
+  }
+
+  async function confirmPlaylistOverwrite(): Promise<void> {
+    if (!playlistOverwrite) return;
+    const { existingName } = playlistOverwrite;
+    playlistOverwrite = null;
+    await savePlaylistNow(existingName);
+  }
+
+  $effect(() => {
+    if (!playlistOverwrite) return;
+    const frame = requestAnimationFrame(() => overwriteCancelButton?.focus());
+    return () => cancelAnimationFrame(frame);
+  });
 
   async function deleteSavedPlaylist(playlistId: string): Promise<void> {
     try {
@@ -5283,12 +5353,27 @@ import {
   title="Save as Playlist"
   label="Playlist name — starts with this View's title; edit if needed"
   placeholder="e.g. Worship"
-  initialValue={project?.name ?? ""}
+  initialValue={savePlaylistDraft}
+  message={savePlaylistError}
   confirmLabel="Save"
   cancelLabel="Cancel"
   onConfirm={handleSavePlaylistConfirm}
-  onCancel={() => (showSavePlaylistModal = false)}
+  onCancel={() => { showSavePlaylistModal = false; savePlaylistError = null; }}
 />
+
+{#if playlistOverwrite}
+  <div class="template-overwrite-overlay" role="presentation" transition:fade={{ duration: prefersReducedMotion() ? 0 : 150 }} onkeydown={handlePlaylistOverwriteKeydown}>
+    <div class="template-overwrite-dialog" role="dialog" aria-modal="true" aria-labelledby="template-overwrite-title" aria-describedby="template-overwrite-description" tabindex="-1" in:fade={{ duration: prefersReducedMotion() ? 0 : 180 }}>
+      <span class="template-overwrite-eyebrow">SAVED PLAYLIST ALREADY EXISTS</span>
+      <h2 id="template-overwrite-title">Replace “{playlistOverwrite.existingName}”?</h2>
+      <p id="template-overwrite-description">Saving will replace that reusable playlist with the current View's slides. Your current View will stay as it is.</p>
+      <div class="template-overwrite-actions">
+        <button class="ghost" bind:this={overwriteCancelButton} onclick={chooseAnotherPlaylistName}>Choose another name</button>
+        <button class="template-overwrite-confirm" bind:this={overwriteConfirmButton} onclick={() => void confirmPlaylistOverwrite()}>Replace Playlist</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <GlobalSearch open={globalSearchOpen} library={library} onClose={() => (globalSearchOpen = false)} onImportLyrics={importLyricsFromSearch} onSongUsed={rememberRecentlyUsedSong} onMediaUsed={rememberRecentlyUsedMedia} onScriptureUsed={rememberRecentScripturePassage} />
 
@@ -7373,6 +7458,17 @@ import {
   .template-save-dismiss { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; color: var(--text-dim); background: transparent; font-size: 16px; line-height: 1; }
   .template-save-success button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @media (max-width: 420px) { .template-save-success { grid-template-columns: 20px minmax(0,1fr) 26px; } .template-save-open { grid-column: 2; justify-self: start; } .template-save-dismiss { grid-column: 3; grid-row: 1; } }
+  .template-overwrite-overlay { position: fixed; inset: 0; z-index: 65; display: grid; place-items: center; padding: 16px; background: #080d10b8; }
+  .template-overwrite-dialog { width: min(460px, 100%); max-height: calc(100dvh - 32px); overflow: auto; padding: clamp(18px, 5vw, 24px); border: 1px solid var(--border); border-radius: 14px; background: var(--panel); color: var(--text); box-shadow: 0 24px 80px #0008; }
+  .template-overwrite-eyebrow { color: var(--accent); font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+  .template-overwrite-dialog h2 { margin: 7px 0 0; font-family: var(--font-display); font-size: clamp(17px, 4vw, 21px); line-height: 1.25; overflow-wrap: anywhere; }
+  .template-overwrite-dialog p { margin: 9px 0 0; color: var(--text-dim); font-size: 12px; line-height: 1.55; }
+  .template-overwrite-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .template-overwrite-actions button { min-height: 36px; padding: 8px 11px; font-size: 11px; }
+  .template-overwrite-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .template-overwrite-confirm { border-color: color-mix(in srgb, var(--danger-text, #f87171) 45%, var(--border)); color: var(--danger-text, #f87171); background: var(--danger-bg, color-mix(in srgb, #f87171 10%, var(--panel))); font-weight: 700; }
+  .template-overwrite-confirm:hover { border-color: var(--danger-text, #f87171); background: var(--danger-bg, color-mix(in srgb, #f87171 16%, var(--panel))); }
+  @media (max-width: 420px) { .template-overwrite-actions { justify-content: stretch; } .template-overwrite-actions button { flex: 1 1 145px; } }
 
   .field-hint {
     font-size: 11px;

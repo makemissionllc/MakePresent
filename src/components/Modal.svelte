@@ -6,6 +6,7 @@
     label?: string;
     placeholder?: string;
     initialValue?: string;
+    message?: string | null;
     confirmLabel?: string;
     cancelLabel?: string;
     onConfirm: (value: string) => void;
@@ -18,6 +19,7 @@
     label = "Name",
     placeholder = "",
     initialValue = "",
+    message = null,
     confirmLabel = "OK",
     cancelLabel = "Cancel",
     onConfirm,
@@ -83,6 +85,7 @@
         <button class="close" title="Close" aria-label="Close" onclick={handleCancel}>&times;</button>
       </header>
       <div class="content">
+        {#if message}<p class="dialog-message" role="alert">{message}</p>{/if}
         <label>
           {label}
           <input
@@ -173,6 +176,17 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
+  }
+
+  .dialog-message {
+    margin: -4px 0 0;
+    padding: 9px 10px;
+    border: 1px solid color-mix(in srgb, var(--danger-text, #f87171) 35%, var(--border));
+    border-radius: 7px;
+    color: var(--danger-text, #f87171);
+    background: var(--danger-bg, color-mix(in srgb, #f87171 8%, var(--panel)));
+    font-size: 11px;
+    line-height: 1.45;
   }
 
   label {

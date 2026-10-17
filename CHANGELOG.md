@@ -8,6 +8,7 @@ User-facing features and fixes are also available in **Settings → What’s New
 
 - Star a starting playlist in View Hub to pin it near the top and use **Favorites** to focus on regular service setups. Favorites are saved on this device, work with name search, and are covered in onboarding, Help, and the interactive View Hub tutorial.
 - **Save as Playlist** starts with the current View title, so you can reuse the service without typing its name again. A brief confirmation shows what was saved and offers **Open Views** to check the reusable starting point; onboarding, Help, and the interactive tutorial explain the shortcut.
+- Saving with a name already in use now asks before replacing that reusable playlist. Choose another name or confirm the replacement; the prompt adapts to narrow windows, works with the keyboard, and uses a reduced-motion-aware fade. Existing playlists are checked only when you save, with no background polling. Device temperature was not measured.
 
 ### Improved
 

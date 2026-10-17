@@ -3,7 +3,7 @@
 ## Changed (2026-10-17) — A quicker return to regular services
 
 - Star regular starting playlists in View Hub to pin them near the top; use Favorites to focus on those choices and search by name to find another. Favorites stay on this device.
-- Save as Playlist starts with your current View title, then confirms where to find it and offers Open Views. If the name is already in use, MakrStudio asks before replacing the saved playlist. The interactive tutorial, first-run guide, Help, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) explain these repeat-service shortcuts. Checks happen only when saving; there is no background polling. Device temperature was not measured.
+- Save as Playlist starts with your current View title, then confirms where to find it and offers Open Views. Blank names get a clear prompt, and the dialog shows progress while checking, saving, or replacing so repeated submissions are prevented. If the name is already in use, MakrStudio asks before replacing the saved playlist. The interactive tutorial, first-run guide, Help, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) explain these repeat-service shortcuts. Checks happen only when saving; there is no background polling. Device temperature was not measured.
 
 ## Changed (2026-10-15) — Faster content reuse and lighter background work
 

@@ -687,7 +687,10 @@ import {
   let savedPlaylistName = $state("");
   let savePlaylistDraft = $state("");
   let savePlaylistError = $state<string | null>(null);
+  let savePlaylistBusy = $state(false);
+  let savePlaylistBusyLabel = $state("Checking…");
   let playlistOverwrite = $state<{ name: string; existingName: string } | null>(null);
+  let overwriteDialogElement = $state<HTMLDivElement | null>(null);
   let overwriteCancelButton = $state<HTMLButtonElement | null>(null);
   let overwriteConfirmButton = $state<HTMLButtonElement | null>(null);
 
@@ -3043,14 +3046,21 @@ import {
     savedPlaylistName = "";
     savePlaylistDraft = project?.name ?? "";
     savePlaylistError = null;
+    savePlaylistBusy = false;
     showSavePlaylistModal = true;
   }
 
   async function handleSavePlaylistConfirm(name: string): Promise<void> {
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (savePlaylistBusy) return;
+    if (!trimmed) {
+      savePlaylistError = "Enter a name for this playlist before saving.";
+      return;
+    }
     savePlaylistDraft = trimmed;
     savePlaylistError = null;
+    savePlaylistBusy = true;
+    savePlaylistBusyLabel = "Checking…";
     try {
       if (!templatesLoaded) {
         templates = await api.listTemplates();
@@ -3060,6 +3070,8 @@ import {
     } catch (e) {
       savePlaylistError = `Could not check saved playlists: ${String(e)}`;
       return;
+    } finally {
+      savePlaylistBusy = false;
     }
 
     const existing = templates.find((template) => template.name.trim().toLowerCase() === trimmed.toLowerCase());
@@ -3073,6 +3085,9 @@ import {
   }
 
   async function savePlaylistNow(name: string): Promise<void> {
+    if (savePlaylistBusy) return;
+    savePlaylistBusy = true;
+    savePlaylistBusyLabel = "Saving…";
     try {
       errorMsg = null;
       templates = await api.saveTemplate(name);
@@ -3085,6 +3100,8 @@ import {
       savePlaylistError = String(e);
       savePlaylistDraft = name;
       showSavePlaylistModal = true;
+    } finally {
+      savePlaylistBusy = false;
     }
   }
 
@@ -3098,6 +3115,10 @@ import {
 
   function handlePlaylistOverwriteKeydown(event: KeyboardEvent): void {
     event.stopPropagation();
+    if (savePlaylistBusy) {
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       chooseAnotherPlaylistName();
@@ -3111,15 +3132,32 @@ import {
   }
 
   async function confirmPlaylistOverwrite(): Promise<void> {
-    if (!playlistOverwrite) return;
+    if (!playlistOverwrite || savePlaylistBusy) return;
     const { existingName } = playlistOverwrite;
-    playlistOverwrite = null;
-    await savePlaylistNow(existingName);
+    savePlaylistBusy = true;
+    savePlaylistBusyLabel = "Replacing…";
+    try {
+      errorMsg = null;
+      templates = await api.saveTemplate(existingName);
+      templatesLoaded = true;
+      templatesReady = true;
+      savedPlaylistName = existingName;
+      savePlaylistError = null;
+      playlistOverwrite = null;
+    } catch (e) {
+      savePlaylistError = String(e);
+      savePlaylistDraft = existingName;
+      playlistOverwrite = null;
+      showSavePlaylistModal = true;
+    } finally {
+      savePlaylistBusy = false;
+    }
   }
 
   $effect(() => {
     if (!playlistOverwrite) return;
-    const frame = requestAnimationFrame(() => overwriteCancelButton?.focus());
+    const isBusy = savePlaylistBusy;
+    const frame = requestAnimationFrame(() => (isBusy ? overwriteDialogElement : overwriteCancelButton)?.focus());
     return () => cancelAnimationFrame(frame);
   });
 
@@ -5355,6 +5393,8 @@ import {
   placeholder="e.g. Worship"
   initialValue={savePlaylistDraft}
   message={savePlaylistError}
+  busy={savePlaylistBusy}
+  busyLabel={savePlaylistBusyLabel}
   confirmLabel="Save"
   cancelLabel="Cancel"
   onConfirm={handleSavePlaylistConfirm}
@@ -5363,13 +5403,13 @@ import {
 
 {#if playlistOverwrite}
   <div class="template-overwrite-overlay" role="presentation" transition:fade={{ duration: prefersReducedMotion() ? 0 : 150 }} onkeydown={handlePlaylistOverwriteKeydown}>
-    <div class="template-overwrite-dialog" role="dialog" aria-modal="true" aria-labelledby="template-overwrite-title" aria-describedby="template-overwrite-description" tabindex="-1" in:fade={{ duration: prefersReducedMotion() ? 0 : 180 }}>
+    <div bind:this={overwriteDialogElement} class="template-overwrite-dialog" role="dialog" aria-modal="true" aria-busy={savePlaylistBusy} aria-labelledby="template-overwrite-title" aria-describedby="template-overwrite-description" tabindex="-1" in:fade={{ duration: prefersReducedMotion() ? 0 : 180 }}>
       <span class="template-overwrite-eyebrow">SAVED PLAYLIST ALREADY EXISTS</span>
       <h2 id="template-overwrite-title">Replace “{playlistOverwrite.existingName}”?</h2>
       <p id="template-overwrite-description">Saving will replace that reusable playlist with the current View's slides. Your current View will stay as it is.</p>
       <div class="template-overwrite-actions">
-        <button class="ghost" bind:this={overwriteCancelButton} onclick={chooseAnotherPlaylistName}>Choose another name</button>
-        <button class="template-overwrite-confirm" bind:this={overwriteConfirmButton} onclick={() => void confirmPlaylistOverwrite()}>Replace Playlist</button>
+        <button class="ghost" bind:this={overwriteCancelButton} disabled={savePlaylistBusy} onclick={chooseAnotherPlaylistName}>Choose another name</button>
+        <button class="template-overwrite-confirm" bind:this={overwriteConfirmButton} disabled={savePlaylistBusy} onclick={() => void confirmPlaylistOverwrite()}>{savePlaylistBusy ? savePlaylistBusyLabel : "Replace Playlist"}</button>
       </div>
     </div>
   </div>
@@ -7466,6 +7506,7 @@ import {
   .template-overwrite-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 20px; }
   .template-overwrite-actions button { min-height: 36px; padding: 8px 11px; font-size: 11px; }
   .template-overwrite-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .template-overwrite-actions button:disabled { cursor: wait; opacity: .72; }
   .template-overwrite-confirm { border-color: color-mix(in srgb, var(--danger-text, #f87171) 45%, var(--border)); color: var(--danger-text, #f87171); background: var(--danger-bg, color-mix(in srgb, #f87171 10%, var(--panel))); font-weight: 700; }
   .template-overwrite-confirm:hover { border-color: var(--danger-text, #f87171); background: var(--danger-bg, color-mix(in srgb, #f87171 16%, var(--panel))); }
   @media (max-width: 420px) { .template-overwrite-actions { justify-content: stretch; } .template-overwrite-actions button { flex: 1 1 145px; } }

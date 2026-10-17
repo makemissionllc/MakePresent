@@ -7,6 +7,8 @@
     placeholder?: string;
     initialValue?: string;
     message?: string | null;
+    busy?: boolean;
+    busyLabel?: string;
     confirmLabel?: string;
     cancelLabel?: string;
     onConfirm: (value: string) => void;
@@ -20,6 +22,8 @@
     placeholder = "",
     initialValue = "",
     message = null,
+    busy = false,
+    busyLabel = "Working…",
     confirmLabel = "OK",
     cancelLabel = "Cancel",
     onConfirm,
@@ -27,9 +31,15 @@
   }: Props = $props();
 
   let value = $state("");
+  let visibleMessage = $state<string | null>(null);
+  let dialogEl = $state<HTMLDivElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
 
   // Sync when opened with new initialValue; focus input
+  $effect(() => {
+    if (open) visibleMessage = message;
+  });
+
   $effect(() => {
     if (open) {
       value = initialValue;
@@ -42,7 +52,20 @@
     }
   });
 
+  // Keep focus inside while the request is busy; move focus back to the field
+  // when an error returns control to the user.
+  $effect(() => {
+    if (!open) return;
+    const isBusy = busy;
+    const frame = requestAnimationFrame(() => {
+      if (isBusy) dialogEl?.focus();
+      else inputEl?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  });
+
   function handleConfirm(): void {
+    if (busy) return;
     const trimmed = value.trim();
     // Allow empty? For song title we require non-empty, but let caller validate.
     // If empty and label is song title, we still close and let caller decide to ignore.
@@ -50,6 +73,7 @@
   }
 
   function handleCancel(): void {
+    if (busy) return;
     onCancel();
   }
 
@@ -62,44 +86,76 @@
       handleCancel();
     }
   }
+
+  function onDialogKeydown(e: KeyboardEvent): void {
+    e.stopPropagation();
+    if (e.key === "Escape" && !e.defaultPrevented && !busy) {
+      e.preventDefault();
+      handleCancel();
+      return;
+    }
+    if (e.key !== "Tab") return;
+
+    const focusable = Array.from(dialogEl?.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter((element) => element.getClientRects().length > 0);
+    if (focusable.length === 0) {
+      e.preventDefault();
+      dialogEl?.focus();
+      return;
+    }
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !dialogEl?.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !dialogEl?.contains(active))) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
 </script>
 
 {#if open}
   <div class="overlay" role="presentation" transition:veil={{ duration: 170 }}>
-    <button class="backdrop" aria-label="Close dialog" tabindex="-1" onclick={handleCancel}></button>
+    <button class="backdrop" aria-label="Close dialog" tabindex="-1" disabled={busy} onclick={handleCancel}></button>
     <div
+      bind:this={dialogEl}
       class="dialog"
       role="dialog"
       aria-modal="true"
+      aria-busy={busy}
       aria-label={title}
       tabindex="-1"
       in:surface={{ duration: 250, distance: 12 }}
       onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => {
-        e.stopPropagation();
-        if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); handleCancel(); }
-      }}
+      onkeydown={onDialogKeydown}
     >
       <header class="dialog-head">
         <h2>{title}</h2>
-        <button class="close" title="Close" aria-label="Close" onclick={handleCancel}>&times;</button>
+        <button class="close" title="Close" aria-label="Close" disabled={busy} onclick={handleCancel}>&times;</button>
       </header>
       <div class="content">
-        {#if message}<p class="dialog-message" role="alert">{message}</p>{/if}
+        {#if visibleMessage}<p class="dialog-message" role="alert">{visibleMessage}</p>{/if}
         <label>
           {label}
           <input
             bind:this={inputEl}
             type="text"
             value={value}
+            disabled={busy}
             placeholder={placeholder}
-            oninput={(e) => (value = (e.target as HTMLInputElement).value)}
+            oninput={(e) => { value = (e.target as HTMLInputElement).value; visibleMessage = null; }}
             onkeydown={onKeydown}
           />
         </label>
         <div class="actions">
-          <button class="ghost" onclick={handleCancel}>{cancelLabel}</button>
-          <button class="primary" onclick={handleConfirm}>{confirmLabel}</button>
+          <button class="ghost" disabled={busy} onclick={handleCancel}>{cancelLabel}</button>
+          <button class="primary" disabled={busy} aria-live="polite" onclick={handleConfirm}>
+            {#if busy}<span class="busy-spinner" aria-hidden="true"></span>{/if}
+            {busy ? busyLabel : confirmLabel}
+          </button>
         </div>
       </div>
     </div>
@@ -240,6 +296,29 @@
   button.ghost:hover {
     background: var(--panel-2);
     border-color: var(--brand-slate-400, #94a3b8);
+  }
+
+  button:disabled {
+    cursor: wait;
+    opacity: 0.72;
+  }
+
+  .busy-spinner {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    margin-right: 6px;
+    vertical-align: -1px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: modal-spin 700ms linear infinite;
+  }
+
+  @keyframes modal-spin { to { transform: rotate(360deg); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .busy-spinner { animation: none; border-right-color: currentColor; }
   }
 
   button.primary {

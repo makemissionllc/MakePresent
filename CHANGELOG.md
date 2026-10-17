@@ -10,6 +10,7 @@ User-facing features and fixes are also available in **Settings → What’s New
 - **Save as Playlist** starts with the current View title, so you can reuse the service without typing its name again. A brief confirmation shows what was saved and offers **Open Views** to check the reusable starting point; onboarding, Help, and the interactive tutorial explain the shortcut.
 - Saving with a name already in use now asks before replacing that reusable playlist. Choose another name or confirm the replacement; the prompt adapts to narrow windows, works with the keyboard, and uses a reduced-motion-aware fade. Existing playlists are checked only when you save, with no background polling. Device temperature was not measured.
 - **Save as Playlist** now explains when its name is blank and shows Checking, Saving, or Replacing while the request runs. The controls prevent repeated submissions, and typing clears a validation or save error so you can correct it without dismissing the dialog. This work starts only after you choose Save; device temperature was not measured.
+- Creating a View shows progress and prevents repeat clicks or changing its setup mid-request. That avoids duplicate project creation and overlapping saved-playlist imports; work starts only after you choose **Create View**. Device temperature was not measured. The interactive tutorial and Help explain the feedback.
 
 ### Improved
 

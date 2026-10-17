@@ -6,8 +6,8 @@
   interface Props {
     open: boolean;
     onClose: () => void;
-    onCreate: (presetId: string, opts: { title: string; aspect: string; theme: string; transition: string }) => void;
-    onCreateFromPlaylist: (playlistId: string, opts: { title: string; aspect: string; theme: string; transition: string }) => void;
+    onCreate: (presetId: string, opts: { title: string; aspect: string; theme: string; transition: string }) => void | Promise<void>;
+    onCreateFromPlaylist: (playlistId: string, opts: { title: string; aspect: string; theme: string; transition: string }) => void | Promise<void>;
     onDeletePlaylist: (playlistId: string) => void;
     playlists: PlaylistTemplate[];
     presets: ServicePreset[];
@@ -180,6 +180,7 @@
   let aspect = $state(initialViewPreferences.aspect ?? "16:9");
   let theme = $state(initialViewPreferences.theme ?? "Dark");
   let transition = $state(initialViewPreferences.transition ?? "cut");
+  let creating = $state(false);
   let lastSelectedId: string | null = null;
   let lastAutoTitle = "";
   let wasOpen = false;
@@ -211,14 +212,24 @@
     aspect = viewPreferences.aspect ?? selected.defaultAspect;
   });
 
-  function create(): void {
-    if (!selected) return;
+  async function create(): Promise<void> {
+    if (!selected || creating) return;
     const t = title.trim() || `${selected.name} - ${todayLabel()}`;
-    if (selected.kind === "playlist" && selected.playlistId) {
-      onCreateFromPlaylist(selected.playlistId, { title: t, aspect, theme, transition });
-    } else if (selected.presetId) {
-      onCreate(selected.presetId, { title: t, aspect, theme, transition });
+    const opts = { title: t, aspect, theme, transition };
+    creating = true;
+    try {
+      if (selected.kind === "playlist" && selected.playlistId) {
+        await onCreateFromPlaylist(selected.playlistId, opts);
+      } else if (selected.presetId) {
+        await onCreate(selected.presetId, opts);
+      }
+    } finally {
+      creating = false;
     }
+  }
+
+  function close(): void {
+    if (!creating) onClose();
   }
 
   function chooseStartingPoint(id: string): void {
@@ -248,13 +259,13 @@
   }
 
   function onKey(e: KeyboardEvent): void {
-    if (e.key === "Escape") onClose();
+    if (e.key === "Escape" && !creating) onClose();
   }
 </script>
 
 {#if open}
   <div class="hub-overlay" role="presentation" transition:veil={{ duration: 200 }} onkeydown={onKey}>
-    <div class="hub" role="dialog" aria-modal="true" aria-label="View Hub" tabindex="-1" in:surface={{ duration: 300, distance: 16 }}>
+    <div class="hub" role="dialog" aria-modal="true" aria-busy={creating} aria-label="View Hub" tabindex="-1" in:surface={{ duration: 300, distance: 16 }}>
       <header class="hub-head">
         <div class="brand">
           <BrandLockup />
@@ -263,7 +274,7 @@
             <p>Start a new View — choose a starting Playlist, title, slide ratio &amp; Look</p>
           </div>
         </div>
-        <button class="close" onclick={onClose} aria-label="Close">&times;</button>
+        <button class="close" onclick={close} disabled={creating} aria-label="Close">&times;</button>
       </header>
 
       <div class="hub-body">
@@ -283,11 +294,11 @@
               {#if gallery.length > 5}
                 <label class="gallery-search">
                   <span class="sr-only">Filter starting playlists</span>
-                  <input type="search" bind:value={galleryQuery} placeholder="Find a starting playlist" autocomplete="off" />
+                  <input type="search" bind:value={galleryQuery} placeholder="Find a starting playlist" autocomplete="off" disabled={creating} />
                   {#if galleryQuery.trim()}<span class="search-count" aria-live="polite">{visibleGallery.length} of {gallery.length}</span>{/if}
                 </label>
               {/if}
-              <button class="favorites-filter" class:active={favoritesOnly} aria-pressed={favoritesOnly} onclick={() => favoritesOnly = !favoritesOnly}>
+              <button class="favorites-filter" class:active={favoritesOnly} aria-pressed={favoritesOnly} onclick={() => favoritesOnly = !favoritesOnly} disabled={creating}>
                 <span aria-hidden="true">★</span> Favorites <span class="favorite-count">{favoriteCount}</span>
               </button>
             </div>
@@ -301,6 +312,7 @@
                   data-kind={item.kind}
                   onclick={() => chooseStartingPoint(item.id)}
                   aria-pressed={item.id === selectedId}
+                  disabled={creating}
                 >
                   <span class="card-badge" data-kind={item.kind} data-category={item.category}>{item.category}</span>
                   <span class="card-icon">
@@ -325,6 +337,7 @@
                   aria-pressed={favoriteStartingPointSet.has(item.id)}
                   title={favoriteStartingPointSet.has(item.id) ? "Remove from favorites" : "Add to favorites"}
                   onclick={() => toggleFavoriteStartingPoint(item.id)}
+                  disabled={creating}
                 ><span aria-hidden="true">{favoriteStartingPointSet.has(item.id) ? "★" : "☆"}</span></button>
                 {#if item.kind === "playlist" && item.playlistId}
                   <button
@@ -332,6 +345,7 @@
                     aria-label={`Delete saved playlist ${item.name}`}
                     title="Delete saved playlist"
                     onclick={(e) => { e.stopPropagation(); deletePlaylist(item.playlistId!); }}
+                    disabled={creating}
                   >×</button>
                 {/if}
               </div>
@@ -356,7 +370,7 @@
                   <span class="muted">Autosaved here. Starting a new View replaces this workspace.</span>
                 </div>
               </div>
-              <button class="resume-current" class:tutorial-highlight={tutorialHighlightContinue} onclick={onClose} title="Return to this autosaved View without creating a new one" aria-label={`Continue editing ${recentName}`}>
+              <button class="resume-current" class:tutorial-highlight={tutorialHighlightContinue} onclick={close} disabled={creating} title="Return to this autosaved View without creating a new one" aria-label={`Continue editing ${recentName}`}>
                 <span>Continue this View</span><span aria-hidden="true">→</span>
               </button>
             {:else}
@@ -374,7 +388,7 @@
 
           <label class="field">
             <span>View Title / Date</span>
-            <input type="text" value={title} placeholder="Sunday Morning - {todayLabel()}" oninput={(e)=> title=(e.target as HTMLInputElement).value} />
+            <input type="text" value={title} placeholder="Sunday Morning - {todayLabel()}" oninput={(e)=> title=(e.target as HTMLInputElement).value} disabled={creating} />
             <span class="help">Auto-naming: e.g. “Sunday Morning - Sept 6, 2026”</span>
           </label>
 
@@ -382,7 +396,7 @@
             <span>Slide aspect ratio</span>
             <div class="toggles">
               {#each ASPECTS as a}
-                <button class:selected={aspect===a.id} aria-pressed={aspect===a.id} onclick={()=> chooseAspect(a.id)}>
+                <button class:selected={aspect===a.id} aria-pressed={aspect===a.id} onclick={()=> chooseAspect(a.id)} disabled={creating}>
                   <strong>{a.label}</strong><span>{a.sub}</span>
                 </button>
               {/each}
@@ -391,22 +405,25 @@
 
           <label class="field">
             <span>Primary Theme / Look</span>
-            <select value={theme} onchange={(e)=> chooseTheme((e.target as HTMLSelectElement).value as (typeof THEMES)[number])}>
+            <select value={theme} onchange={(e)=> chooseTheme((e.target as HTMLSelectElement).value as (typeof THEMES)[number])} disabled={creating}>
               {#each THEMES as t}<option value={t}>{t}</option>{/each}
             </select>
           </label>
 
           <label class="field">
             <span>Default Transition</span>
-            <select value={transition} onchange={(e)=> chooseTransition((e.target as HTMLSelectElement).value as (typeof TRANSITIONS)[number]["id"])}>
+            <select value={transition} onchange={(e)=> chooseTransition((e.target as HTMLSelectElement).value as (typeof TRANSITIONS)[number]["id"])} disabled={creating}>
               {#each TRANSITIONS as t}<option value={t.id}>{t.label}</option>{/each}
             </select>
             <span class="help">Your aspect, Look, and transition are remembered on this device.</span>
           </label>
 
+          {#if creating}<p class="creation-status" role="status">Setting up your View. Please wait…</p>{/if}
           <div class="inspector-actions">
-            <button class="ghost" onclick={onClose}>Cancel</button>
-            <button class="primary" onclick={create} disabled={!selected}>Create View — {selected?.slideCount ?? 0} slides</button>
+            <button class="ghost" onclick={close} disabled={creating}>Cancel</button>
+            <button class="primary" onclick={create} disabled={!selected || creating}>
+              {#if creating}<span class="spinner" aria-hidden="true"></span>Creating View…{:else}Create View — {selected?.slideCount ?? 0} slides{/if}
+            </button>
           </div>
         </aside>
       </div>
@@ -495,6 +512,10 @@
   button.ghost{background:transparent;}
   button.primary{background:#456b58; border-color:#527962; color:#f4faf6; flex:1;}
   button.primary:hover{background:#527962;}
+  button.primary{display:flex; align-items:center; justify-content:center; gap:8px; min-height:38px;}
+  .spinner{width:14px; height:14px; flex:none; border:2px solid rgba(244,250,246,.38); border-top-color:#f4faf6; border-radius:50%; animation:spin 700ms linear infinite;}
+  .creation-status{margin:-7px 0 0; color:var(--text-dim); font-size:11px; text-align:center;}
+  @keyframes spin{to{transform:rotate(360deg)}}
   button:focus-visible, .field input:focus-visible, .field select:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
   button:disabled{opacity:.55; cursor:not-allowed;}
   @media (max-width:640px){
@@ -517,5 +538,5 @@
     .card{min-height:112px;}
     .toggles{grid-template-columns:1fr 1fr;}
   }
-  @media (prefers-reduced-motion:reduce){.card,.favorite-starting-point{transition:none}.card:hover,.favorite-starting-point:hover{transform:none}.favorite-starting-point.favorited span{animation:none}}
+  @media (prefers-reduced-motion:reduce){.card,.favorite-starting-point{transition:none}.card:hover,.favorite-starting-point:hover{transform:none}.favorite-starting-point.favorited span{animation:none}.spinner{animation:none;border-top-color:rgba(244,250,246,.55)}}
 </style>

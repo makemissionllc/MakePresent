@@ -4,7 +4,6 @@
   import { addCachedMediaSlide } from "../lib/mediaSlide";
   import type { BibleInfo, ChapterVerse, Library, LyricsHit, MediaAsset, ScriptureMatch } from "../lib/types";
   import { isMedia } from "../lib/types";
-  import { surface, veil } from "../lib/motion";
   import { withTimeout } from "../lib/withTimeout";
   import { indexSongs, rankSongs } from "../lib/songSearch";
 
@@ -384,7 +383,7 @@
 </script>
 
 {#if open}
-  <div class="overlay" role="presentation" transition:veil={{ duration: 170 }}>
+  <div class="overlay" role="presentation">
     <button class="backdrop" aria-label="Close search" tabindex="-1" onclick={onBackdropClick}></button>
     <div
       bind:this={paletteEl}
@@ -393,7 +392,6 @@
       aria-modal="true"
       aria-label="Global search"
       tabindex="-1"
-      in:surface={{ duration: 260, distance: 10 }}
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => { e.stopPropagation(); onKeydown(e); }}
     >
@@ -438,7 +436,7 @@
 
       <div class="palette-body">
         {#key activeCategory}
-          <div class="search-results" in:surface={{ duration: 160, distance: 4 }}>
+          <div class="search-results">
             {#if activeCategory === "all" && !query.trim() && recentQueries.length}
               <section class="category recent-searches" aria-label="Recent searches">
                 <h3>Recent searches <button onclick={() => { recentQueries = []; saveRecentQueries(); }}>Clear history</button></h3>
@@ -758,14 +756,14 @@
     padding: 9px 10px;
   }
   .result:hover { border-color: var(--accent); background: var(--panel); }
-  .result { transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out); }
+  .result { transition: none; }
   .result:focus-visible { box-shadow: 0 0 0 3px rgba(129,170,149,0.14); }
   .online-result { position: relative; padding-right: 130px; }
   .online-note { margin: -3px 0 8px; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
   .online-action { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--accent); font-size: 10px; font-weight: 700; white-space: nowrap; }
   @media (max-width: 560px) { .online-result { padding-right: 10px; } .online-action { position: static; transform: none; margin-top: 4px; } }
   .search-scopes { display: flex; gap: 6px; min-width: 0; overflow-x: auto; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--panel); scrollbar-width: thin; }
-  .search-scopes button { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); background: var(--panel-2); font: inherit; font-size: 11px; cursor: pointer; transition: color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .search-scopes button { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); background: var(--panel-2); font: inherit; font-size: 11px; cursor: pointer; }
   .search-scopes button:hover { border-color: var(--accent); color: var(--text); }
   .search-scopes button.active { border-color: color-mix(in srgb, var(--accent) 65%, var(--border)); color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
   .search-scopes button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

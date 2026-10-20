@@ -1,5 +1,9 @@
 # MakrStudio (formerly MakePresent)
 
+## Changed (2026-10-20) — Quicker, calmer motion
+
+- Search opens instantly and scope changes update without animation. Other surfaces use brief ease-out entrances, existing selections and progress move with ease-in-out, playlist-card delays are capped, and reduced-motion settings clear queued animation delays. The Search tutorial, Help, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) describe the motion behavior. Device temperature was not measured.
+
 ## Changed (2026-10-17) — A quicker return to regular services
 
 - Star regular starting playlists in View Hub to pin them near the top; use Favorites to focus on those choices and search by name to find another. Favorites stay on this device.

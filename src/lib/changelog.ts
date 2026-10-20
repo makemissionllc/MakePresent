@@ -12,6 +12,13 @@ export interface ChangeLogRelease {
 /** User-facing release notes shared by the Settings page and project changelog. */
 export const CHANGELOG: ChangeLogRelease[] = [
   {
+    date: "October 20, 2026",
+    title: "Quicker, calmer motion",
+    items: [
+      { kind: "Improved", text: "Frequent Search opens instantly and scope changes update without animation. Other surfaces use brief, consistent ease-out entrances, while controls already on screen move with ease-in-out. Playlist-card entrance delays are capped, and reduced-motion settings also remove queued animation delays. The interactive Search tutorial and Help explain these shortcuts. Device temperature was not measured." },
+    ],
+  },
+  {
     date: "October 17, 2026",
     title: "A quicker return to regular services",
     items: [

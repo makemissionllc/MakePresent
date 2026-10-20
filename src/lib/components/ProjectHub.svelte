@@ -304,8 +304,8 @@
 </script>
 
 {#if open}
-  <div class="hub-overlay" role="presentation" transition:veil={{ duration: 200 }} onkeydown={onKey}>
-    <div bind:this={hubElement} class="hub" role="dialog" aria-modal="true" aria-busy={creating} aria-label="View Hub" tabindex="-1" in:surface={{ duration: 300, distance: 16 }}>
+  <div class="hub-overlay" role="presentation" transition:veil={{ duration: 120 }} onkeydown={onKey}>
+    <div bind:this={hubElement} class="hub" role="dialog" aria-modal="true" aria-busy={creating} aria-label="View Hub" tabindex="-1" in:surface={{ duration: 180, distance: 8 }}>
       <header class="hub-head">
         <div class="brand">
           <BrandLockup />
@@ -502,7 +502,7 @@
   .grid{display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px;}
   @media (max-width:640px){ .grid{grid-template-columns:1fr;} }
   .card-wrap{position:relative; min-width:0;}
-  .card{position:relative; width:100%; text-align:left; padding:14px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color var(--motion-normal) var(--ease-out),border-color var(--motion-normal) var(--ease-out),box-shadow var(--motion-normal) var(--ease-out),transform var(--motion-fast) var(--ease-out);}
+  .card{position:relative; width:100%; text-align:left; padding:14px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color var(--motion-normal) var(--ease-in-out),border-color var(--motion-normal) var(--ease-in-out),box-shadow var(--motion-normal) var(--ease-in-out),transform var(--motion-fast) var(--ease-in-out);}
   .card:hover{border-color:#46514e; background:var(--panel); transform:translateY(-1px);}
   .card.selected{border-color:var(--accent); background:#202825; box-shadow:0 0 0 2px rgba(129,170,149,0.12);}
   .card-badge{position:absolute; top:10px; right:42px; font-size:9px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:3px 7px; border-radius:999px; border:1px solid transparent; color:white;}
@@ -516,7 +516,7 @@
   .last-starting-tag{align-self:flex-start; padding:3px 7px; border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:999px; background:color-mix(in srgb,var(--accent) 8%,var(--panel)); color:var(--accent); font-size:9px; font-weight:650; line-height:1.2;}
   .card-desc{font-size:11px; color:var(--text-dim); line-height:1.35; white-space:pre-line;}
   .card-meta{margin-top:auto; padding-right:28px; font-size:10px; color:var(--text-dim);}
-  .favorite-starting-point{position:absolute; top:8px; right:8px; z-index:2; display:grid; place-items:center; width:28px; height:28px; padding:0; border-radius:8px; background:var(--panel-2); color:var(--text-dim); font-size:16px; line-height:1; transition:color var(--motion-fast) var(--ease-out),border-color var(--motion-fast) var(--ease-out),background-color var(--motion-fast) var(--ease-out),transform var(--motion-fast) var(--ease-out);}
+  .favorite-starting-point{position:absolute; top:8px; right:8px; z-index:2; display:grid; place-items:center; width:28px; height:28px; padding:0; border-radius:8px; background:var(--panel-2); color:var(--text-dim); font-size:16px; line-height:1; transition:color var(--motion-fast) var(--ease-in-out),border-color var(--motion-fast) var(--ease-in-out),background-color var(--motion-fast) var(--ease-in-out),transform var(--motion-fast) var(--ease-in-out);}
   .favorite-starting-point:hover{border-color:var(--accent); color:var(--text); transform:scale(1.04);}
   .favorite-starting-point.favorited{color:var(--accent); border-color:color-mix(in srgb,var(--accent) 45%,var(--border));}
   .favorite-starting-point.favorited span{animation:favorite-pop 220ms var(--ease-out) both;}
@@ -528,7 +528,7 @@
   .recent-item{display:flex; gap:9px; align-items:flex-start; font-size:12px; color:var(--text);}
   .recent-copy{display:grid; gap:3px; min-width:0;}
   .recent-copy strong{overflow-wrap:anywhere; font-size:12px;}
-  .resume-current{display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:10px 12px; border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:8px; background:color-mix(in srgb,var(--accent) 8%,var(--panel)); color:var(--accent); font-size:12px; font-weight:650; text-align:left; cursor:pointer; transition:background var(--motion-fast) var(--ease-out),border-color var(--motion-fast) var(--ease-out),transform var(--motion-fast) var(--ease-out);}
+  .resume-current{display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:10px 12px; border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:8px; background:color-mix(in srgb,var(--accent) 8%,var(--panel)); color:var(--accent); font-size:12px; font-weight:650; text-align:left; cursor:pointer; transition:background var(--motion-fast) var(--ease-in-out),border-color var(--motion-fast) var(--ease-in-out),transform var(--motion-fast) var(--ease-in-out);}
   .resume-current:hover{border-color:var(--accent); background:color-mix(in srgb,var(--accent) 13%,var(--panel)); transform:translateY(-1px);}
   .resume-current.tutorial-highlight{outline:2px solid var(--accent); outline-offset:2px; animation:resume-pulse 1.2s var(--ease-out) 2;}
   @keyframes resume-pulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 18%,transparent);}}

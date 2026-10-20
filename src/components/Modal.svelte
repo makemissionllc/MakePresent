@@ -118,7 +118,7 @@
 </script>
 
 {#if open}
-  <div class="overlay" role="presentation" transition:veil={{ duration: 170 }}>
+  <div class="overlay" role="presentation" transition:veil={{ duration: 100 }}>
     <button class="backdrop" aria-label="Close dialog" tabindex="-1" disabled={busy} onclick={handleCancel}></button>
     <div
       bind:this={dialogEl}
@@ -128,7 +128,7 @@
       aria-busy={busy}
       aria-label={title}
       tabindex="-1"
-      in:surface={{ duration: 250, distance: 12 }}
+      in:surface={{ duration: 160, distance: 8 }}
       onclick={(e) => e.stopPropagation()}
       onkeydown={onDialogKeydown}
     >

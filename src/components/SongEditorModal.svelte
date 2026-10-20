@@ -429,9 +429,9 @@
 </script>
 
 {#if open}
-  <div class="overlay" role="presentation" transition:veil={{ duration: 180 }}>
+  <div class="overlay" role="presentation" transition:veil={{ duration: 120 }}>
     <button class="backdrop" aria-label="Close dialog" tabindex="-1" onclick={onCancel}></button>
-    <div class="dialog wide" role="dialog" aria-modal="true" aria-label="Song Editor" tabindex="-1" in:surface={{ duration: 280, distance: 14 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => { e.stopPropagation(); onKeydown(e); }}>
+    <div class="dialog wide" role="dialog" aria-modal="true" aria-label="Song Editor" tabindex="-1" in:surface={{ duration: 180, distance: 8 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => { e.stopPropagation(); onKeydown(e); }}>
       <header class="dialog-head">
         <h2>Song Editor</h2>
         <div class="head-actions">
@@ -617,7 +617,7 @@
   .close:hover{background:var(--panel); color:var(--text);}
   .controls{display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--panel); font-size:12px; color:var(--text-dim);}
   .controls label{display:flex; gap:6px; align-items:center; font-size:12px;}
-  .controls select{background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:4px 8px; color:var(--text); font-size:12px; transition:border-color var(--motion-fast) var(--ease-out),box-shadow var(--motion-fast) var(--ease-out);}
+  .controls select{background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:4px 8px; color:var(--text); font-size:12px; transition:border-color var(--motion-fast) var(--ease-in-out),box-shadow var(--motion-fast) var(--ease-in-out);}
   .controls select:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 15%,transparent);}
   .controls .hint{margin-left:auto; font-size:11px; color:var(--text-dim); max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .body{display:grid; grid-template-columns: minmax(0,420px) minmax(0,1fr); grid-template-rows:minmax(0,1fr); gap:0; min-height:0; flex:1; overflow:hidden;}
@@ -632,7 +632,7 @@
   .finder-go{flex:none; padding:7px 10px; border:1px solid rgba(129,170,149,.45); border-radius:7px; background:rgba(129,170,149,.17); color:var(--text); font-size:11px; font-weight:700;}
   .finder-go:hover{background:rgba(129,170,149,.27);}
   .finder-results{display:grid; gap:5px; max-height:178px; overflow:auto; margin:0; padding:0 2px 0 0; list-style:none;}
-  .finder-result{display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; min-width:0; padding:8px 9px; border:1px solid var(--border); border-radius:8px; background:var(--panel); text-align:left; transition:background var(--motion-fast) var(--ease-out),border-color var(--motion-fast) var(--ease-out),box-shadow var(--motion-normal) var(--ease-out);}
+  .finder-result{display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; min-width:0; padding:8px 9px; border:1px solid var(--border); border-radius:8px; background:var(--panel); text-align:left; transition:background var(--motion-fast) var(--ease-in-out),border-color var(--motion-fast) var(--ease-in-out),box-shadow var(--motion-normal) var(--ease-in-out);}
   .finder-result:hover{border-color:var(--accent); background:var(--panel-2); box-shadow:0 3px 10px rgba(0,0,0,.16);}
   .finder-result-copy{display:grid; gap:2px; min-width:0;}
   .finder-result-copy strong,.finder-result-copy small{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
@@ -678,7 +678,7 @@
   .banner-count{background:var(--panel-2); padding:2px 6px; border-radius:999px; font-size:10px; color:var(--text-dim);}
   .ghost.small{font-size:10px; padding:3px 7px; border-radius:999px; margin-left:auto;}
   .cards{display:grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr)); gap:10px;}
-  .card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:6px; cursor:grab; content-visibility:auto; contain-intrinsic-size:auto 200px; transition:transform var(--motion-fast) var(--ease-out),border-color var(--motion-fast) var(--ease-out),box-shadow var(--motion-fast) var(--ease-out);}
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:8px; display:flex; flex-direction:column; gap:6px; cursor:grab; content-visibility:auto; contain-intrinsic-size:auto 200px; transition:transform var(--motion-fast) var(--ease-in-out),border-color var(--motion-fast) var(--ease-in-out),box-shadow var(--motion-fast) var(--ease-in-out);}
   .card:hover:not(:active){transform:translateY(-1px); border-color:var(--accent);}
   .card:active{cursor:grabbing;}
   .card.selected{box-shadow:0 0 0 2px currentColor;}

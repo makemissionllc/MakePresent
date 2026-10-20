@@ -24,7 +24,7 @@
 <!-- Non-blocking: the wrapper ignores pointer events so a volunteer under
      time pressure can click straight through everywhere except the card. -->
 <div class="tour-layer" class:source-step={["songs", "scripture", "reader", "bookmarks", "media"].includes(current.action ?? "")} role="dialog" aria-label="MakrStudio guided tour">
-  <div class="tour-card" in:surface={{ duration: 240, distance: 10 }}>
+  <div class="tour-card" in:surface={{ duration: 180, distance: 6 }}>
     <div class="tour-top">
       <span class="tour-eyebrow">{current.eyebrow} · {step + 1} of {steps.length}</span>
       <button class="tour-x" title="End tour" aria-label="End tour" onclick={onSkip}>×</button>
@@ -34,7 +34,7 @@
     </div>
     <label class="topic-picker">Jump to a topic<select value={step} onchange={(e) => onGoTo(Number(e.currentTarget.value))}>{#each steps as topic, i}<option value={i}>{i + 1}. {topic.eyebrow}</option>{/each}</select></label>
     {#key step}
-      <div class="tour-copy" in:surface={{ duration: 190, distance: 5 }}>
+      <div class="tour-copy" in:surface={{ duration: 140, distance: 4 }}>
         <strong class="tour-title">{current.title}</strong>
         <p class="tour-body" aria-live="polite">{current.body}</p>
       </div>
@@ -87,7 +87,7 @@
     overflow-y: auto;
   }
   .tour-progress { height: 3px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
-  .tour-progress span { display: block; width: 100%; height: 100%; background: var(--accent, #4f8cff); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-emphasized); }
+  .tour-progress span { display: block; width: 100%; height: 100%; background: var(--accent, #4f8cff); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-in-out); }
   .tour-copy { display: grid; gap: 8px; }
   .topic-picker { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; color: var(--text-dim); font-size: 10px; }
   .topic-picker select { min-width: 0; padding: 5px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 11px; }
@@ -134,7 +134,7 @@
     height: 8px;
     border-radius: 50%;
     background: var(--border);
-    transition: background var(--motion-fast) var(--ease-out), transform var(--motion-normal) var(--ease-out);
+    transition: background var(--motion-fast) var(--ease-in-out), transform var(--motion-normal) var(--ease-in-out);
   }
   .tour-dot.active {
     background: var(--accent, #4f8cff);

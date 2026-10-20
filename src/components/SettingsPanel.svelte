@@ -1013,9 +1013,9 @@
 
 </script>
 
-<div class="overlay" in:veil={{ duration: 180 }}>
+<div class="overlay" in:veil={{ duration: 120 }}>
   <button class="backdrop" aria-label="Close settings" tabindex="-1" onclick={onclose}></button>
-  <div class="dialog" role="dialog" tabindex="-1" aria-label="Settings" in:surface={{ duration: 260, distance: 12 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+  <div class="dialog" role="dialog" tabindex="-1" aria-label="Settings" in:surface={{ duration: 180, distance: 8 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
     <header class="dialog-head">
       <h2>Settings</h2>
       {#if onTutorial}<button class="tutorial-link" onclick={() => onTutorial?.()}>{tourInProgress ? "Return to tutorial" : "Interactive tutorial"}</button>{/if}

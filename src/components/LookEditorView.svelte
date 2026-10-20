@@ -1201,9 +1201,9 @@
     font-size: 9px;
   }
   .preset-card:hover { border-color: rgba(129,170,149,0.48); background: rgba(129,170,149,0.08); color: var(--text); }
-  .look-editor-view { animation: looks-arrive var(--motion-normal) var(--ease-emphasized) both; }
+  .look-editor-view { animation: looks-arrive var(--motion-normal) var(--ease-out) both; }
   .look-pill, .preset-card {
-    transition: background var(--motion-normal) var(--ease-out), border-color var(--motion-normal) var(--ease-out), box-shadow var(--motion-normal) var(--ease-out), color var(--motion-normal) var(--ease-out);
+    transition: background var(--motion-normal) var(--ease-in-out), border-color var(--motion-normal) var(--ease-in-out), box-shadow var(--motion-normal) var(--ease-in-out), color var(--motion-normal) var(--ease-in-out);
   }
   .look-pill:hover { border-color: rgba(129,170,149,0.45); }
   .preset-card:hover { box-shadow: 0 5px 14px rgba(0,0,0,0.15); }

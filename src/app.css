@@ -94,13 +94,15 @@
   --space-6: 32px;
   --space-7: 48px;
 
-  /* One motion language for controls, surfaces, and workspace changes. */
-  --motion-fast: 140ms;
-  --motion-normal: 220ms;
-  --motion-slow: 320ms;
-  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --ease-emphasized: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  /* One motion language: controls are quick, new surfaces ease out, and
+     selections already on screen move with a balanced ease-in-out curve. */
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-slow: 260ms;
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-standard: var(--ease-in-out);
+  --ease-emphasized: var(--ease-in-out);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Control radius + low-elevation shadow */
   --radius-sm: 6px;
@@ -143,7 +145,7 @@ button {
 }
 
 button:not(:disabled):not(.backdrop):active {
-  transform: scale(0.985);
+  filter: brightness(0.94);
 }
 
 input,
@@ -191,8 +193,10 @@ textarea {
   *::after {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
   }
 }
 

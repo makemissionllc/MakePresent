@@ -13,7 +13,7 @@ export function veil(
   options: { duration?: number } = {},
 ): TransitionConfig {
   return {
-    duration: prefersReducedMotion() ? 0 : options.duration ?? 180,
+    duration: prefersReducedMotion() ? 0 : options.duration ?? 120,
     easing: cubicOut,
     css: (t) => `opacity: ${t}`,
   };
@@ -23,10 +23,10 @@ export function surface(
   _node: Element,
   options: { duration?: number; distance?: number; scale?: number } = {},
 ): TransitionConfig {
-  const distance = options.distance ?? 12;
-  const scale = options.scale ?? 0.018;
+  const distance = options.distance ?? 8;
+  const scale = options.scale ?? 0.01;
   return {
-    duration: prefersReducedMotion() ? 0 : options.duration ?? 260,
+    duration: prefersReducedMotion() ? 0 : options.duration ?? 180,
     easing: cubicOut,
     css: (t) => `opacity: ${t}; transform: translate3d(0, ${(1 - t) * distance}px, 0) scale(${1 - (1 - t) * scale})`,
   };

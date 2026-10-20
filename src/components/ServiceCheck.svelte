@@ -22,7 +22,7 @@
 </script>
 
 <div class="service-check-layer" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) onClose(); }} onkeydown={(event) => event.stopPropagation()}>
-  <div class="service-check" role="dialog" aria-modal="true" aria-labelledby="service-check-title" tabindex="-1" in:surface={{ duration: 220, distance: 10 }}>
+  <div class="service-check" role="dialog" aria-modal="true" aria-labelledby="service-check-title" tabindex="-1" in:surface={{ duration: 160, distance: 8 }}>
     <header>
       <div>
         <span class="eyebrow">BEFORE YOU PRESENT</span>
@@ -77,7 +77,7 @@
   .progress-copy strong { font-size: 13px; }
   .progress-copy span { color: var(--text-dim); font-size: 11px; }
   .progress-track { height: 5px; margin: 11px 0 16px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
-  .progress-track span { display: block; width: 100%; height: 100%; transform-origin: left; background: var(--accent); transition: transform 260ms cubic-bezier(.2,.8,.2,1); }
+  .progress-track span { display: block; width: 100%; height: 100%; transform-origin: left; background: var(--accent); transition: transform var(--motion-normal) var(--ease-in-out); }
   .check-list { display: grid; gap: 9px; }
   .check-item { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 11px; padding: 13px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg); }
   .check-mark { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid var(--border); border-radius: 50%; color: var(--text-dim); font-size: 11px; font-weight: 700; }

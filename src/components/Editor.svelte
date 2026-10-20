@@ -6989,7 +6989,7 @@ import {
   .recent-scripture-clear { padding: 2px 5px; border: 0; border-radius: 4px; color: var(--text-dim); background: transparent; font: inherit; cursor: pointer; }
   .recent-scripture-clear:hover { color: var(--text); background: var(--panel-2); }
   .recent-scripture-list { display: flex; gap: 6px; min-width: 0; overflow-x: auto; padding: 1px 1px 4px; scrollbar-width: thin; }
-  .recent-scripture-chip { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; max-width: min(260px, 78vw); padding: 6px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text); background: var(--panel); font: inherit; font-size: 10px; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .recent-scripture-chip { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; max-width: min(260px, 78vw); padding: 6px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--text); background: var(--panel); font: inherit; font-size: 10px; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-in-out), background var(--motion-fast) var(--ease-in-out), transform var(--motion-fast) var(--ease-in-out); }
   .recent-scripture-chip span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .recent-scripture-chip span:last-child { flex: none; color: var(--accent); }
   .recent-scripture-chip:hover { border-color: var(--accent); background: var(--panel-2); transform: translateY(-1px); }
@@ -7058,12 +7058,12 @@ import {
   .chapter-pill.read:not(.active) { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
   .chapter-read-check { position: absolute; top: 1px; right: 3px; color: var(--accent); font-size: 8px; font-weight: 800; line-height: 1; }
   .chapter-pill.active .chapter-read-check { color: white; }
-  .book-progress-card { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); animation: scripture-resume-in 220ms var(--ease-emphasized) both; }
+  .book-progress-card { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); animation: scripture-resume-in var(--motion-normal) var(--ease-out) both; }
   .book-progress-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
   .book-progress-heading strong { color: var(--text); font-size: 11px; }
   .book-progress-heading span { color: var(--text-dim); font-size: 10px; white-space: nowrap; }
   .book-progress-track { height: 4px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
-  .book-progress-track span { display: block; width: 100%; height: 100%; border-radius: inherit; background: var(--accent); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-emphasized); }
+  .book-progress-track span { display: block; width: 100%; height: 100%; border-radius: inherit; background: var(--accent); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-in-out); }
   .book-progress-next { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel-2); text-align: left; font: inherit; font-size: 10px; cursor: pointer; }
   .book-progress-next:hover { border-color: var(--accent); }
   .book-progress-next strong { color: var(--accent); }
@@ -7215,7 +7215,7 @@ import {
   .bible-book-search { display: flex; flex-direction: column; gap: 5px; color: var(--text-dim); font-size: 11px; }
   .bible-book-search input { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel); font: inherit; }
   .book-search-count { margin: -4px 0 0; color: var(--text-dim); font-size: 10px; }
-  .continue-reading-card { display: flex; align-items: center; gap: 12px; width: min(100%, 640px); padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-radius: 10px; background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 12%, var(--panel)), var(--panel-2)); color: var(--text); text-align: left; cursor: pointer; animation: scripture-resume-in 240ms var(--ease-emphasized) both; transition: border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out), background var(--motion-normal) var(--ease-out); }
+  .continue-reading-card { display: flex; align-items: center; gap: 12px; width: min(100%, 640px); padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-radius: 10px; background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 12%, var(--panel)), var(--panel-2)); color: var(--text); text-align: left; cursor: pointer; animation: scripture-resume-in var(--motion-normal) var(--ease-out) both; transition: border-color var(--motion-fast) var(--ease-in-out), transform var(--motion-fast) var(--ease-in-out), background var(--motion-normal) var(--ease-in-out); }
   .continue-reading-card:hover { border-color: var(--accent); transform: translateY(-1px); }
   .continue-reading-card:disabled { opacity: .75; cursor: wait; }
   .continue-reading-mark { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 18%, var(--panel)); color: var(--accent); font-size: 18px; }
@@ -7223,7 +7223,7 @@ import {
   .continue-reading-copy strong { font-size: 12px; }
   .continue-reading-copy span { color: var(--text-dim); font-size: 11px; }
   .continue-reading-action { margin-left: auto; color: var(--accent); font-size: 11px; font-weight: 700; white-space: nowrap; }
-  .reading-rhythm-card { display: flex; align-items: center; gap: 11px; width: min(100%, 640px); padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); color: var(--text); animation: scripture-resume-in 240ms var(--ease-emphasized) both; }
+  .reading-rhythm-card { display: flex; align-items: center; gap: 11px; width: min(100%, 640px); padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); color: var(--text); animation: scripture-resume-in var(--motion-normal) var(--ease-out) both; }
   .reading-rhythm-card.completed { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
   .reading-rhythm-icon { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; border-radius: 50%; color: var(--text-dim); background: var(--panel-2); font-size: 15px; }
   .reading-rhythm-card.completed .reading-rhythm-icon { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
@@ -7233,7 +7233,7 @@ import {
   .reading-rhythm-heading span { color: var(--accent); font-size: 10px; font-weight: 700; white-space: nowrap; }
   .reading-rhythm-body p { margin: 0; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
   .reading-rhythm-track { height: 3px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
-  .reading-rhythm-track span { display: block; width: 100%; height: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-emphasized); }
+  .reading-rhythm-track span { display: block; width: 100%; height: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-in-out); }
   .reading-rhythm-track span.filled { transform: scaleX(1); }
   .reading-rhythm-body small { color: var(--text-dim); font-size: 9px; }
   .reader-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
@@ -7272,7 +7272,7 @@ import {
   .browse-dock.reader-mode .browse-dock-header { grid-column: 1; grid-row: 1; }
   .browse-dock.reader-mode .browse-dock-right { display: flex; grid-column: 1; grid-row: 2; flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; max-height: none; overflow: hidden; flex-direction: column; container-type: inline-size; container-name: reader-pane; }
   .browse-dock.reader-mode .browse-verses { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
-  .reader-pages { flex: 1 1 auto; min-height: 0; display: block; overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); animation: reader-layout-in 180ms var(--ease-emphasized) both; }
+  .reader-pages { flex: 1 1 auto; min-height: 0; display: block; overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); animation: reader-layout-in var(--motion-normal) var(--ease-out) both; }
   .reader-pages.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .reader-page { min-width: 0; list-style: none; margin: 0; padding: 8px 14px; }
   .reader-page + .reader-page { border-left: 1px solid var(--border); }
@@ -8193,22 +8193,22 @@ import {
     border-radius: 7px;
     background: #303936;
     box-shadow: 0 2px 7px rgba(0,0,0,0.22);
-    transition: transform var(--motion-slow) var(--ease-emphasized);
+    transition: transform var(--motion-slow) var(--ease-in-out);
   }
   .workspace-switch.looks-active::before { transform: translateX(calc(100% + 4px)); }
-  .ws-btn { position: relative; z-index: 1; transition: color var(--motion-fast) var(--ease-out); }
+  .ws-btn { position: relative; z-index: 1; transition: color var(--motion-fast) var(--ease-in-out); }
   .ws-btn.active { background: transparent; border-color: transparent; box-shadow: none; }
-  .grid-toolbar, .detail-workspace { animation: workspace-arrive var(--motion-normal) var(--ease-emphasized) both; }
+  .grid-toolbar, .detail-workspace { animation: workspace-arrive var(--motion-normal) var(--ease-out) both; }
   .grid-cell {
-    animation: card-arrive var(--motion-slow) var(--ease-emphasized) both;
-    animation-delay: calc(var(--item-index, 0) * 24ms);
-    transition: background var(--motion-normal) var(--ease-out), border-color var(--motion-normal) var(--ease-out), box-shadow var(--motion-normal) var(--ease-out);
+    animation: card-arrive var(--motion-normal) var(--ease-out) both;
+    animation-delay: min(calc(var(--item-index, 0) * 12ms), 120ms);
+    transition: background var(--motion-normal) var(--ease-in-out), border-color var(--motion-normal) var(--ease-in-out), box-shadow var(--motion-normal) var(--ease-in-out);
   }
   .grid-cell:hover { box-shadow: 0 9px 22px rgba(0,0,0,0.2); }
   .slide-entry, .song-entry {
-    transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+    transition: background var(--motion-fast) var(--ease-in-out), border-color var(--motion-fast) var(--ease-in-out), box-shadow var(--motion-fast) var(--ease-in-out);
   }
-  .song-expand span { display: inline-block; transition: transform var(--motion-normal) var(--ease-out); }
+  .song-expand span { display: inline-block; transition: transform var(--motion-normal) var(--ease-in-out); }
   .song-expand span.expanded { transform: rotate(90deg); }
   @keyframes workspace-arrive {
     from { opacity: 0; transform: translateY(6px); }
@@ -8275,7 +8275,7 @@ import {
   .preview-navigation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); width: 100%; }
   .preview-navigation button { min-width: 0; padding: 8px 4px; font-size: 11px; }
   .preview-navigation button:disabled { opacity: 0.45; cursor: not-allowed; }
-  .preview-navigation .follow-live-button { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 6px; border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .preview-navigation .follow-live-button { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 6px; border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); transition: background var(--motion-fast) var(--ease-in-out), border-color var(--motion-fast) var(--ease-in-out), transform var(--motion-fast) var(--ease-in-out); }
   .preview-navigation .follow-live-button:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 9%, var(--panel)); border-color: var(--accent); transform: translateY(-1px); }
 
   /* Phase 2: one bottom source bar; the main workspace shrinks when opened. */
@@ -8299,7 +8299,7 @@ import {
     overflow: hidden;
     border-top: 1px solid var(--border);
     background: var(--panel);
-    transition: height var(--motion-slow) var(--ease-emphasized);
+    transition: height var(--motion-slow) var(--ease-in-out);
   }
   .source-bar.expanded { height: clamp(250px, 42vh, 420px); }
   .source-tab-row {
@@ -8432,7 +8432,7 @@ import {
   .media-card-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .media-card-no-preview { color: var(--text-dim); font-size: 11px; }
   .media-card-type { position: absolute; top: var(--space-2); left: var(--space-2); padding: 4px 7px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); font-size: 10px; font-weight: 700; }
-  .media-favorite-toggle { position: absolute; z-index: 2; top: 8px; right: 8px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid color-mix(in srgb, white 28%, var(--border)); border-radius: 999px; background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--text); font-size: 17px; line-height: 1; cursor: pointer; transition: color var(--motion-fast) var(--ease-out), background var(--motion-fast) var(--ease-out), transform var(--motion-fast) var(--ease-out); }
+  .media-favorite-toggle { position: absolute; z-index: 2; top: 8px; right: 8px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid color-mix(in srgb, white 28%, var(--border)); border-radius: 999px; background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--text); font-size: 17px; line-height: 1; cursor: pointer; transition: color var(--motion-fast) var(--ease-in-out), background var(--motion-fast) var(--ease-in-out), transform var(--motion-fast) var(--ease-in-out); }
   .media-favorite-toggle:hover { transform: scale(1.08); background: var(--panel); }
   .media-favorite-toggle.favorite { color: var(--brand-orange-500); animation: favorite-pop 180ms var(--ease-out); }
   .media-favorite-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

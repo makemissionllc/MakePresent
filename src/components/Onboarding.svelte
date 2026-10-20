@@ -44,7 +44,7 @@
       {/each}
     </nav>
     {#key step}
-    <section in:surface={{ duration: 220, distance: 6 }}>
+    <section in:surface={{ duration: 180, distance: 4 }}>
       <p class="eyebrow">GETTING STARTED · {step + 1} OF 3</p>
       <h1 id="welcome-title" bind:this={heading} tabindex="-1">{step === 0 ? "Make room for the message." : step === 1 ? "A place for every part of your service." : "Your message. On the right screen."}</h1>
       {#if step === 0}

@@ -1,5 +1,15 @@
 # MakrStudio (formerly MakePresent)
 
+## Changed (2026-10-21) — More room to work, safer changes
+
+- Resize the open content shelf by dragging its handle or using the keyboard. Its height persists on this device and adjusts to the available window space.
+- The Media library retains original filenames between launches, with a readable fallback for older imported files. Identical content is listed once.
+- Destructive actions explain their effects in a native confirmation dialog. Cancel preserves the item and related selection/favorite state.
+- One-slide counts use the correct singular label in the Editor and View Hub.
+- The save indicator shows a recovered project's last saved time when available, and uses **Autosave ready** before the first new save event instead of showing a misleading unsaved state.
+- Narrow slide-editing layouts follow reading and keyboard-focus order. Starting Stage keeps it visible while returning focus to the Editor on the same monitor.
+- See [CHANGELOG.md](CHANGELOG.md) for the full release notes and [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md) for the UI design guide used for these changes.
+
 ## Changed (2026-10-20) — Quicker, calmer motion
 
 - Search opens instantly and scope changes update without animation. Other surfaces use brief ease-out entrances, existing selections and progress move with ease-in-out, playlist-card delays are capped, and reduced-motion settings clear queued animation delays. The Search tutorial, Help, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) describe the motion behavior. Device temperature was not measured.
@@ -137,6 +147,8 @@ screen state must answer *"what am I looking at and what do I do next?"*
 4. **Single source of truth.** All application state lives in the Rust
    backend; every window (Editor, Output, Stage) is a *dumb renderer* pushed
    fresh state. No window computes its own copy of "what should be live."
+
+The contributor-facing UI guide is [DESIGN_PRINCIPLES.md](DESIGN_PRINCIPLES.md).
 
 ### Reliability priorities
 

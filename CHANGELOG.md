@@ -2,6 +2,29 @@
 
 User-facing features and fixes are also available in **Settings → What’s New**.
 
+## 2026-10-21 — More room to work, safer changes
+
+### Added
+
+- Resize the open Songs, Scripture, or Media shelf with the mouse or keyboard. Its height is saved on this device, with limits that adapt when the window is resized.
+- Media library entries keep their original filenames after restart. Older imported items without saved names use a readable type and short ID instead.
+
+### Improved
+
+- Narrow slide-editing layouts now keep the preview and editor in their reading and keyboard-focus order. Media filters and card actions have larger targets and more legible labels.
+- The save indicator reflects the recovered autosave time when available and says **Autosave ready** before the first save event, instead of implying the loaded project is unsaved.
+- Starting Stage at launch no longer leaves it in front of the Editor on the same monitor; Stage stays visible while the Editor regains focus.
+- Media with identical content appears once in the library, even when imported with different file extensions.
+
+### Fixed
+
+- Deleting a playlist item, slide, library song, saved playlist, or saved overlay now uses the native confirmation dialog and explains important effects. Cancel keeps the item and related selection or favorite state intact.
+- Slide counts now use the singular label for one slide in the Editor and View Hub.
+
+### Verification
+
+- `npm run build` passed; `git diff --check` passed. The desktop app remained responsive during the running development session.
+
 ## 2026-10-20 — Quicker, calmer motion
 
 ### Improved

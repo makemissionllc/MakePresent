@@ -3,6 +3,7 @@ use crate::project::Background;
 use crate::state::AppState;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -89,6 +90,7 @@ pub fn background_media(bg: &Background) -> Option<MediaRef> {
 // ---------------------------------------------------------------------------
 // Disk layout (all inside the per-machine app data dir):
 //   media/<hash>.<ext>      - one managed copy of every imported file
+//   media-names/<hash>      - the original filename used in the library UI
 //   thumbnails/<hash>.jpg   - thumbnail keyed by content hash
 // ---------------------------------------------------------------------------
 
@@ -98,6 +100,60 @@ pub fn media_dir(data_dir: &Path) -> PathBuf {
 
 pub fn thumbnails_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("thumbnails")
+}
+
+fn media_names_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("media-names")
+}
+
+fn read_media_names(data_dir: &Path) -> HashMap<String, String> {
+    let mut names = HashMap::new();
+    let entries = match fs::read_dir(media_names_dir(data_dir)) {
+        Ok(entries) => entries,
+        Err(_) => return names,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let hash = match path.file_name().and_then(|name| name.to_str()) {
+            Some(hash) if !hash.ends_with(".part") => hash.to_string(),
+            _ => continue,
+        };
+        if let Ok(name) = fs::read_to_string(path) {
+            if !name.trim().is_empty() {
+                names.insert(hash, name);
+            }
+        }
+    }
+    names
+}
+
+/// Remember the name people recognize from the source file. The media cache
+/// itself stays content-addressed, so adding a name never changes slide refs.
+fn remember_media_name(data_dir: &Path, hash: &str, source: &Path) {
+    let file_name = match source.file_name().map(|name| name.to_string_lossy().into_owned()) {
+        Some(name) if !name.trim().is_empty() => name,
+        _ => return,
+    };
+    let names_dir = media_names_dir(data_dir);
+    if fs::create_dir_all(&names_dir).is_err() {
+        return;
+    }
+    let path = names_dir.join(hash);
+    if path.exists() {
+        return;
+    }
+    let temporary = names_dir.join(format!("{hash}.{}.part", uuid::Uuid::new_v4()));
+    if fs::write(&temporary, file_name).is_err() {
+        return;
+    }
+    // A failed rename should not affect the imported media; leave the last
+    // valid index intact and clean up the temporary file.
+    if fs::rename(&temporary, &path).is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
 }
 
 pub fn thumbnail_path_for(data_dir: &Path, hash: &str) -> PathBuf {
@@ -467,6 +523,9 @@ pub fn import(source: &Path, data_dir: &Path) -> Result<Background, String> {
             duration_ms,
         },
     };
+    if let Some(media) = background_media(&background) {
+        remember_media_name(data_dir, &media.hash, source);
+    }
     Ok(background)
 }
 
@@ -513,6 +572,7 @@ pub fn list_media_assets(data_dir: &Path) -> Vec<MediaAsset> {
         Ok(e) => e,
         Err(_) => return Vec::new(),
     };
+    let names = read_media_names(data_dir);
     let mut out = Vec::new();
     for ent in entries.flatten() {
         let path = ent.path();
@@ -523,15 +583,19 @@ pub fn list_media_assets(data_dir: &Path) -> Vec<MediaAsset> {
             Some(k) => k,
             None => continue,
         };
-        let file_name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
         // Hash is file stem (hash without extension) — matches import's dest naming.
         let hash = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let file_name = names.get(&hash).cloned().unwrap_or_else(|| {
+            let short_hash = hash.chars().take(8).collect::<String>();
+            let kind_label = match kind {
+                MediaKind::Image => "Image",
+                MediaKind::Video => "Video",
+            };
+            format!("{kind_label} · {short_hash}")
+        });
         let thumb = thumbnail_path_for(data_dir, &hash)
             .to_string_lossy()
             .into_owned();
@@ -556,7 +620,18 @@ pub fn list_media_assets(data_dir: &Path) -> Vec<MediaAsset> {
             duration_ms: None,
         });
     }
-    out.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()));
+    out.sort_by(|a, b| {
+        a.file_name
+            .to_lowercase()
+            .cmp(&b.file_name.to_lowercase())
+            .then_with(|| a.file_name.cmp(&b.file_name))
+    });
+    // The media cache is named by content hash, while each file retains its
+    // original extension. If identical bytes were imported under two
+    // extensions, both files appear in the directory; the UI treats `hash`
+    // as the asset identity, so expose only one deterministic representative.
+    let mut seen_hashes = std::collections::HashSet::new();
+    out.retain(|asset| seen_hashes.insert(asset.hash.clone()));
     out
 }
 

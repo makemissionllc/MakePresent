@@ -1,5 +1,16 @@
 # MakrStudio (formerly MakePresent) — Living Project Doc
 
+## Changed (2026-10-21) — More room to work, safer changes
+
+- The Editor's Songs/Scripture/Media shelf supports pointer and keyboard resizing, stores the chosen height with the existing on-device shelf preference, and clamps it to the current viewport.
+- Media import records a sidecar filename keyed by content hash, so library cards keep recognizable source names across restarts without changing slide media references. Existing unnamed cache items get a type plus short-hash fallback; duplicate cache extensions for one hash resolve to one sorted library entry.
+- Playlist item, slide, library song, saved playlist, and saved overlay deletion now asks through Tauri's native confirmation dialog and describes live/output or saved-state effects. The View Hub only changes its local favorite and last-selection state after a confirmed successful delete.
+- Editor and View Hub slide counts use the singular label when the count is one.
+- The Editor's initial save status is **Autosave ready**. On crash recovery, it uses the recovered session's last-saved timestamp when available, avoiding a misleading **Not saved** label before the autosave worker emits its next event.
+- Narrow slide detail uses DOM order for both layout and focus order. Media controls have more readable type and minimum hit areas. When Stage is restored at startup, the Editor is focused afterward so Stage does not cover the operator window on a shared monitor.
+- Updated README, CHANGELOG, and Settings → What’s New to keep release information aligned.
+- `npm run build` and `git diff --check` passed. Native confirmation dialogs were not visually exercised in this pass.
+
 ## Changed (2026-10-13) — A calmer Scripture reading flow
 
 - Added the local Continue reading checkpoint for the last successful translation/book/chapter, a dedicated Read book mode with explicit preview-before-add behavior, saved text sizing, and in-reader chapter navigation.

@@ -636,6 +636,14 @@ pub fn run() {
                             Err(e) => st.logger.log(Level::Warn, &format!("stage: restore failed: {e}")),
                         }
                     }
+                    // Restoring a visible Stage window can put it above the
+                    // Editor when both target the same monitor. Keep the
+                    // operator window in front while leaving Stage visible.
+                    if let Ok(editor) = crate::windows::editor_window(app.handle()) {
+                        if let Err(e) = editor.set_focus() {
+                            st.logger.log(Level::Warn, &format!("editor: restore focus after Stage startup failed: {e}"));
+                        }
+                    }
                 }
             }
 

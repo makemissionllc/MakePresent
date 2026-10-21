@@ -12,6 +12,19 @@ export interface ChangeLogRelease {
 /** User-facing release notes shared by the Settings page and project changelog. */
 export const CHANGELOG: ChangeLogRelease[] = [
   {
+    date: "October 21, 2026",
+    title: "More room to work, safer changes",
+    items: [
+      { kind: "New", text: "Resize the open Songs, Scripture, or Media shelf with the mouse or keyboard. Its height is saved on this device and adapts to window resizing." },
+      { kind: "New", text: "Media library entries keep their original filenames after restart. Older items without saved names use a readable type and short ID instead." },
+      { kind: "Improved", text: "Narrow slide-editing layouts keep the preview and editor in their reading and keyboard-focus order. Media filters and card actions have larger targets and more legible labels." },
+      { kind: "Improved", text: "The save indicator reflects the recovered autosave time when available and says Autosave ready before the first save event, instead of implying the loaded project is unsaved." },
+      { kind: "Improved", text: "Starting Stage at launch keeps it visible while returning focus to the Editor on the same monitor. Identical media content appears once even when imported under different file extensions." },
+      { kind: "Fixed", text: "Deleting playlist items, slides, library songs, saved playlists, or saved overlays now uses the native confirmation dialog and explains important effects. Cancel leaves the item and related selection or favorite state unchanged." },
+      { kind: "Fixed", text: "Slide counts now use the singular label for one slide in the Editor and View Hub." },
+    ],
+  },
+  {
     date: "October 20, 2026",
     title: "Quicker, calmer motion",
     items: [

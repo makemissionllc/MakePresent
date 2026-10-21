@@ -8,7 +8,7 @@
     onClose: () => void;
     onCreate: (presetId: string, opts: { title: string; aspect: string; theme: string; transition: string }) => void | Promise<void>;
     onCreateFromPlaylist: (playlistId: string, opts: { title: string; aspect: string; theme: string; transition: string }) => void | Promise<void>;
-    onDeletePlaylist: (playlistId: string) => void;
+    onDeletePlaylist: (playlistId: string) => Promise<boolean>;
     playlists: PlaylistTemplate[];
     presets: ServicePreset[];
     startingPointsReady?: boolean;
@@ -256,7 +256,9 @@
     }
   }
 
-  function deletePlaylist(id: string): void {
+  async function deletePlaylist(id: string): Promise<void> {
+    const deleted = await onDeletePlaylist(id);
+    if (!deleted) return;
     if (favoriteStartingPointSet.has(id)) toggleFavoriteStartingPoint(id);
     if (lastStartingPointId === id) {
       const replacement = gallery.find((item) => item.id !== id);
@@ -368,7 +370,7 @@
                     <span class="last-starting-tag" in:surface={{ duration: 160, distance: 3, scale: 0.99 }}>Last selected</span>
                   {/if}
                   <span class="card-desc">{item.description}</span>
-                  <span class="card-meta">{item.slideCount} slides · {item.defaultAspect}</span>
+                  <span class="card-meta">{item.slideCount} {item.slideCount === 1 ? "slide" : "slides"} · {item.defaultAspect}</span>
                 </button>
                 <button
                   class="favorite-starting-point"
@@ -384,7 +386,7 @@
                     class="delete-saved"
                     aria-label={`Delete saved playlist ${item.name}`}
                     title="Delete saved playlist"
-                    onclick={(e) => { e.stopPropagation(); deletePlaylist(item.playlistId!); }}
+                    onclick={(e) => { e.stopPropagation(); void deletePlaylist(item.playlistId!); }}
                     disabled={creating}
                   >×</button>
                 {/if}
@@ -462,7 +464,7 @@
           <div class="inspector-actions">
             <button class="ghost" onclick={close} disabled={creating}>Cancel</button>
             <button class="primary" onclick={create} disabled={!selected || creating}>
-              {#if creating}<span class="spinner" aria-hidden="true"></span>Creating View…{:else}Create View — {selected?.slideCount ?? 0} slides{/if}
+              {#if creating}<span class="spinner" aria-hidden="true"></span>Creating View…{:else}Create View — {selected?.slideCount ?? 0} {(selected?.slideCount ?? 0) === 1 ? "slide" : "slides"}{/if}
             </button>
           </div>
         </aside>

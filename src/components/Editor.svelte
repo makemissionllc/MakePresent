@@ -3,7 +3,7 @@
   import { cubicOut } from "svelte/easing";
   import { crossfade, fade, slide as slideTransition } from "svelte/transition";
   import { convertFileSrc, invoke } from "@tauri-apps/api/core";
-  import { open } from "@tauri-apps/plugin-dialog";
+  import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { api, subscribeAck, subscribeCountdown, subscribeState, subscribeAutosave, subscribeLibrary } from "../lib/sync";
 import type { AckUpdate, Background, BibleInfo, ChapterVerse, ClientState, CountdownView, DisplayInfo, Library, LibrarySong, LyricsHit, MediaAsset, Overlay, PlaylistTemplate, RemoteBibleVersion, ScriptureMatch, ServicePreset, Slide, PlaylistItem, Transition } from "../lib/types";
@@ -67,6 +67,28 @@ import {
   interface ContentShelfPreference {
     tab: SourceTab;
     open: boolean;
+    height?: number;
+  }
+
+  const SOURCE_HEIGHT_MIN = 220;
+
+  function sourceHeightBounds(): { min: number; max: number } {
+    const viewportHeight = typeof window === "undefined" ? 800 : window.innerHeight;
+    const min = Math.min(SOURCE_HEIGHT_MIN, Math.max(140, viewportHeight - 260));
+    return {
+      min,
+      max: Math.max(min, Math.min(Math.round(viewportHeight * 0.68), viewportHeight - 220)),
+    };
+  }
+
+  function clampSourceHeight(height: number): number {
+    const { min, max } = sourceHeightBounds();
+    return Math.round(Math.max(min, Math.min(max, height)));
+  }
+
+  function defaultSourceHeight(): number {
+    const viewportHeight = typeof window === "undefined" ? 800 : window.innerHeight;
+    return clampSourceHeight(Math.min(420, Math.max(250, viewportHeight * 0.42)));
   }
 
   function readContentShelfPreference(): ContentShelfPreference {
@@ -77,6 +99,7 @@ import {
       return {
         tab: value.tab === "scripture" || value.tab === "media" ? value.tab : "songs",
         open: value.open === true,
+        height: typeof value.height === "number" && Number.isFinite(value.height) ? value.height : undefined,
       };
     } catch {
       return { tab: "songs", open: false };
@@ -320,7 +343,7 @@ import {
   let draggedItemId = $state<string | null>(null);
   let itemDropIndex = $state<number | null>(null);
   let displays = $state<DisplayInfo[] | null>(null);
-  let savedLabel = $state<string>("Not saved");
+  let savedLabel = $state<string>("Autosave ready");
   let errorMsg = $state<string | null>(null);
   let countdown = $state<CountdownView>({ active: false, running: false, remainingSeconds: 0, outputVisible: false, mode: null, targetTime: null });
   let countdownMinutes = $state("10");
@@ -348,6 +371,66 @@ import {
   // Content sources share one bottom bar; the running Playlist stays on the left.
   let sourceTab = $state<SourceTab>(savedContentShelf.tab);
   let sourceOpen = $state(savedContentShelf.open);
+  let sourceHeight = $state(clampSourceHeight(savedContentShelf.height ?? defaultSourceHeight()));
+  let sourceResizePointerId: number | null = null;
+  let sourceResizeStartY = 0;
+  let sourceResizeStartHeight = 0;
+  let sourceResizing = $state(false);
+  let persistedSourceHeight = clampSourceHeight(savedContentShelf.height ?? defaultSourceHeight());
+
+  function persistSourceHeight(): void {
+    persistedSourceHeight = sourceHeight;
+    try {
+      window.localStorage.setItem(CONTENT_SHELF_KEY, JSON.stringify({ tab: sourceTab, open: sourceOpen, height: sourceHeight }));
+    } catch {
+      // Resizing remains available for this session if local storage is unavailable.
+    }
+  }
+
+  function beginSourceResize(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    sourceResizePointerId = event.pointerId;
+    sourceResizeStartY = event.clientY;
+    sourceResizeStartHeight = sourceHeight;
+    sourceResizing = true;
+    const handle = event.currentTarget as HTMLElement;
+    handle.focus({ preventScroll: true });
+    handle.setPointerCapture(event.pointerId);
+  }
+
+  function updateSourceResize(event: PointerEvent): void {
+    if (event.pointerId !== sourceResizePointerId) return;
+    sourceHeight = clampSourceHeight(sourceResizeStartHeight + sourceResizeStartY - event.clientY);
+  }
+
+  function endSourceResize(event: PointerEvent): void {
+    if (event.pointerId !== sourceResizePointerId) return;
+    sourceResizePointerId = null;
+    sourceResizing = false;
+    persistSourceHeight();
+    const handle = event.currentTarget as HTMLElement;
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+  }
+
+  function onSourceResizeKeydown(event: KeyboardEvent): void {
+    const { min, max } = sourceHeightBounds();
+    const step = event.shiftKey ? 64 : 24;
+    if (event.key === "ArrowUp") sourceHeight = clampSourceHeight(sourceHeight + step);
+    else if (event.key === "ArrowDown") sourceHeight = clampSourceHeight(sourceHeight - step);
+    else if (event.key === "Home") sourceHeight = min;
+    else if (event.key === "End") sourceHeight = max;
+    else return;
+    event.preventDefault();
+    persistSourceHeight();
+  }
+
+  $effect(() => {
+    const clampToViewport = () => {
+      sourceHeight = clampSourceHeight(sourceHeight);
+    };
+    window.addEventListener("resize", clampToViewport);
+    return () => window.removeEventListener("resize", clampToViewport);
+  });
   let mediaQuery = $state("");
   let mediaResults = $state<MediaAsset[]>([]);
   let recentMediaHashes = $state<string[]>(readRecentMediaHashes());
@@ -379,7 +462,7 @@ import {
 
   $effect(() => {
     try {
-      window.localStorage.setItem(CONTENT_SHELF_KEY, JSON.stringify({ tab: sourceTab, open: sourceOpen }));
+      window.localStorage.setItem(CONTENT_SHELF_KEY, JSON.stringify({ tab: sourceTab, open: sourceOpen, height: persistedSourceHeight }));
     } catch {
       // The shelf still works for this session if local storage is unavailable.
     }
@@ -1237,8 +1320,25 @@ import {
     } catch (e) { errorMsg = String(e); }
   }
 
+  async function confirmDelete(title: string, message: string): Promise<boolean> {
+    return confirmDialog(`${message} This can't be undone.`, {
+      title,
+      kind: "warning",
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+  }
+
   async function deleteItem(item: PlaylistItem): Promise<void> {
     try {
+      const slideCount = item.slideIds.length;
+      const liveIsItem = item.slideIds.includes(project?.live ?? "");
+      const impact = liveIsItem ? " The live slide will be taken off Output." : "";
+      const confirmed = await confirmDelete(
+        "Delete playlist item",
+        `Delete “${item.name}” and its ${slideCount} ${slideCount === 1 ? "slide" : "slides"}?${impact}`,
+      );
+      if (!confirmed) return;
       appState = await api.deleteItem(item.id);
       if (selectedItemId === item.id) selectedItemId = items[0]?.id ?? null;
       if (appState.project.live) followLiveItem(appState);
@@ -2778,6 +2878,10 @@ import {
     void (async () => {
       try {
         errorMsg = null;
+        const willGoOffline = project?.live === slide.id;
+        const impact = willGoOffline ? " This will take the live slide off Output." : "";
+        const confirmed = await confirmDelete("Delete slide", `Delete “${slideDisplayName(slide)}”?${impact}`);
+        if (!confirmed) return;
         appState = await api.deleteSlide(slide.id);
         if (wasSelected) selectedId = null;
       } catch (e) {
@@ -2892,17 +2996,22 @@ import {
     pendingLyricsId = null;
   }
 
-  function deleteSong(song: LibrarySong): void {
-    void api
-      .deleteLibrarySong(song.id)
-      .then((l) => {
-        library = l;
-        if (!l.songs.some((item) => item.id === song.id) && favoriteSongSet.has(song.id)) {
-          favoriteSongIds = favoriteSongIds.filter((id) => id !== song.id);
-          persistFavoriteSongIds();
-        }
-      })
-      .catch((e: unknown) => (errorMsg = String(e)));
+  async function deleteSong(song: LibrarySong): Promise<void> {
+    try {
+      const confirmed = await confirmDelete(
+        "Delete song",
+        `Delete “${song.title || "Untitled song"}” from the Library? Existing View slides remain unchanged.`,
+      );
+      if (!confirmed) return;
+      const updatedLibrary = await api.deleteLibrarySong(song.id);
+      library = updatedLibrary;
+      if (!updatedLibrary.songs.some((item) => item.id === song.id) && favoriteSongSet.has(song.id)) {
+        favoriteSongIds = favoriteSongIds.filter((id) => id !== song.id);
+        persistFavoriteSongIds();
+      }
+    } catch (e) {
+      errorMsg = String(e);
+    }
   }
 
   // Master-block helpers — library.json now stores blocks + arrangement (v2)
@@ -3161,13 +3270,22 @@ import {
     return () => cancelAnimationFrame(frame);
   });
 
-  async function deleteSavedPlaylist(playlistId: string): Promise<void> {
+  async function deleteSavedPlaylist(playlistId: string): Promise<boolean> {
+    const playlist = templates.find((item) => item.id === playlistId);
+    if (!playlist) return false;
     try {
+      const confirmed = await confirmDelete(
+        "Delete saved playlist",
+        `Delete “${playlist.name}”? Your current View will stay unchanged.`,
+      );
+      if (!confirmed) return false;
       errorMsg = null;
       templates = await api.deleteTemplate(playlistId);
       templatesLoaded = true;
+      return true;
     } catch (e) {
       errorMsg = String(e);
+      return false;
     }
   }
 
@@ -3336,6 +3454,9 @@ import {
   async function removeSavedOverlay(overlay: Overlay): Promise<void> {
     try {
       overlayError = null;
+      const impact = overlay.visible ? " It will also be hidden from Output." : "";
+      const confirmed = await confirmDelete("Delete saved overlay", `Delete “${overlay.name}”?${impact}`);
+      if (!confirmed) return;
       appState = await api.deleteSavedOverlay(overlay.id);
       if (overlayEditingId === overlay.id) newOverlayDraft();
     } catch (e) {
@@ -3506,6 +3627,9 @@ import {
       errorMsg = null;
       workspaceLoading = false;
       if (wasLoading) {
+        if (s.notice?.kind === "recovered" && s.notice.at) {
+          savedLabel = `Saved ${formatAt(s.notice.at)}`;
+        }
         selectedId = s.project.live ?? s.project.slides[0]?.id ?? null;
         observedLiveId = s.project.live;
         const stateItems = Array.isArray(s.items) ? s.items : [];
@@ -4097,7 +4221,7 @@ import {
         </div>
       {:else}
         <div class="grid-toolbar">
-          <div class="grid-toolbar-label"><span class="grid-toolbar-mark">01</span><span><strong>{gridScope === "all" ? "All slides" : selectedItem?.name ?? "Playlist"}</strong><small>{gridSlides.length} slides</small></span></div>
+          <div class="grid-toolbar-label"><span class="grid-toolbar-mark">01</span><span><strong>{gridScope === "all" ? "All slides" : selectedItem?.name ?? "Playlist"}</strong><small>{gridSlides.length} {gridSlides.length === 1 ? "slide" : "slides"}</small></span></div>
           <div class="grid-scope-toggle"><button class:active={gridScope === "item"} onclick={() => gridScope="item"}>This item</button><button class:active={gridScope === "all"} onclick={() => gridScope="all"}>All slides</button></div>
           <span class="spacer"></span>
           <label class="grid-size-control">
@@ -4645,7 +4769,26 @@ import {
     </aside>
   </div>
 
-  <section class="source-bar" class:expanded={sourceOpen} aria-label="Content library">
+  <section class="source-bar" class:expanded={sourceOpen} class:resizing={sourceResizing} style={`--source-height: ${sourceHeight}px`} aria-label="Content library">
+    {#if sourceOpen}
+      <div
+        class="source-resize-handle"
+        role="slider"
+        aria-orientation="vertical"
+        aria-label="Resize content library"
+        aria-valuemin={sourceHeightBounds().min}
+        aria-valuemax={sourceHeightBounds().max}
+        aria-valuenow={sourceHeight}
+        aria-valuetext={`${sourceHeight} pixels`}
+        tabindex="0"
+        title="Drag to resize · Use ↑ and ↓ keys (Shift for larger steps)"
+        onpointerdown={beginSourceResize}
+        onpointermove={updateSourceResize}
+        onpointerup={endSourceResize}
+        onpointercancel={endSourceResize}
+        onkeydown={onSourceResizeKeydown}
+      ></div>
+    {/if}
     <div class="source-tab-row">
       <span class="source-bar-label">Add content</span>
       <button class:active={sourceOpen && sourceTab === "songs"} aria-pressed={sourceOpen && sourceTab === "songs"} onclick={() => openSourceTab("songs")}>Songs</button>
@@ -5383,7 +5526,7 @@ import {
   onClose={() => (showHub = false)}
   onCreate={handleHubCreate}
   onCreateFromPlaylist={handleHubCreateFromPlaylist}
-  onDeletePlaylist={(playlistId) => void deleteSavedPlaylist(playlistId)}
+  onDeletePlaylist={(playlistId) => deleteSavedPlaylist(playlistId)}
 />
 
 <Modal
@@ -8301,7 +8444,12 @@ import {
     background: var(--panel);
     transition: height var(--motion-slow) var(--ease-in-out);
   }
-  .source-bar.expanded { height: clamp(250px, 42vh, 420px); }
+  .source-bar.expanded { height: min(var(--source-height, clamp(250px, 42vh, 420px)), calc(100vh - 220px)); }
+  .source-bar.resizing { transition: none; user-select: none; }
+  .source-resize-handle { display: grid; flex: 0 0 10px; place-items: center; width: 100%; height: 10px; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: ns-resize; touch-action: none; }
+  .source-resize-handle::before { content: ""; width: 42px; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--text-dim) 45%, var(--border)); transition: background-color var(--motion-fast) var(--ease-standard), width var(--motion-fast) var(--ease-standard); }
+  .source-resize-handle:hover::before, .source-resize-handle:focus-visible::before { width: 52px; background: var(--accent); }
+  .source-resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
   .source-tab-row {
     flex: none;
     height: 48px;
@@ -8337,6 +8485,7 @@ import {
   }
   .source-tab-row .source-toggle { border-color: var(--border); }
   .source-toggle { display: inline-flex; align-items: center; gap: var(--space-1); }
+  .source-bar.expanded .source-tab-row { height: 38px; padding-block: 2px; }
   .source-panel { flex: 1 1 0; min-height: 0; overflow: hidden; border-top: 1px solid var(--border); container-type: inline-size; container-name: scripture-workspace; }
   .source-pane { height: 100%; min-width: 0; min-height: 0; padding: var(--space-3) var(--space-4); overflow: auto; }
   .songs-pane .library-section {
@@ -8413,16 +8562,16 @@ import {
   .recent-media-thumb { flex: none; display: grid; place-items: center; width: 66px; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 5px; background: #000; color: var(--text-dim); }
   .recent-media-thumb img { width: 100%; height: 100%; object-fit: cover; }
   .recent-media-copy { display: grid; gap: 3px; min-width: 0; }
-  .recent-media-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
-  .recent-media-copy small { color: var(--accent); font-size: 9px; }
+  .recent-media-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  .recent-media-copy small { color: var(--accent); font-size: 10px; }
   .media-filter { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-4); }
-  .media-filter button { padding: 7px 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-dim); font-size: 11px; font-weight: 650; }
+  .media-filter button { min-height: 32px; padding: 7px 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-dim); font-size: 12px; font-weight: 650; }
   .media-filter button:hover { background: var(--panel-2); color: var(--text); }
   .media-filter button.active { border-color: var(--semantic-live-border); background: var(--semantic-live-bg); color: var(--text); }
   .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap: var(--space-3); margin: 0; padding: 0 0 var(--space-3); list-style: none; }
   .media-grid li { min-width: 0; }
   .media-card-item { position: relative; display: flex; flex-direction: column; gap: 6px; }
-  .media-card-background { align-self: flex-start; padding: 5px 8px; font-size: 10px; }
+  .media-card-background { align-self: flex-start; min-height: 32px; padding: 6px 10px; font-size: 11px; }
   .media-card { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel-2); color: var(--text); text-align: left; cursor: grab; }
   .media-card:hover { border-color: var(--accent); box-shadow: var(--shadow-soft); }
   .media-card:active { cursor: grabbing; }
@@ -8438,8 +8587,8 @@ import {
   .media-favorite-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @keyframes favorite-pop { 50% { transform: scale(1.2); } }
   .media-card-footer { display: grid; gap: var(--space-2); width: 100%; padding: var(--space-3); }
-  .media-card-name { overflow: hidden; font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-  .media-card-action { color: var(--accent); font-size: 11px; font-weight: 700; }
+  .media-card-name { overflow: hidden; font-size: 13px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+  .media-card-action { color: var(--accent); font-size: 12px; font-weight: 700; }
 
   @media (max-width: 1100px) {
     .scripture-pane.browsing { display: block; overflow-y: auto; }
@@ -8480,8 +8629,8 @@ import {
 
   @media (max-width: 1100px) {
     .detail-workspace { grid-template-columns: 1fr; }
-    .detail-preview-panel { position: static; grid-row: 1; }
-    .edit-window { grid-row: 2; }
+    /* Keep the stacked visual order aligned with the DOM and keyboard order. */
+    .detail-preview-panel { position: static; }
   }
   @media (max-width: 700px) {
     .sidebar:not(.output-panel) { overflow: visible; }

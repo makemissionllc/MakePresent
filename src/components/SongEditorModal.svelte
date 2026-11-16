@@ -422,16 +422,35 @@
     onConfirm(title, payload, rawText, { author, copyright, ccliNumber, showCreditLine });
   }
 
+  let dialogEl: HTMLElement | undefined = $state();
+
   function onKeydown(e: KeyboardEvent): void {
     if (e.defaultPrevented) return;
-    if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    if (e.key === "Escape") { e.preventDefault(); onCancel(); return; }
+    if (e.key !== "Tab" || !dialogEl) return;
+
+    // Keep keyboard focus inside the dialog; the page behind it stays reachable only by pointer.
+    const focusable = Array.from(dialogEl.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+    )).filter((element) => element.getClientRects().length > 0);
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) return;
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !dialogEl.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !dialogEl.contains(active))) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 </script>
 
 {#if open}
   <div class="overlay" role="presentation" transition:veil={{ duration: 120 }}>
     <button class="backdrop" aria-label="Close dialog" tabindex="-1" onclick={onCancel}></button>
-    <div class="dialog wide" role="dialog" aria-modal="true" aria-label="Song Editor" tabindex="-1" in:surface={{ duration: 180, distance: 8 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => { e.stopPropagation(); onKeydown(e); }}>
+    <div class="dialog wide" role="dialog" aria-modal="true" aria-label="Song Editor" tabindex="-1" bind:this={dialogEl} in:surface={{ duration: 180, distance: 8 }} onclick={(e) => e.stopPropagation()} onkeydown={(e) => { e.stopPropagation(); onKeydown(e); }}>
       <header class="dialog-head">
         <h2>Song Editor</h2>
         <div class="head-actions">

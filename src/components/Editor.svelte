@@ -53,7 +53,6 @@ import {
 
   const SCRIPTURE_BOOKMARKS_KEY = "makrstudio.scripture-bookmarks";
   const RECENT_SCRIPTURE_KEY = "makrstudio.scripture.recent.v1";
-  const SCRIPTURE_READING_POSITION_KEY = "makrstudio.scripture-reading-position.v1";
   const SCRIPTURE_READING_PROGRESS_KEY = "makrstudio.scripture-reading-progress.v1";
   const SCRIPTURE_READER_SIZE_KEY = "makrstudio.scripture-reader-size.v1";
   const SCRIPTURE_READER_LAYOUT_KEY = "makrstudio.scripture-reader-layout.v1";
@@ -62,6 +61,7 @@ import {
   const RECENT_MEDIA_KEY = "makrstudio.media.recent.v1";
   const FAVORITE_MEDIA_KEY = "makrstudio.media.favorites.v1";
   const CONTENT_SHELF_KEY = "makrstudio.content-shelf.v1";
+  const FOCUS_MODE_KEY = "makrstudio.focus-mode.v1";
   type SourceTab = "songs" | "scripture" | "media";
 
   interface ContentShelfPreference {
@@ -86,6 +86,14 @@ import {
   type ScriptureReaderLayout = "auto" | "single" | "split";
 
   const savedContentShelf = readContentShelfPreference();
+
+  function readFocusModePreference(): boolean {
+    try {
+      return window.localStorage.getItem(FOCUS_MODE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  }
 
   function readRecentSongIds(): string[] {
     try {
@@ -127,17 +135,11 @@ import {
     }
   }
 
-  interface ScriptureReadingPosition {
-    bibleId: string;
-    book: string;
-    chapter: number;
-    version: string;
-  }
-
   interface ScriptureReadingProgress {
-    lastReadDate: string;
-    streak: number;
     readChapters: Record<string, number[]>;
+    /** Retained for compatibility with older on-device data; no daily goal UI uses these fields. */
+    lastReadDate?: string;
+    streak?: number;
   }
 
   function scriptureBookProgressKey(bibleId: string, book: string): string {
@@ -171,48 +173,24 @@ import {
     }
   }
 
-  function localDayKey(date = new Date()): string {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  }
-
-  function previousLocalDayKey(dayKey: string): string {
-    const [year, month, day] = dayKey.split("-").map(Number);
-    const previous = new Date(year, month - 1, day);
-    previous.setDate(previous.getDate() - 1);
-    return localDayKey(previous);
-  }
-
   function readScriptureReadingProgress(): ScriptureReadingProgress {
     try {
       const raw = window.localStorage.getItem(SCRIPTURE_READING_PROGRESS_KEY);
-      if (!raw) return { lastReadDate: "", streak: 0, readChapters: {} };
+      if (!raw) return { readChapters: {} };
       const value = JSON.parse(raw) as Partial<ScriptureReadingProgress>;
-      const validStreak = typeof value.lastReadDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.lastReadDate) &&
-        Number.isInteger(value.streak) && Number(value.streak) >= 1;
+      const validLastReadDate = typeof value.lastReadDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.lastReadDate)
+        ? value.lastReadDate
+        : undefined;
+      const validStreak = Number.isInteger(value.streak) && Number(value.streak) >= 1
+        ? Math.min(Number(value.streak), 9999)
+        : undefined;
       return {
-        lastReadDate: validStreak ? value.lastReadDate! : "",
-        streak: validStreak ? Math.min(Number(value.streak), 9999) : 0,
         readChapters: sanitizeReadChapters(value.readChapters),
+        ...(validLastReadDate ? { lastReadDate: validLastReadDate } : {}),
+        ...(validStreak ? { streak: validStreak } : {}),
       };
     } catch {
-      return { lastReadDate: "", streak: 0, readChapters: {} };
-    }
-  }
-
-  function readScriptureReadingPosition(): ScriptureReadingPosition | null {
-    try {
-      const raw = window.localStorage.getItem(SCRIPTURE_READING_POSITION_KEY);
-      if (!raw) return null;
-      const value = JSON.parse(raw) as Partial<ScriptureReadingPosition>;
-      return typeof value.bibleId === "string" && typeof value.book === "string" &&
-        Number.isInteger(value.chapter) && Number(value.chapter) > 0
-        ? { bibleId: value.bibleId, book: value.book, chapter: Number(value.chapter), version: typeof value.version === "string" ? value.version : "" }
-        : null;
-    } catch {
-      return null;
+      return { readChapters: {} };
     }
   }
 
@@ -321,6 +299,10 @@ import {
   let itemDropIndex = $state<number | null>(null);
   let displays = $state<DisplayInfo[] | null>(null);
   let savedLabel = $state<string>("Not saved");
+  let saveStatus = $state<"idle" | "pending" | "saving" | "saved" | "error">("idle");
+  let deletedSlideUndo = $state<{ slide: Slide; index: number; projectId: string } | null>(null);
+  let deleteUndoBusy = $state(false);
+  let deleteUndoTimer: ReturnType<typeof setTimeout> | null = null;
   let errorMsg = $state<string | null>(null);
   let countdown = $state<CountdownView>({ active: false, running: false, remainingSeconds: 0, outputVisible: false, mode: null, targetTime: null });
   let countdownMinutes = $state("10");
@@ -348,6 +330,8 @@ import {
   // Content sources share one bottom bar; the running Playlist stays on the left.
   let sourceTab = $state<SourceTab>(savedContentShelf.tab);
   let sourceOpen = $state(savedContentShelf.open);
+  let focusMode = $state(readFocusModePreference());
+  let focusToggleElement = $state<HTMLButtonElement | null>(null);
   let mediaQuery = $state("");
   let mediaResults = $state<MediaAsset[]>([]);
   let recentMediaHashes = $state<string[]>(readRecentMediaHashes());
@@ -384,6 +368,18 @@ import {
       // The shelf still works for this session if local storage is unavailable.
     }
   });
+  $effect(() => {
+    try {
+      window.localStorage.setItem(FOCUS_MODE_KEY, String(focusMode));
+    } catch {
+      // Focus mode stays available for this session if local storage is unavailable.
+    }
+  });
+
+  function toggleFocusMode(): void {
+    focusMode = !focusMode;
+    if (focusMode) requestAnimationFrame(() => focusToggleElement?.focus());
+  }
   type BackgroundApplyScope = "item" | "songs" | "scripture" | "all";
   let backgroundPopoverOpen = $state(false);
   let backgroundApplyScope = $state<BackgroundApplyScope>("item");
@@ -511,6 +507,9 @@ import {
     try { window.localStorage.setItem(FAVORITE_MEDIA_KEY, JSON.stringify(favoriteMediaHashes)); } catch { /* favorites remain available for this session */ }
   }
   let settingsOpen = $state(false);
+  let topbarMoreOpen = $state(false);
+  let topbarMoreMenu = $state<HTMLDetailsElement | null>(null);
+  let topbarMoreSummary = $state<HTMLElement | null>(null);
   let settingsRequestedTab = $state<"plugins" | "logs" | "whats-new" | null>(null);
   // Service check — a calm pre-presentation checklist. It only reads state and
   // opens panels; it never puts a slide live or start polling.
@@ -518,6 +517,7 @@ import {
   let welcomeDismissed = $state(false);
   let importingMedia = $state(false);
   let scriptureQuery = $state("");
+  let scriptureSearchInput = $state<HTMLInputElement | null>(null);
   let scriptureResults = $state<ScriptureMatch[]>([]);
   let scriptureOpen = $state(false);
   let scriptureIdx = $state(-1);
@@ -542,15 +542,7 @@ import {
   let browseCopyStatus = $state<string | null>(null);
   let scriptureBookmarks = $state<ScriptureBookmark[]>(readScriptureBookmarks());
   let recentScripturePassages = $state<RecentScripturePassage[]>(readRecentScripturePassages());
-  let lastReadingPosition = $state<ScriptureReadingPosition | null>(readScriptureReadingPosition());
   let scriptureReadingProgress = $state<ScriptureReadingProgress>(readScriptureReadingProgress());
-  let readingTodayKey = $state(localDayKey());
-  const readingCompletedToday = $derived(scriptureReadingProgress.lastReadDate === readingTodayKey);
-  const readingStreak = $derived.by(() => {
-    const today = readingTodayKey;
-    const lastRead = scriptureReadingProgress.lastReadDate;
-    return lastRead === today || lastRead === previousLocalDayKey(today) ? scriptureReadingProgress.streak : 0;
-  });
   const currentBookReadCount = $derived(selectedBibleId && selectedBook
     ? (scriptureReadingProgress.readChapters[scriptureBookProgressKey(selectedBibleId, selectedBook)]?.length ?? 0)
     : 0);
@@ -584,13 +576,8 @@ import {
     observer.observe(pane);
     return () => observer.disconnect();
   });
-  let continuingReading = $state(false);
-  let continueReadingSeq = 0;
   let bibleBookQuery = $state("");
   const visibleBibleBooks = $derived(rankBibleBooks(bibleBooks, bibleBookQuery));
-  const showContinueReading = $derived(Boolean(lastReadingPosition) && !(
-    lastReadingPosition?.bibleId === selectedBibleId && lastReadingPosition.book === selectedBook && lastReadingPosition.chapter === selectedChapter
-  ));
   let bookmarkQuery = $state("");
   const visibleBookmarks = $derived.by(() => {
     const query = bookmarkQuery.trim().toLocaleLowerCase();
@@ -607,7 +594,7 @@ import {
   let verseTextError = $state<string | null>(null);
   let verseTextTimer: ReturnType<typeof setTimeout> | null = null;
   let verseTextSeq = 0;
-  let browseCollapsed = $state(true);
+  let browseCollapsed = $state(false);
   let browseLoading = $state(false);
   let browseError = $state<string | null>(null);
   let browseRetry = $state<(() => void) | null>(null);
@@ -839,6 +826,8 @@ import {
   let draftBody = $state("");
   let draftAutoAdvance = $state("");
   let draftId: string | null = $state(null);
+  let slideCopyStatus = $state<string | null>(null);
+  let slideCopyStatusTimer: ReturnType<typeof setTimeout> | null = null;
   let nameTimer: ReturnType<typeof setTimeout> | null = null;
   let titleTimer: ReturnType<typeof setTimeout> | null = null;
   let bodyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -936,6 +925,7 @@ import {
   const selectedItemBackground = $derived(selectedItem ? project?.itemBackgrounds?.[selectedItem.id] ?? null : null);
   const selectedItemSlides = $derived(selectedItem ? selectedItem.slideIds.map((id) => project?.slides.find((s) => s.id === id)).filter((s): s is Slide => !!s) : []);
   const gridSlides = $derived(gridScope === "all" ? (project?.slides ?? []) : selectedItemSlides);
+  let detailNavigationBusy = $state(false);
   const ITEM_STATE_ERROR = "Playlist item data is missing from the backend. Restart MakrStudio with the updated app build.";
   $effect(() => {
     if (appState && !Array.isArray(appState.items)) {
@@ -963,6 +953,7 @@ import {
       project?.slides[0] ??
       null,
   );
+  const detailSlideIndex = $derived(showDetail && selected ? gridSlides.findIndex((slide) => slide.id === selected.id) : -1);
   const selectedEffectiveBackground = $derived(selected ? appState?.effectiveBackgrounds?.[selected.id] ?? selected.background : null);
   // Consume Rust's resolved ids; never resolve kind/item precedence here.
   function lookForSlide(slide: Slide | null) {
@@ -991,6 +982,12 @@ import {
         }
       : null,
   );
+  const draftBodyStats = $derived.by(() => {
+    const words = draftBody.trim().split(/\s+/).filter(Boolean).length;
+    const lines = draftBody.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+    const characters = [...draftBody].length;
+    return { words, lines, characters };
+  });
   const normalizedLibrarySongs = $derived((library?.songs ?? []).map((song) => ({ song, title: song.title.toLowerCase() })));
   const librarySongs = $derived.by(() => {
     const query = librarySearch.trim().toLowerCase();
@@ -1295,6 +1292,74 @@ import {
     detailFromGrid = true;
   }
 
+  async function copySlideText(slide: Slide): Promise<void> {
+    const title = (draftId === slide.id ? draftTitle : slide.title).trim();
+    const body = (draftId === slide.id ? draftBody : slide.body).trim();
+    const text = [title, body].filter(Boolean).join("\n\n");
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard access is unavailable.");
+      if (!text) {
+        slideCopyStatus = "This slide has no text to copy.";
+      } else {
+        await navigator.clipboard.writeText(text);
+        slideCopyStatus = "Slide text copied.";
+      }
+    } catch {
+      slideCopyStatus = "Could not copy. Check clipboard permission and try again.";
+    }
+    if (slideCopyStatusTimer) clearTimeout(slideCopyStatusTimer);
+    slideCopyStatusTimer = setTimeout(() => {
+      slideCopyStatus = null;
+      slideCopyStatusTimer = null;
+    }, 3000);
+  }
+
+  async function navigateDetailSlide(offset: -1 | 1): Promise<void> {
+    if (detailNavigationBusy || !selected) return;
+    const current = selected;
+    const currentIndex = gridSlides.findIndex((slide) => slide.id === current.id);
+    const target = gridSlides[currentIndex + offset];
+    if (currentIndex < 0 || !target) return;
+
+    const patch: { name?: string; title?: string; body?: string; autoAdvanceSecs?: number | null } = {};
+    if (draftId === current.id) {
+      if (draftName !== (current.name ?? "")) patch.name = draftName;
+      if (draftTitle !== current.title) patch.title = draftTitle;
+      if (draftBody !== current.body) patch.body = draftBody;
+      const autoAdvanceValue = draftAutoAdvance.trim();
+      if (autoAdvanceValue === "") {
+        if (current.autoAdvanceSecs !== null) patch.autoAdvanceSecs = null;
+      } else {
+        const seconds = Number(autoAdvanceValue);
+        if (!Number.isFinite(seconds) || seconds < 1 || seconds > 86400) {
+          errorMsg = "Auto-advance must be a number between 1 and 86400 seconds (blank = off)";
+          return;
+        }
+        const normalized = Math.floor(seconds);
+        if (current.autoAdvanceSecs !== normalized) patch.autoAdvanceSecs = normalized;
+      }
+    }
+
+    detailNavigationBusy = true;
+    for (const timer of [nameTimer, titleTimer, bodyTimer, autoAdvanceTimer]) {
+      if (timer) clearTimeout(timer);
+    }
+    nameTimer = null;
+    titleTimer = null;
+    bodyTimer = null;
+    autoAdvanceTimer = null;
+    try {
+      if (Object.keys(patch).length > 0) appState = await api.updateSlide(current.id, patch);
+      selectedId = target.id;
+      selectedItemId = target.itemId ?? selectedItemId;
+      errorMsg = null;
+    } catch (e) {
+      errorMsg = String(e);
+    } finally {
+      detailNavigationBusy = false;
+    }
+  }
+
   function closeDetail(): void {
     showDetail = false;
     detailFromGrid = false;
@@ -1405,11 +1470,13 @@ import {
   }
 
   async function fetchApiScripture(q: string): Promise<void> {
+    const seq = ++scriptureSeq;
     scriptureBusy = true;
     scriptureStatus = null;
     scriptureLoading = true;
     try {
       const matches = (await api.lookupApiScripture(q.trim())).map((match) => ({ ...match, translation: "KJV" }));
+      if (seq !== scriptureSeq) return;
       scriptureResults = matches;
       scriptureOpen = matches.length > 0;
       scriptureIdx = -1;
@@ -1417,12 +1484,15 @@ import {
         scriptureStatus = "bible-api.com returned no verses for that reference.";
       }
     } catch (e) {
+      if (seq !== scriptureSeq) return;
       scriptureResults = [];
       scriptureOpen = false;
       errorMsg = String(e);
     } finally {
       scriptureBusy = false;
-      scriptureLoading = false;
+      if (seq === scriptureSeq) {
+        scriptureLoading = false;
+      }
     }
   }
 
@@ -1454,10 +1524,12 @@ import {
     const value = (e.target as HTMLInputElement).value;
     scriptureQuery = value;
     scriptureIdx = -1;
+    scriptureSeq += 1;
     if (scriptureTimer) clearTimeout(scriptureTimer);
+    scriptureResults = [];
+    scriptureOpen = false;
+    scriptureStatus = null;
     if (!value.trim()) {
-      scriptureResults = [];
-      scriptureOpen = false;
       scriptureLoading = false;
       return;
     }
@@ -1465,6 +1537,21 @@ import {
     scriptureTimer = setTimeout(() => {
       void doScriptureSearch(value);
     }, 150);
+  }
+
+  function clearScriptureSearch(): void {
+    scriptureSeq += 1;
+    if (scriptureTimer) {
+      clearTimeout(scriptureTimer);
+      scriptureTimer = null;
+    }
+    scriptureQuery = "";
+    scriptureResults = [];
+    scriptureOpen = false;
+    scriptureIdx = -1;
+    scriptureLoading = false;
+    scriptureStatus = null;
+    scriptureSearchInput?.focus();
   }
 
   function selectScripture(match: ScriptureMatch): void {
@@ -1486,9 +1573,8 @@ import {
         scriptureIdx <= 0 ? scriptureResults.length - 1 : scriptureIdx - 1;
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (scriptureIdx >= 0 && scriptureIdx < scriptureResults.length) {
-        selectScripture(scriptureResults[scriptureIdx]);
-      }
+      const match = scriptureResults[scriptureIdx >= 0 && scriptureIdx < scriptureResults.length ? scriptureIdx : 0];
+      if (match) selectScripture(match);
     } else if (e.key === "Escape") {
       scriptureOpen = false;
       scriptureIdx = -1;
@@ -1637,15 +1723,6 @@ import {
       selectedChapter = chapter;
       browseCopyStatus = null;
       bookmarkStatus = null;
-      const bible = bibles.find((item) => item.id === bibleId);
-      const position: ScriptureReadingPosition = {
-        bibleId,
-        book,
-        chapter,
-        version: bible?.shortName?.trim() || bible?.name?.trim() || "",
-      };
-      lastReadingPosition = position;
-      try { window.localStorage.setItem(SCRIPTURE_READING_POSITION_KEY, JSON.stringify(position)); } catch { /* keep the reading position for this session */ }
       use("browse");
     } catch (e) {
       if (request === browseRequestSeq) {
@@ -1678,20 +1755,8 @@ import {
     delete readChapters[key];
     if (nextChapters.length > 0) readChapters[key] = nextChapters.slice(0, 200);
 
-    let lastReadDate = scriptureReadingProgress.lastReadDate;
-    let streak = scriptureReadingProgress.streak;
-    if (!wasRead) {
-      const today = localDayKey();
-      readingTodayKey = today;
-      if (lastReadDate !== today) {
-        streak = lastReadDate === previousLocalDayKey(today) ? streak + 1 : 1;
-        lastReadDate = today;
-      }
-    }
-
     const nextProgress: ScriptureReadingProgress = {
-      lastReadDate,
-      streak,
+      ...scriptureReadingProgress,
       readChapters: Object.fromEntries(Object.entries(readChapters).slice(-80)),
     };
     scriptureReadingProgress = nextProgress;
@@ -1727,52 +1792,7 @@ import {
     });
   }
 
-  async function continueReading(): Promise<void> {
-    const position = lastReadingPosition;
-    if (!position || continuingReading) return;
-    continuingReading = true;
-    const sequence = ++continueReadingSeq;
-    const active = () => sequence === continueReadingSeq && !editorDisposed;
-    try {
-      sourceTab = "scripture";
-      sourceOpen = true;
-      browseCollapsed = false;
-      bibleBookQuery = "";
-      verseTextQuery = "";
-      verseTextSeq++;
-      if (verseTextTimer) clearTimeout(verseTextTimer);
-      browseError = null;
-      await loadBibles();
-      if (!active()) return;
-      if (!bibles.some((bible) => bible.id === position.bibleId)) {
-        browseError = `${position.version || "That Bible"} is no longer available. Choose another translation to continue.`;
-        return;
-      }
-      selectedBibleId = position.bibleId;
-      try { window.localStorage.setItem("makrstudio.scripture-bible-id", position.bibleId); } catch { /* keep it selected for this session */ }
-      await loadBooks(position.bibleId);
-      if (!active()) return;
-      if (!bibleBooks.includes(position.book)) {
-        browseError = `${position.book} is not available in ${position.version || "that translation"}. Choose another book.`;
-        return;
-      }
-      await loadChaptersForBook(position.bibleId, position.book);
-      if (!active()) return;
-      if (!chapterNumbers.includes(position.chapter)) {
-        browseError = `${position.book} ${position.chapter} is not available in ${position.version || "that translation"}. Choose another chapter.`;
-        return;
-      }
-      await loadChapterVerses(position.bibleId, position.book, position.chapter);
-      if (active() && !browseError && selectedBibleId === position.bibleId && selectedBook === position.book && selectedChapter === position.chapter && chapterVerses.length > 0) {
-        readerMode = true;
-      }
-    } finally {
-      continuingReading = false;
-    }
-  }
-
   function onBrowseBibleChange(e: Event): void {
-    continueReadingSeq++;
     const id = (e.target as HTMLSelectElement).value;
     selectedBibleId = id;
     bibleBookQuery = "";
@@ -1786,13 +1806,11 @@ import {
   }
 
   function onBrowseBookSelect(book: string): void {
-    continueReadingSeq++;
     if (!selectedBibleId) return;
     void loadChaptersForBook(selectedBibleId, book);
   }
 
   function onBrowseChapterSelect(ch: number): void {
-    continueReadingSeq++;
     if (!selectedBibleId || !selectedBook) return;
     void loadChapterVerses(selectedBibleId, selectedBook, ch);
   }
@@ -2775,15 +2793,90 @@ import {
 
   function deleteSlide(slide: Slide): void {
     const wasSelected = selectedId === slide.id;
+    const projectId = project?.id;
+    const index = project?.slides.findIndex((item) => item.id === slide.id) ?? -1;
+    if (!projectId || index < 0) return;
+    const deleted = JSON.parse(JSON.stringify(slide)) as Slide;
     void (async () => {
       try {
         errorMsg = null;
-        appState = await api.deleteSlide(slide.id);
-        if (wasSelected) selectedId = null;
+        const nextState = await api.deleteSlide(slide.id);
+        appState = nextState;
+        if (wasSelected) {
+          const savedSelection = nextState.project.selected ?? null;
+          selectedId = nextState.project.slides.some((item) => item.id === savedSelection)
+            ? savedSelection
+            : nextState.project.slides[Math.min(index, nextState.project.slides.length - 1)]?.id ?? null;
+          selectedItemId = nextState.items.find((item) => item.slideIds.includes(selectedId ?? ""))?.id
+            ?? nextState.items[0]?.id
+            ?? null;
+        }
+        offerSlideDeleteUndo(deleted, index, projectId);
       } catch (e) {
         errorMsg = String(e);
       }
     })();
+  }
+
+  function dismissSlideDeleteUndo(): void {
+    if (deleteUndoTimer) clearTimeout(deleteUndoTimer);
+    deleteUndoTimer = null;
+    deletedSlideUndo = null;
+  }
+
+  function offerSlideDeleteUndo(slide: Slide, index: number, projectId: string): void {
+    if (deleteUndoTimer) clearTimeout(deleteUndoTimer);
+    deletedSlideUndo = { slide, index, projectId };
+    deleteUndoTimer = setTimeout(() => {
+      deletedSlideUndo = null;
+      deleteUndoTimer = null;
+    }, 8000);
+  }
+
+  async function undoDeletedSlide(): Promise<void> {
+    const undo = deletedSlideUndo;
+    if (!undo || deleteUndoBusy) return;
+    if (project?.id !== undo.projectId) {
+      dismissSlideDeleteUndo();
+      return;
+    }
+    if (deleteUndoTimer) clearTimeout(deleteUndoTimer);
+    deleteUndoTimer = null;
+    deletedSlideUndo = null;
+    deleteUndoBusy = true;
+    try {
+      errorMsg = null;
+      const slide = JSON.parse(JSON.stringify(undo.slide)) as Slide;
+      const nextState = await api.restoreSlide(slide, undo.index, undo.projectId);
+      appState = nextState;
+      selectedId = undo.slide.id;
+      selectedItemId = nextState.items.find((item) => item.slideIds.includes(undo.slide.id))?.id
+        ?? nextState.items[0]?.id
+        ?? null;
+      centralView = "slides";
+      showDetail = false;
+      use("slides");
+    } catch (e) {
+      errorMsg = String(e);
+      deletedSlideUndo = undo;
+    } finally {
+      deleteUndoBusy = false;
+    }
+  }
+
+  async function duplicateSlide(slide: Slide): Promise<void> {
+    try {
+      errorMsg = null;
+      const nextState = await api.duplicateSlide(slide.id);
+      appState = nextState;
+      const duplicate = nextState.project.slides.find((item) => item.id === nextState.project.selected);
+      if (duplicate) {
+        selectedId = duplicate.id;
+        selectedItemId = duplicate.itemId ?? selectedItemId;
+      }
+    } catch (e) {
+      errorMsg = String(e);
+    }
   }
 
   function onDisplayChange(e: Event): void {
@@ -3180,19 +3273,31 @@ import {
     return false;
   }
 
+  function handleTopbarOutsidePointerDown(e: PointerEvent): void {
+    if (topbarMoreOpen && !topbarMoreMenu?.contains(e.target as Node)) topbarMoreOpen = false;
+  }
+
   function handleGlobalKeydown(e: KeyboardEvent): void {
     if (e.defaultPrevented || e.isComposing) return;
     if (onboardingOpen) return;
+    if (e.key === "Escape" && topbarMoreOpen) {
+      e.preventDefault();
+      topbarMoreOpen = false;
+      topbarMoreSummary?.focus();
+      return;
+    }
     const isK = e.key.toLowerCase() === "k";
     const mod = e.ctrlKey || e.metaKey;
     if (mod && isK) {
       e.preventDefault();
+      topbarMoreOpen = false;
       globalSearchOpen = !globalSearchOpen;
       if (globalSearchOpen) use("shortcuts");
       return;
     }
     if (e.key === "?" && !isTextInputFocused()) {
       e.preventDefault();
+      topbarMoreOpen = false;
       helpOpen = !helpOpen;
       return;
     }
@@ -3224,6 +3329,28 @@ import {
       helpOpen
     ) return;
     if (tourActive) return;
+    if (mod && e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "f" && !isTextInputFocused()) {
+      e.preventDefault();
+      topbarMoreOpen = false;
+      toggleFocusMode();
+      return;
+    }
+    if (mod && e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "s" && appState && !isTextInputFocused()) {
+      e.preventDefault();
+      topbarMoreOpen = false;
+      openSavePlaylist();
+      return;
+    }
+    if (
+      mod && e.shiftKey && !e.altKey && !e.repeat && e.key.toLowerCase() === "d" &&
+      centralView === "slides" && selected && !isTextInputFocused()
+    ) {
+      e.preventDefault();
+      topbarMoreOpen = false;
+      use("shortcuts");
+      void duplicateSlide(selected);
+      return;
+    }
     if (mod && e.shiftKey && e.key.toLowerCase() === "l" && !isTextInputFocused() && project?.live) {
       e.preventDefault();
       use("shortcuts");
@@ -3237,6 +3364,12 @@ import {
         e.preventDefault();
         navigateBrowseChapter(e.key === "ArrowLeft" ? -1 : 1);
       }
+      return;
+    }
+    if (e.key === "Escape" && focusMode && !isTextInputFocused()) {
+      e.preventDefault();
+      focusMode = false;
+      focusToggleElement?.focus();
       return;
     }
     if (centralView === "slides" && (e.key === "ArrowRight" || e.key === "ArrowLeft") && !isTextInputFocused()) {
@@ -3390,10 +3523,10 @@ import {
     let unAck: () => void = () => {};
     let unCountdown: () => void = () => {};
     let unFileDrop: (() => void) | null = null;
-    const refreshReadingDay = () => { readingTodayKey = localDayKey(); editorVisible = !document.hidden; };
-    refreshReadingDay();
-    window.addEventListener("focus", refreshReadingDay);
-    document.addEventListener("visibilitychange", refreshReadingDay);
+    const refreshEditorVisibility = () => { editorVisible = !document.hidden; };
+    refreshEditorVisibility();
+    window.addEventListener("focus", refreshEditorVisibility);
+    document.addEventListener("visibilitychange", refreshEditorVisibility);
 
     // Native Tauri drag events preserve physical pointer coordinates. Map them
     // back to CSS pixels before hit testing so OS drops can target exact rows.
@@ -3502,6 +3635,7 @@ import {
 
     function applyWorkspaceState(s: ClientState): void {
       const wasLoading = appState === null;
+      if (deletedSlideUndo && deletedSlideUndo.projectId !== s.project.id) dismissSlideDeleteUndo();
       appState = s;
       errorMsg = null;
       workspaceLoading = false;
@@ -3574,7 +3708,11 @@ import {
     })();
     void subscribeAutosave((e) => {
       if (cancelled) return;
-      savedLabel = e.status === "saved" ? `Saved ${formatAt(e.at)}` : `Autosave failed: ${e.message ?? "unknown"}`;
+      saveStatus = e.status;
+      if (e.status === "pending") savedLabel = "Changes waiting to save…";
+      else if (e.status === "saving") savedLabel = "Saving…";
+      else if (e.status === "saved") savedLabel = `Saved ${formatAt(e.at)}`;
+      else savedLabel = `Autosave failed: ${e.message ?? "unknown"}`;
     }).then((sub) => {
       if (cancelled) sub();
       else unAuto = sub;
@@ -3589,6 +3727,7 @@ import {
     }).catch(() => {});
 
     window.addEventListener("keydown", handleGlobalKeydown);
+    window.addEventListener("pointerdown", handleTopbarOutsidePointerDown);
     return () => {
       cancelled = true;
       unSub();
@@ -3599,8 +3738,11 @@ import {
       if (unFileDrop) unFileDrop();
       cancelPointerDrag();
       window.removeEventListener("keydown", handleGlobalKeydown);
-      window.removeEventListener("focus", refreshReadingDay);
-      document.removeEventListener("visibilitychange", refreshReadingDay);
+      window.removeEventListener("pointerdown", handleTopbarOutsidePointerDown);
+      window.removeEventListener("focus", refreshEditorVisibility);
+      document.removeEventListener("visibilitychange", refreshEditorVisibility);
+      if (deleteUndoTimer) clearTimeout(deleteUndoTimer);
+      if (slideCopyStatusTimer) clearTimeout(slideCopyStatusTimer);
       if (scriptureTimer) clearTimeout(scriptureTimer);
       if (verseTextTimer) clearTimeout(verseTextTimer);
       verseTextSeq++;
@@ -3656,7 +3798,11 @@ import {
     {/if}
   </div>
 {:else}
-<div class="shell" use:workspaceReady>
+<div
+  class="shell"
+  class:focus-mode={focusMode}
+  use:workspaceReady
+>
   <header class="topbar">
     <h1><BrandLockup /></h1>
     <span class="project-name">{project?.name ?? "No view"}</span>
@@ -3672,17 +3818,24 @@ import {
       ⌕ Search
       <span class="kbd">Ctrl+K</span>
     </button>
-    <span class="saved-label">{savedLabel}</span>
+    <span
+      class="saved-label"
+      class:pending={saveStatus === "pending" || saveStatus === "saving"}
+      class:error={saveStatus === "error"}
+      aria-live={saveStatus === "error" ? "assertive" : "polite"}
+      title={savedLabel}
+    >{savedLabel}</span>
     <button class="ghost" onclick={() => newProject()}>New view</button>
-    <button class="ghost help-trigger" title="Help — guided tour and keyboard shortcuts" onclick={() => (helpOpen = true)}>
-      ? Help
-    </button>
     <button class="ghost service-check-trigger" class:tour-highlight={showTour && tourStep === 7} title="Service check — playlist, display, and Stage readiness" aria-label={`Service check: ${serviceReadyCount} of ${serviceChecks.length} essentials ready`} onclick={() => (serviceCheckOpen = true)}>
       <span aria-hidden="true">✓</span><span class="service-check-label">Service check</span><span class="service-check-count">{serviceReadyCount}/{serviceChecks.length}</span>
     </button>
-    <button class="ghost" title="Settings" onclick={() => (settingsOpen = true)}>
-      &#9881; Settings
-    </button>
+    <details class="topbar-more" bind:this={topbarMoreMenu} bind:open={topbarMoreOpen}>
+      <summary class="ghost topbar-more-trigger" bind:this={topbarMoreSummary} title="Help and settings">••• More</summary>
+      <div class="topbar-more-menu" role="group" aria-label="More options">
+        <button class="ghost topbar-more-item" onclick={() => { topbarMoreOpen = false; helpOpen = true; }}>? Help</button>
+        <button class="ghost topbar-more-item" onclick={() => { topbarMoreOpen = false; settingsOpen = true; }}>&#9881; Settings</button>
+      </div>
+    </details>
   </header>
 
   {#if notice}
@@ -3800,7 +3953,7 @@ import {
           <p class="hint-line"><kbd>←</kbd> <kbd>→</kbd> advance live · <kbd>Ctrl+Shift+L</kbd> follow live · <kbd>Ctrl+K</kbd> search.<button class="hint-x" title="Dismiss" aria-label="Dismiss shortcuts hint" onclick={() => dismiss("shortcuts")}>×</button></p>
         {/if}
         <div class="template-actions">
-          <button class="ghost template-btn" onclick={() => openSavePlaylist()} title="Save this View's playlist as a reusable Playlist">Save as Playlist</button>
+          <button class="ghost template-btn" onclick={() => openSavePlaylist()} title="Save this View's playlist as a reusable Playlist · Ctrl+Shift+S (⌘⇧S on Mac)">Save as Playlist</button>
         </div>
         {#if savedPlaylistName}
           <div class="template-save-success" role="status" transition:fade={{ duration: prefersReducedMotion() ? 0 : 160 }}>
@@ -3853,12 +4006,31 @@ import {
           <strong>{centralView === "looks" ? "Shape the look" : showDetail && selected ? "Edit slide" : "Build your service"}</strong>
           <span class="editor-subtitle">{centralView === "looks" ? "Set the style shown on your screens." : showDetail && selected ? "Edit the wording and background, then preview the slide." : "Add content, arrange the order, then send a slide live."}</span>
         </div>
-        <div class="workspace-switch" class:looks-active={centralView === "looks"} aria-label="Workspace view">
-          <button class="ws-btn" class:active={centralView === "slides"} aria-pressed={centralView === "slides"} onclick={() => (centralView = "slides")} aria-label="Open slide workspace"><span aria-hidden="true">▦</span> Slides</button>
-          <button class="ws-btn" class:active={centralView === "looks"} aria-pressed={centralView === "looks"} onclick={(e) => { requestedLookId = null; centralView = "looks"; use("looks"); const content = e.currentTarget.closest(".editor-content"); if (content) content.scrollTop = 0; }} aria-label="Open Look editor"><span aria-hidden="true">◉</span> Looks</button>
+        <div class="workspace-actions">
+          <div class="workspace-switch" class:looks-active={centralView === "looks"} aria-label="Workspace view">
+            <button class="ws-btn" class:active={centralView === "slides"} aria-pressed={centralView === "slides"} onclick={() => (centralView = "slides")} aria-label="Open slide workspace"><span aria-hidden="true">▦</span> Slides</button>
+            <button class="ws-btn" class:active={centralView === "looks"} aria-pressed={centralView === "looks"} onclick={(e) => { requestedLookId = null; centralView = "looks"; use("looks"); const content = e.currentTarget.closest(".editor-content"); if (content) content.scrollTop = 0; }} aria-label="Open Look editor"><span aria-hidden="true">◉</span> Looks</button>
+          </div>
+          <button
+            class="ghost focus-toggle"
+            class:active={focusMode}
+            type="button"
+            bind:this={focusToggleElement}
+            aria-pressed={focusMode}
+            aria-label={focusMode ? "Exit focus mode" : "Enter focus mode"}
+            title={focusMode ? "Show Playlist and Output panels · Ctrl+Shift+F (⌘⇧F on Mac)" : "Hide Playlist and Output panels for more workspace room · Ctrl+Shift+F (⌘⇧F on Mac)"}
+            onclick={toggleFocusMode}
+          ><span aria-hidden="true">⛶</span>{focusMode ? "Exit focus" : "Focus"}</button>
         </div>
       </div>
       {#if itemLookUndo}<p class="hint-line" role="status">{itemLookUndo.message} <button class="ghost" disabled={itemLookBusy} onclick={undoItemLook}>Undo</button></p>{/if}
+      {#if deletedSlideUndo}
+        <p class="hint-line slide-delete-undo" role="status" aria-live="polite">
+          <span>Deleted {slideDisplayName(deletedSlideUndo.slide)}.</span>
+          <button class="ghost" disabled={deleteUndoBusy} onclick={() => void undoDeletedSlide()}>{deleteUndoBusy ? "Restoring…" : "Undo"}</button>
+          <button class="hint-x" aria-label="Dismiss undo" title="Dismiss" onclick={dismissSlideDeleteUndo}>×</button>
+        </p>
+      {/if}
       {#if centralView === "slides" && showHint(onboarding, "looks")}
         <p class="hint-line looks-hint">Looks control fonts and layout on each screen — open the Looks view to style them.<button class="hint-x" title="Dismiss" aria-label="Dismiss Looks hint" onclick={() => dismiss("looks")}>×</button></p>
       {/if}
@@ -3868,10 +4040,27 @@ import {
         <div class="detail-header">
           <button class="ghost" onclick={() => closeDetail()} title="Back to grid">← Grid</button>
           <span class="detail-title">{slideDisplayName(selected)} — Edit</span>
+          <button
+            class="ghost detail-slide-nav"
+            aria-label="Edit previous slide"
+            title="Previous slide in this grid"
+            disabled={detailNavigationBusy || detailSlideIndex <= 0}
+            onclick={() => void navigateDetailSlide(-1)}
+          >←</button>
+          <span class="detail-slide-position" aria-live="polite">{detailSlideIndex + 1} of {gridSlides.length}</span>
+          <button
+            class="ghost detail-slide-nav"
+            aria-label="Edit next slide"
+            title="Next slide in this grid"
+            disabled={detailNavigationBusy || detailSlideIndex < 0 || detailSlideIndex >= gridSlides.length - 1}
+            onclick={() => void navigateDetailSlide(1)}
+          >→</button>
           <span class="spacer"></span>
+          <button class="ghost" onclick={() => void copySlideText(selected)} title="Copy the current title and body">Copy text</button>
           <button class="ghost" class:active={project?.live === selected.id} onclick={() => goLive(selected)} title="Go live on Output">Go Live</button>
           <button class="ghost" onclick={() => closeDetail()}>Done</button>
         </div>
+        {#if slideCopyStatus}<p class="hint-line slide-copy-status" role="status" aria-live="polite">{slideCopyStatus}</p>{/if}
         <div class="detail-workspace">
         <div class="edit-window">
           <label>
@@ -3921,6 +4110,7 @@ import {
               oninput={(e) => onBodyInput((e.target as HTMLTextAreaElement).value)}
               onblur={() => flushBody()}
             ></textarea>
+            <span class="field-hint" title="Character count includes spaces and line breaks.">{draftBodyStats.words} {draftBodyStats.words === 1 ? "word" : "words"} · {draftBodyStats.lines} {draftBodyStats.lines === 1 ? "text line" : "text lines"} · {draftBodyStats.characters} {draftBodyStats.characters === 1 ? "character" : "characters"}</span>
           </label>
           <div class="field">
             <span class="field-label">Background</span>
@@ -4287,6 +4477,7 @@ import {
                   {#if slide.backgroundMode !== "inherit"}
                     <button class="ghost grid-inherit-background" onclick={() => void useItemBackground(slide)} title="Use this item's background">Use item background</button>
                   {/if}
+                  <button class="ghost grid-duplicate" aria-label={`Duplicate ${slideDisplayName(slide)}`} title="Duplicate slide · Ctrl+Shift+D (⌘⇧D on Mac)" onclick={(e) => { e.stopPropagation(); void duplicateSlide(slide); }}>⧉</button>
                   <button class="delete grid-delete" title="Delete slide" onclick={(e) => { e.stopPropagation(); deleteSlide(slide); }}>×</button>
                 </div>
               </div>
@@ -4877,12 +5068,14 @@ import {
           <div class="source-pane scripture-pane" class:browsing={!browseCollapsed} in:fade={{ duration: prefersReducedMotion() ? 0 : 150 }}>
             <div class="scripture-tools">
               <div class="sidebar-section scripture-section" class:has-content={scriptureOpen || scriptureQuery.trim().length > 0} class:active={scriptureOpen}>
-                <div class="section-title scripture-title">Add Scripture</div>
+                <div class="section-title scripture-title">Search Scripture</div>
                 <div class="scripture-wrap">
                   <input
                     type="text"
                     class="search"
-                    placeholder="e.g. John 3:16, psalm 23, jn 1"
+                    aria-label="Search Scripture references"
+                    placeholder="e.g. John 3:16, Psalm 23"
+                    bind:this={scriptureSearchInput}
                     value={scriptureQuery}
                     oninput={onScriptureInput}
                     onkeydown={onScriptureKeydown}
@@ -4895,6 +5088,16 @@ import {
                       }, 150);
                     }}
                   />
+                  {#if scriptureQuery.trim() && !scriptureBusy}
+                    <button
+                      type="button"
+                      class="scripture-clear"
+                      aria-label="Clear Scripture search"
+                      title="Clear search"
+                      onmousedown={(e) => e.preventDefault()}
+                      onclick={clearScriptureSearch}
+                    >×</button>
+                  {/if}
                   {#if scriptureLoading}
                     <span class="scripture-loading" aria-hidden="true">
                       <span class="media-spinner"></span>
@@ -4947,41 +5150,21 @@ import {
                 </div>
               </div>
 
-              {#if showContinueReading && lastReadingPosition}
-                <button class="continue-reading-card" onclick={() => void continueReading()} disabled={continuingReading} aria-busy={continuingReading}>
-                  <span class="continue-reading-mark" aria-hidden="true">↗</span>
-                  <span class="continue-reading-copy"><strong>Continue reading</strong><span>{lastReadingPosition.book} {lastReadingPosition.chapter}{lastReadingPosition.version ? ` · ${lastReadingPosition.version}` : ""}</span></span>
-                  <span class="continue-reading-action">{continuingReading ? "Opening…" : "Open chapter →"}</span>
-                </button>
-              {/if}
-
-              <section class="reading-rhythm-card" class:completed={readingCompletedToday} class:tour-highlight={showTour && tourStep === 5} role="group" aria-label="Daily Scripture reading progress">
-                <span class="reading-rhythm-icon" aria-hidden="true">{readingCompletedToday ? "✓" : "◷"}</span>
-                <div class="reading-rhythm-body">
-                  <div class="reading-rhythm-heading"><strong>One chapter a day</strong><span>{readingStreak > 0 ? `${readingStreak}-day streak` : "Start today"}</span></div>
-                  <p>{readingCompletedToday ? "Today’s reading is done." : "Mark a chapter read in Read book to complete today’s goal."}</p>
-                  <div class="reading-rhythm-track" role="progressbar" aria-label="Daily chapter goal" aria-valuemin="0" aria-valuemax="1" aria-valuenow={readingCompletedToday ? 1 : 0}>
-                    <span class:filled={readingCompletedToday}></span>
-                  </div>
-                  <small>Progress stays on this device.</small>
+              {#if browseCollapsed}
+                <div class="browse-panel" class:tour-highlight={showTour && tourStep === 3}>
+                  <button class="browse-header" onclick={() => (browseCollapsed = false)} aria-expanded="false">
+                    <span class="section-title" style="margin:0; border:none; padding:0;">Browse Scripture</span>
+                    <span class="browse-toggle">▸ Show</span>
+                  </button>
+                  {#if showHint(onboarding, "browse")}
+                    <p class="hint-line">Bible verses live here — Show to browse book → chapter → verse.<button class="hint-x" title="Dismiss" aria-label="Dismiss browse hint" onclick={() => dismiss("browse")}>×</button></p>
+                  {/if}
                 </div>
-              </section>
-
-              <div class="browse-panel" class:tour-highlight={showTour && tourStep === 3}>
-                <button class="browse-header" onclick={() => (browseCollapsed = !browseCollapsed)} aria-expanded={!browseCollapsed}>
-                  <span class="section-title" style="margin:0; border:none; padding:0;">Browse Scripture</span>
-                  <span class="browse-toggle">{browseCollapsed ? "▸ Show" : "▾ Hide"}</span>
-                </button>
-                {#if !browseCollapsed}
-                  <p class="browse-hint">Choose a book, chapter, then verse. Click to add or drag to the Playlist.</p>
-                {:else if showHint(onboarding, "browse")}
-                  <p class="hint-line">Bible verses live here — Show to browse book → chapter → verse.<button class="hint-x" title="Dismiss" aria-label="Dismiss browse hint" onclick={() => dismiss("browse")}>×</button></p>
-                {/if}
-              </div>
+              {/if}
 
             </div>
             {#if !browseCollapsed}
-              <div class="browse-dock" class:reader-mode={readerMode} data-reader-layout={readerLayout} class:tour-highlight={showTour && (tourStep === 3 || tourStep === 4 || tourStep === 6 || tourStep === 17)} role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
+              <div class="browse-dock" class:reader-mode={readerMode} data-reader-layout={readerLayout} class:tour-highlight={showTour && (tourStep === 3 || tourStep === 4 || tourStep === 5 || tourStep === 6 || tourStep === 17)} role="region" aria-label="Browse Scripture" transition:slideTransition={{ duration: prefersReducedMotion() ? 0 : 260, easing: cubicOut, axis: "y" }}>
                 <div class="browse-dock-header"><strong>Browse Scripture</strong><button class="browse-dock-close" onclick={() => (browseCollapsed = true)} aria-label="Close Scripture browser">× Close</button></div>
                 <div class="browse-dock-left">
                   <label>
@@ -5503,19 +5686,27 @@ import {
   .saved-label {
     font-size: 12px;
     color: var(--text-dim);
+    max-width: 230px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+
+  .saved-label.pending { color: var(--semantic-listening); }
+  .saved-label.error { color: var(--semantic-error); }
 
   /* Narrow windows: the view name yields first and non-critical chrome hides,
      so Search / New view / Clear output / Help / Settings never get pushed
      off-screen. */
-  @media (max-width: 700px) {
+  @media (max-width: 900px) {
     .topbar {
       gap: 8px;
     }
-    .saved-label,
     .search-trigger .kbd {
       display: none;
     }
+    .saved-label:not(.error) { display: none; }
+    .saved-label.error { max-width: 140px; }
     .service-check-label { display: none; }
   }
 
@@ -5572,6 +5763,55 @@ import {
   .service-check-trigger > span:first-child { color: var(--accent); font-weight: 800; }
   .service-check-count { padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); background: var(--panel-2); font-size: 9px; font-variant-numeric: tabular-nums; }
   .topbar button.service-check-trigger:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--panel)); }
+
+  .topbar-more {
+    position: relative;
+    flex: none;
+  }
+  .topbar-more-trigger {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 6px 9px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 12px;
+    list-style: none;
+    white-space: nowrap;
+  }
+  .topbar-more-trigger::-webkit-details-marker { display: none; }
+  .topbar-more-trigger::marker { content: ""; }
+  .topbar-more-trigger:hover,
+  .topbar-more[open] > .topbar-more-trigger {
+    border-color: var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+  }
+  .topbar-more-menu {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 7px);
+    right: 0;
+    display: grid;
+    gap: 3px;
+    min-width: 150px;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--panel);
+    box-shadow: 0 12px 28px rgba(0,0,0,.38);
+  }
+  .topbar-more-item {
+    min-height: 34px;
+    padding: 7px 9px;
+    border: 0;
+    border-radius: 6px;
+    color: var(--text-dim);
+    text-align: left;
+  }
+  .topbar-more-item:hover { background: var(--panel-2); color: var(--text); }
 
   .live-indicator {
     display: inline-flex;
@@ -6268,9 +6508,30 @@ import {
     position: relative;
   }
 
+  .scripture-wrap > input { padding-right: 36px; }
+
+  .scripture-clear {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    z-index: 1;
+    display: grid;
+    width: 26px;
+    height: 26px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .scripture-clear:hover { color: var(--text); }
+
   .scripture-loading {
     position: absolute;
-    right: 10px;
+    right: 38px;
     top: 9px;
   }
 
@@ -6565,6 +6826,19 @@ import {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .detail-slide-nav {
+    flex: none;
+    min-width: 30px;
+    padding-inline: 7px;
+    font-size: 15px;
+  }
+  .detail-slide-position {
+    flex: none;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
 
   .grid-toolbar {
     display: flex;
@@ -6713,7 +6987,7 @@ import {
   }
   .grid-actions {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 6px;
     justify-content: center;
   }
@@ -6727,6 +7001,13 @@ import {
     flex: 1;
   }
   .grid-delete {
+    grid-column: 3;
+    grid-row: 1;
+    font-size: 14px;
+    padding: 4px 8px;
+    line-height: 1;
+  }
+  .grid-duplicate {
     grid-column: 2;
     grid-row: 1;
     font-size: 14px;
@@ -6810,10 +7091,12 @@ import {
     background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 5px 8px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
+    padding: 5px 26px 5px 8px;
+    position: relative;
+  }
+  .slide-delete-undo {
+    border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+    color: var(--text);
   }
   .hint-line kbd {
     font-family: var(--font-mono, monospace);
@@ -6825,8 +7108,9 @@ import {
     white-space: nowrap;
   }
   .hint-x {
-    margin-left: auto;
-    flex: none;
+    position: absolute;
+    top: 3px;
+    right: 4px;
     border: none;
     background: transparent;
     color: var(--text-dim);
@@ -7215,27 +7499,6 @@ import {
   .bible-book-search { display: flex; flex-direction: column; gap: 5px; color: var(--text-dim); font-size: 11px; }
   .bible-book-search input { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel); font: inherit; }
   .book-search-count { margin: -4px 0 0; color: var(--text-dim); font-size: 10px; }
-  .continue-reading-card { display: flex; align-items: center; gap: 12px; width: min(100%, 640px); padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-radius: 10px; background: linear-gradient(110deg, color-mix(in srgb, var(--accent) 12%, var(--panel)), var(--panel-2)); color: var(--text); text-align: left; cursor: pointer; animation: scripture-resume-in var(--motion-normal) var(--ease-out) both; transition: border-color var(--motion-fast) var(--ease-in-out), transform var(--motion-fast) var(--ease-in-out), background var(--motion-normal) var(--ease-in-out); }
-  .continue-reading-card:hover { border-color: var(--accent); transform: translateY(-1px); }
-  .continue-reading-card:disabled { opacity: .75; cursor: wait; }
-  .continue-reading-mark { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 18%, var(--panel)); color: var(--accent); font-size: 18px; }
-  .continue-reading-copy { display: grid; gap: 3px; min-width: 0; }
-  .continue-reading-copy strong { font-size: 12px; }
-  .continue-reading-copy span { color: var(--text-dim); font-size: 11px; }
-  .continue-reading-action { margin-left: auto; color: var(--accent); font-size: 11px; font-weight: 700; white-space: nowrap; }
-  .reading-rhythm-card { display: flex; align-items: center; gap: 11px; width: min(100%, 640px); padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel); color: var(--text); animation: scripture-resume-in var(--motion-normal) var(--ease-out) both; }
-  .reading-rhythm-card.completed { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 6%, var(--panel)); }
-  .reading-rhythm-icon { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; border-radius: 50%; color: var(--text-dim); background: var(--panel-2); font-size: 15px; }
-  .reading-rhythm-card.completed .reading-rhythm-icon { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
-  .reading-rhythm-body { display: grid; gap: 5px; min-width: 0; width: 100%; }
-  .reading-rhythm-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-  .reading-rhythm-heading strong { font-size: 11px; }
-  .reading-rhythm-heading span { color: var(--accent); font-size: 10px; font-weight: 700; white-space: nowrap; }
-  .reading-rhythm-body p { margin: 0; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
-  .reading-rhythm-track { height: 3px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
-  .reading-rhythm-track span { display: block; width: 100%; height: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-in-out); }
-  .reading-rhythm-track span.filled { transform: scaleX(1); }
-  .reading-rhythm-body small { color: var(--text-dim); font-size: 9px; }
   .reader-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
   .reader-heading { display: grid; gap: 3px; }
   .reader-heading strong { color: var(--text); font-size: 13px; }
@@ -7283,14 +7546,6 @@ import {
   .reader-page .verse-num { flex: 0 0 auto; padding-top: .28em; font-size: .78em; }
   .reader-page .verse-text { max-width: 72ch; overflow: visible; color: var(--text); font-size: var(--reader-font-size, 16px); line-height: 1.65; text-overflow: clip; white-space: normal; }
   @keyframes reader-layout-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-
-  .browse-hint {
-    font-size: 10px;
-    color: var(--text-dim);
-    margin: 6px 0 0;
-    line-height: 1.4;
-    font-style: italic;
-  }
 
   /* Bottom-docked full-width Browse panel — pushes main content up, not overlay.
      Columns are flexible (shrink proportionally) with viewport-capped minimums
@@ -7896,6 +8151,33 @@ import {
     border-radius: 10px;
     background: rgba(0,0,0,0.2);
   }
+  .workspace-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+  }
+  .focus-toggle {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 6px 10px;
+    border-color: rgba(255,255,255,0.09);
+    border-radius: 8px;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 650;
+  }
+  .focus-toggle:hover, .focus-toggle.active {
+    border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+    background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+    color: var(--text);
+  }
+  .focus-toggle > span { color: var(--accent); font-size: 14px; }
   .ws-btn {
     min-width: 82px;
     padding: 8px 11px;
@@ -7958,7 +8240,7 @@ import {
   .grid-live-badge { z-index: 1; }
   .grid-label { text-align: left; padding: 2px; font-size: 11px; }
   .grid-actions { justify-content: stretch; }
-  .grid-go-live, .grid-delete { border-radius: 6px; }
+  .grid-go-live, .grid-duplicate, .grid-delete { border-radius: 6px; }
   .output-panel { background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent 35%), var(--panel); }
   .output-panel > .section-title, .output-sticky-top > .section-title {
     display: flex;
@@ -7996,6 +8278,15 @@ import {
     min-height: 0;
     overflow-y: auto;
     padding: 22px clamp(18px, 2.2vw, 34px) 28px;
+  }
+  .shell.focus-mode .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .shell.focus-mode .body > .sidebar {
+    display: none;
+  }
+  .shell.focus-mode .editor-content {
+    padding-inline: clamp(18px, 4vw, 64px);
   }
   .browse-dock {
     display: grid;
@@ -8040,6 +8331,7 @@ import {
   @media (max-width: 960px) {
     .body { grid-template-columns: minmax(155px, 23vw) minmax(0,1fr) minmax(155px, 23vw); }
     .editor-heading { align-items: flex-start; flex-direction: column; }
+    .workspace-actions { width: 100%; justify-content: flex-start; }
     .browse-dock {
       grid-template-columns: 1fr;
       grid-template-rows: auto;
@@ -8055,7 +8347,9 @@ import {
   }
   @media (max-width: 700px) {
     .body { grid-template-columns: 1fr; }
-    .editor-heading { flex-direction: row; align-items: center; }
+    .editor-heading { flex-direction: column; align-items: stretch; }
+    .workspace-actions { width: 100%; justify-content: flex-start; }
+    .focus-toggle { padding-inline: 8px; }
     .editor { min-height: 620px; overflow: visible; }
     .editor-content { overflow: visible; flex: 0 0 auto; }
   }
@@ -8507,8 +8801,6 @@ import {
     .reader-controls { width: 100%; justify-content: flex-start; gap: 6px; }
     .reader-controls :is(.reader-control, .reader-mode-toggle, .chapter-read-toggle) { min-height: 36px; }
     .reader-mode-toggle { margin-left: auto; }
-    .continue-reading-card { width: 100%; }
-    .continue-reading-action { font-size: 10px; }
   }
   @container scripture-workspace (max-width: 260px) {
     .source-pane.songs-pane { padding-inline: 8px; }
@@ -8526,8 +8818,7 @@ import {
   }
   .browse-dock.reader-mode .browse-verse-row { contain-intrinsic-size: auto 72px; }
   @media (prefers-reduced-motion: reduce) {
-    .continue-reading-card, .reading-rhythm-card, .book-progress-card, .recent-scripture-chip { animation: none; transition: none; }
-    .reading-rhythm-track span { transition: none; }
+    .book-progress-card, .recent-scripture-chip { animation: none; transition: none; }
     .book-progress-track span { transition: none; }
     .reader-pages { animation: none; }
   }

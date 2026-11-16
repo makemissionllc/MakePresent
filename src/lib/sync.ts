@@ -173,8 +173,14 @@ export const api = {
   clearSlideBackground: (slideId: string) =>
     invoke<ClientState>("clear_slide_background", { slideId }),
 
+  duplicateSlide: (slideId: string) =>
+    invoke<ClientState>("duplicate_slide", { slideId }),
+
   deleteSlide: (slideId: string) =>
     invoke<ClientState>("delete_slide", { slideId }),
+
+  restoreSlide: (slide: import("./types").Slide, index: number, projectId: string) =>
+    invoke<ClientState>("restore_slide", { slide, index, projectId }),
 
   listDisplays: () => invoke<DisplayInfo[]>("list_displays"),
 

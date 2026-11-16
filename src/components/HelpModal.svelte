@@ -69,6 +69,10 @@
       <p class="muted">View Hub marks your last selected starting playlist and remembers it on this device. Star regular starting playlists to pin them near the top, then choose Favorites to focus the picker; search by name to find another. Your preferred slide ratio, Look, and transition are remembered for the next service. Keyboard focus stays inside View Hub and returns to the New View control when you close it. Creating a View shows progress and ignores repeat clicks while it starts. Save as Playlist starts with your current View title, explains if its name is blank, and shows progress while it saves. Its confirmation opens Views so you can check the saved starting point. If that name already exists, choose another or confirm before its saved slides are replaced. Reusing the saved-playlist list also avoids reloading it every time you open the Hub.</p>
       <div class="section-title">Service check</div>
       <p class="muted">The ✓ Service check reviews playlist slides, the audience display, and whether Output is open. Stage is optional. Each item opens the real control, and checking never puts a slide live.</p>
+      <div class="section-title">Focus the workspace</div>
+      <p class="muted">Choose Focus beside Slides and Looks, or press Ctrl+Shift+F (⌘⇧F on Mac), to temporarily hide the Playlist and Output panels and give the editor more room. Keyboard focus moves to the visible Focus control when the panels hide. Choose Exit focus, press Escape, or use the shortcut again to bring them back. Your choice is remembered on this device and does not change what is live on Output.</p>
+      <div class="section-title">Work with slides</div>
+      <p class="muted">In the slide grid, choose Duplicate (⧉) or press Ctrl+Shift+D (⌘⇧D on Mac) to make a copy with the same content and settings directly after the original. The copy is selected so you can edit it straight away. In the slide editor, use Previous and Next to move through the current grid without going back; pending text and auto-advance edits are saved, and Output stays unchanged. The Body field shows live word, nonblank text-line, and character counts; characters include spaces and line breaks. Choose Copy text to copy the on-screen title and body, including unsaved draft text. After deleting a slide, choose Undo in the brief confirmation message to restore it in place.</p>
       <div class="section-title">Return to the live slide</div>
       <p class="muted">If you select another slide to edit, use Follow live slide below the Output preview or press Ctrl+Shift+L (⌘⇧L on Mac). The editor selects and scrolls to the current live slide without changing what the audience sees.</p>
       <div class="section-title">Search logs</div>
@@ -86,10 +90,9 @@
       <div class="section-title">Scripture bookmarks</div>
       <p class="muted">In Scripture, open Browse Scripture → Bookmarks. Search by reference, translation, or words from the passage, then choose Add slide. Selected verses use compact references such as John 3:16–18, 20.</p>
       <p class="muted">Recently added keeps the five passages you most recently added from Scripture search, Browse Scripture, bookmarks, or drag and drop. Select a reference chip to add it again; Clear removes the on-device shortcuts. Bookmarks remain saved separately.</p>
-      <div class="section-title">Find your place and read a chapter</div>
-      <p class="muted">Use Find a book to rank exact names, prefixes, and close spellings. Choose a chapter, then Read book for comfortable text that keeps clicks from adding slides by accident. Choose Auto, One, or Two columns; Auto fits the panel, and narrow layouts stay in one column. A−/A+ keeps your chosen text size (14–22) on this device. Select a verse to preview it; choose Add as slide only when you want to present it.</p>
-      <p class="muted">The Scripture panel remembers the last chapter you opened. Continue reading reopens that translation, book, and chapter in one step. Your reading position and text size stay on this device.</p>
-      <p class="muted">In Read book, mark a chapter read when you finish. Mark read &amp; next saves your progress and opens the next unread chapter in one step. The one-chapter daily goal and consecutive-day streak update at that point and stay on this device.</p>
+      <div class="section-title">Search and add Scripture</div>
+      <p class="muted">The Scripture tab opens with reference search and Browse Scripture ready. Type a reference such as John 3:16 to find a passage directly, or use Find a book → chapter → verse. Press Enter to add the first search result, or use ↑ and ↓ to choose another; the clear button resets a search even while results are loading. Recent passages and bookmarks make saved selections easy to reuse.</p>
+      <p class="muted">Choose Read book for comfortable text that keeps clicks from adding slides by accident. Auto, One, and Two columns adapt to the panel, and A−/A+ keeps your text size (14–22) on this device. Chapter marks and Next unread chapter remain available in the browser.</p>
       <p class="muted">Chapter numbers show what you have read in the selected translation. The progress bar tracks the book, and Next unread chapter opens the next chapter you have not marked.</p>
       <div class="section-title">Find content faster</div>
       <p class="muted">Press Ctrl+K (⌘K on Mac) to open Search instantly. Choose All, Songs, Scripture, or Media to focus the results; a scoped search skips lookups for unrelated content and switches immediately. Song results put matching titles first, tolerate small spelling mistakes, and also find lyric phrases. Scripture suggestions rank exact references first, then prefix and word matches, tolerating small typos before falling back to verse text.</p>
@@ -104,11 +107,14 @@
       <div class="section-title">Keyboard shortcuts</div>
       <ul class="shortcuts">
         <li><span class="keys"><kbd>←</kbd> <kbd>→</kbd></span> Previous / next slide (when not typing)</li>
+        <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></span> Toggle Focus mode <span class="muted">(⌘⇧F on Mac)</span></li>
+        <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></span> Save the current View as a Playlist <span class="muted">(⌘⇧S on Mac)</span></li>
+        <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></span> Duplicate the selected slide <span class="muted">(⌘⇧D on Mac)</span></li>
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></span> Follow the live slide <span class="muted">(⌘⇧L on Mac)</span></li>
         <li><span class="keys"><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd></span> Previous / next chapter in reading mode</li>
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span> Search songs, Bibles &amp; media <span class="muted">(⌘K on Mac)</span></li>
         <li><span class="keys"><kbd>?</kbd></span> Open or close this shortcut guide</li>
-        <li><span class="keys"><kbd>Esc</kbd></span> Close search, tour, dialog, or return from reading</li>
+        <li><span class="keys"><kbd>Esc</kbd></span> Close search, tour, dialog, return from reading, or exit Focus mode</li>
         <li><span class="keys"><kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd></span> Pick a Scripture suggestion or a search result</li>
         <li><span class="keys"><kbd>Enter</kbd> / <kbd>Esc</kbd></span> Confirm / cancel a dialog</li>
       </ul>

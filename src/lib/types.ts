@@ -464,7 +464,7 @@ export interface TemplateStore {
 }
 
 export interface AutosaveEvent {
-  status: "saved" | "error";
+  status: "pending" | "saving" | "saved" | "error";
   at?: string;
   message?: string;
 }

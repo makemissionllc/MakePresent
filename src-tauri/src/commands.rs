@@ -2,12 +2,17 @@ use crate::logging::{Level, LogEntry};
 use crate::project::{
     apply_background_to_all_items as apply_background_to_all_items_project,
     clear_slide_background as clear_slide_background_project,
-    copy_slides_into_item as copy_slides_into_item_project, derive_items, is_first_run, item_backgrounds_in_template, now_iso, remove_playlist_item, reorder_item_slides,
-    remap_template_item_backgrounds, set_item_background as set_item_background_project,
-    set_kind_background as set_kind_background_project, slides_from_template, Background, BackgroundMode, BroadcastView, ClientState, Library, LibrarySlide,
-    BoxGeometry, LibrarySong, Look, OutputView, Overlay, OverlayPlacement, OverlayStore,
-    PlaylistTemplate, Positioning, Project, SavedOverlay, Settings, Slide, SlideKind, StageView,
-    TemplateItem, TextPosition, Transition, write_settings,
+    copy_slides_into_item as copy_slides_into_item_project, derive_items,
+    delete_slide as delete_slide_project,
+    duplicate_slide as duplicate_slide_project, is_first_run, item_backgrounds_in_template,
+    now_iso, remap_template_item_backgrounds, remove_playlist_item, reorder_item_slides,
+    restore_slide as restore_slide_project,
+    set_item_background as set_item_background_project,
+    set_kind_background as set_kind_background_project, slides_from_template, write_settings,
+    Background, BackgroundMode, BoxGeometry, BroadcastView, ClientState, Library, LibrarySlide,
+    LibrarySong, Look, OutputView, Overlay, OverlayPlacement, OverlayStore, PlaylistTemplate,
+    Positioning, Project, SavedOverlay, Settings, Slide, SlideKind, StageView, TemplateItem,
+    TextPosition, Transition,
 };
 use crate::scripture::{DownloadedBible, ScriptureMatch};
 use crate::state::{AppState, CountdownView};
@@ -1863,20 +1868,21 @@ pub fn clear_slide_background(app: AppHandle, slide_id: String) -> Result<Client
 }
 
 #[tauri::command]
+pub fn duplicate_slide(app: AppHandle, slide_id: String) -> Result<ClientState, String> {
+    let snap = mutate(&app, |project| duplicate_slide_project(project, &slide_id))?;
+    log(
+        &app,
+        Level::Info,
+        &format!("playlist: duplicated slide \"{slide_id}\""),
+    );
+    Ok(snap)
+}
+
+#[tauri::command]
 pub fn delete_slide(app: AppHandle, slide_id: String) -> Result<ClientState, String> {
-    let was_live = {
-        let state = app.state::<AppState>();
-        let project = state.project.read().unwrap();
-        project.live.as_deref() == Some(slide_id.as_str())
-    };
+    let mut was_live = false;
     let snap = mutate(&app, |project| {
-        if !project.slides.iter().any(|s| s.id == slide_id) {
-            return Err(format!("slide {slide_id} not found"));
-        }
-        project.slides.retain(|s| s.id != slide_id);
-        if project.live.as_deref() == Some(slide_id.as_str()) {
-            project.live = None;
-        }
+        was_live = delete_slide_project(project, &slide_id)?.2;
         Ok(())
     })
     .map(|s| {
@@ -1886,6 +1892,21 @@ pub fn delete_slide(app: AppHandle, slide_id: String) -> Result<ClientState, Str
     if was_live {
         cancel_auto_advance(&app);
     }
+    Ok(snap)
+}
+
+#[tauri::command]
+pub fn restore_slide(
+    app: AppHandle,
+    slide: Slide,
+    index: usize,
+    project_id: String,
+) -> Result<ClientState, String> {
+    let slide_id = slide.id.clone();
+    let snap = mutate(&app, |project| {
+        restore_slide_project(project, slide, index, &project_id)
+    })?;
+    log(&app, Level::Info, &format!("playlist: restored slide \"{slide_id}\""));
     Ok(snap)
 }
 

@@ -12,6 +12,32 @@ export interface ChangeLogRelease {
 /** User-facing release notes shared by the Settings page and project changelog. */
 export const CHANGELOG: ChangeLogRelease[] = [
   {
+    date: "November 3, 2026",
+    title: "Faster slide preparation and Scripture search",
+    items: [
+      { kind: "New", text: "Duplicate a slide from its grid card or press Ctrl+Shift+D (⌘⇧D on Mac). The copy keeps the original content and settings, appears immediately after it, and is selected for editing." },
+      { kind: "New", text: "Undo a slide deletion from the brief confirmation message; the restored slide returns to its previous position without going live." },
+      { kind: "New", text: "Copy a slide's on-screen title and body from the editor; the action includes unsaved draft text and confirms the copy." },
+      { kind: "New", text: "The slide body editor shows live word, nonblank text-line, and character counts to help check content length before putting it live. Character counts include spaces and line breaks." },
+      { kind: "Improved", text: "The Scripture tab opens with reference search and Browse Scripture ready side by side. The Continue reading and One chapter a day cards are removed from the content shelf." },
+      { kind: "New", text: "Clear a Scripture reference search with one click, even while results are loading." },
+      { kind: "Improved", text: "Press Enter in Scripture reference search to add the top result; use the arrow keys first to choose another match." },
+    ],
+  },
+  {
+    date: "November 2, 2026",
+    title: "A clearer, more focused workspace",
+    items: [
+      { kind: "New", text: "Focus hides the Playlist and Output side panels to give the slide grid, editor, or Looks workspace more room. Exit focus restores them, the preference stays on this device, and hiding the Output panel does not affect the live screen." },
+      { kind: "Improved", text: "Toggle Focus mode with Ctrl+Shift+F (⌘⇧F on Mac) without reaching for the toolbar; keyboard focus moves to the visible control when the panels hide." },
+      { kind: "Improved", text: "Press Escape to leave Focus mode and return keyboard focus to its control. Open dialogs, Search, and the Scripture reader keep their existing Escape behavior." },
+      { kind: "New", text: "Press Ctrl+Shift+S (⌘⇧S on Mac) from the workspace to open Save as Playlist with the current View title ready to reuse." },
+      { kind: "Improved", text: "Help and Settings now share a labeled More menu, leaving Search, New view, and Service check easier to scan. Escape or clicking elsewhere closes the menu." },
+      { kind: "Improved", text: "The header now shows when project and library changes are waiting for autosave or being written, then updates with the saved time or any error. In compact windows, autosave errors remain visible." },
+      { kind: "Fixed", text: "View Hub no longer lets you create a View from a starting playlist hidden by the current search or Favorites filter. Clear filters to reveal the current selection, or choose a visible playlist." },
+    ],
+  },
+  {
     date: "October 20, 2026",
     title: "Quicker, calmer motion",
     items: [

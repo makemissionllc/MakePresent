@@ -159,6 +159,7 @@
       return !query || `${item.name} ${item.category} ${item.description}`.toLocaleLowerCase().includes(query);
     });
   });
+  const selectedIsVisible = $derived(visibleGallery.some((item) => item.id === selectedId));
 
   function toggleFavoriteStartingPoint(id: string): void {
     favoriteStartingPointIds = favoriteStartingPointSet.has(id)
@@ -227,7 +228,7 @@
   });
 
   async function create(): Promise<void> {
-    if (!selected || creating) return;
+    if (!selected || !selectedIsVisible || creating) return;
     const t = title.trim() || `${selected.name} - ${todayLabel()}`;
     const opts = { title: t, aspect, theme, transition };
     creating = true;
@@ -343,6 +344,12 @@
               </button>
             </div>
           {/if}
+          {#if selected && !selectedIsVisible}
+            <div class="selection-filter-warning" role="status">
+              <span>The selected starting playlist is hidden by your filters.</span>
+              <button class="show-selected" onclick={() => { galleryQuery = ""; favoritesOnly = false; }} disabled={creating}>Clear filters</button>
+            </div>
+          {/if}
           <div class="grid">
             {#each visibleGallery as item (item.kind + ":" + item.id)}
               <div class="card-wrap">
@@ -396,7 +403,7 @@
                 {#if favoritesOnly}<button class="show-all" onclick={() => { favoritesOnly = false; galleryQuery = ""; }} disabled={creating}>Show all starting playlists</button>{/if}
               </div>
             {:else if gallery.length === 0}
-              <p class="muted">Loading starting playlists…</p>
+              <p class="muted" role="status">{startingPointsReady ? "No starting playlists are available yet. Start from a blank View instead." : "Loading starting playlists…"}</p>
             {/if}
           </div>
 
@@ -461,7 +468,7 @@
           {#if creating}<p class="creation-status" role="status">Setting up your View. Please wait…</p>{/if}
           <div class="inspector-actions">
             <button class="ghost" onclick={close} disabled={creating}>Cancel</button>
-            <button class="primary" onclick={create} disabled={!selected || creating}>
+            <button class="primary" onclick={create} disabled={!selected || !selectedIsVisible || creating}>
               {#if creating}<span class="spinner" aria-hidden="true"></span>Creating View…{:else}Create View — {selected?.slideCount ?? 0} slides{/if}
             </button>
           </div>
@@ -538,6 +545,8 @@
   .inspector{padding:16px; overflow:auto; background:var(--panel); border-left:1px solid var(--border); display:flex; flex-direction:column; gap:14px; min-height:0;}
   .inspector-head h3{margin:0; font-size:13px; font-weight:700; color:var(--text);}
   .inspector-head p{margin:4px 0 0; font-size:11px; color:var(--text-dim); line-height:1.4; white-space:pre-line;}
+  .selection-filter-warning{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:9px 10px; border:1px solid color-mix(in srgb,var(--semantic-warning) 40%,var(--border)); border-radius:8px; background:var(--semantic-warning-bg); color:var(--text); font-size:11px; line-height:1.35;}
+  .show-selected{flex:none; padding:5px 8px; border-color:var(--border); color:var(--accent); font-size:11px;}
   .field{display:flex; flex-direction:column; gap:6px; font-size:11px; color:var(--text-dim);}
   .field input, .field select{width:100%; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:8px 10px; color:var(--text); font-size:13px;}
   .field input:focus, .field select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(129,170,149,0.14);}

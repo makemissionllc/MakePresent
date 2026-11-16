@@ -986,6 +986,62 @@ pub fn copy_slides_into_item(
     Ok(copied_ids)
 }
 
+/// Duplicate one slide immediately after itself, preserving its content and settings.
+pub fn duplicate_slide(project: &mut Project, slide_id: &str) -> Result<String, String> {
+    let position = project
+        .slides
+        .iter()
+        .position(|slide| slide.id == slide_id)
+        .ok_or_else(|| format!("slide {slide_id} not found"))?;
+    let mut duplicate = project.slides[position].clone();
+    duplicate.id = Uuid::new_v4().to_string();
+    let duplicate_id = duplicate.id.clone();
+    project.slides.insert(position + 1, duplicate);
+    project.selected = Some(duplicate_id.clone());
+    Ok(duplicate_id)
+}
+
+/// Remove a slide and keep selection on the closest remaining slide when needed.
+pub fn delete_slide(project: &mut Project, slide_id: &str) -> Result<(Slide, usize, bool), String> {
+    let index = project
+        .slides
+        .iter()
+        .position(|slide| slide.id == slide_id)
+        .ok_or_else(|| format!("slide {slide_id} not found"))?;
+    let slide = project.slides.remove(index);
+    let was_live = project.live.as_deref() == Some(slide_id);
+    if was_live {
+        project.live = None;
+    }
+    if project.selected.as_deref() == Some(slide_id) {
+        project.selected = project
+            .slides
+            .get(index)
+            .or_else(|| project.slides.last())
+            .map(|slide| slide.id.clone());
+    }
+    Ok((slide, index, was_live))
+}
+
+/// Restore a recently deleted slide at its previous position, clamped to the current list.
+pub fn restore_slide(
+    project: &mut Project,
+    slide: Slide,
+    index: usize,
+    expected_project_id: &str,
+) -> Result<(), String> {
+    if project.id != expected_project_id {
+        return Err("cannot undo because the current View has changed".to_string());
+    }
+    if project.slides.iter().any(|existing| existing.id == slide.id) {
+        return Err(format!("slide {} already exists", slide.id));
+    }
+    let slide_id = slide.id.clone();
+    project.slides.insert(index.min(project.slides.len()), slide);
+    project.selected = Some(slide_id);
+    Ok(())
+}
+
 pub fn remove_playlist_item(project: &mut Project, item_id: &str) -> Result<bool, String> {
     if !project.slides.iter().any(|s| s.item_id.as_deref() == Some(item_id)) {
         return Err(format!("playlist item {item_id} not found"));
@@ -2111,6 +2167,118 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_slide_preserves_settings_inserts_after_source_and_selects_copy() {
+        let mut project = Project::test();
+        let mut source = test_slide("source", Some("item"), Some("song"));
+        source.item_name = Some("Opening song".into());
+        source.library_slide_id = Some("verse-1".into());
+        source.title = "Welcome".into();
+        source.body = "Welcome everyone".into();
+        source.auto_advance_secs = Some(12);
+        project.slides = vec![source.clone(), test_slide("next", Some("item-2"), None)];
+        project.selected = Some("source".into());
+        project.live = Some("source".into());
+
+        let duplicate_id = duplicate_slide(&mut project, "source").unwrap();
+
+        assert_ne!(duplicate_id, source.id);
+        assert_eq!(
+            project
+                .slides
+                .iter()
+                .map(|slide| slide.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["source", duplicate_id.as_str(), "next"]
+        );
+        let duplicate = &project.slides[1];
+        assert_eq!(duplicate.id, duplicate_id);
+        assert_eq!(duplicate.item_id, source.item_id);
+        assert_eq!(duplicate.item_name, source.item_name);
+        assert_eq!(duplicate.library_id, source.library_id);
+        assert_eq!(duplicate.library_slide_id, source.library_slide_id);
+        assert_eq!(duplicate.name, source.name);
+        assert_eq!(duplicate.title, source.title);
+        assert_eq!(duplicate.body, source.body);
+        assert_eq!(duplicate.background, source.background);
+        assert_eq!(duplicate.background_mode, source.background_mode);
+        assert_eq!(duplicate.auto_advance_secs, source.auto_advance_secs);
+        assert_eq!(project.selected.as_deref(), Some(duplicate_id.as_str()));
+        assert_eq!(project.live.as_deref(), Some("source"));
+    }
+
+    #[test]
+    fn duplicate_missing_slide_leaves_project_unchanged() {
+        let mut project = Project::test();
+        project.slides = vec![test_slide("source", Some("item"), None)];
+        project.selected = Some("source".into());
+
+        let result = duplicate_slide(&mut project, "missing");
+
+        assert!(result.unwrap_err().contains("slide missing not found"));
+        assert_eq!(project.slides.len(), 1);
+        assert_eq!(project.slides[0].id, "source");
+        assert_eq!(project.selected.as_deref(), Some("source"));
+    }
+
+    #[test]
+    fn deleting_selected_live_slide_selects_neighbor_and_restore_returns_it_in_place() {
+        let mut project = Project::test();
+        project.slides = vec![
+            test_slide("first", Some("item"), None),
+            test_slide("middle", Some("item"), None),
+            test_slide("last", Some("item"), None),
+        ];
+        project.selected = Some("middle".into());
+        project.live = Some("middle".into());
+
+        let (deleted, index, was_live) = delete_slide(&mut project, "middle").unwrap();
+
+        assert_eq!(deleted.id, "middle");
+        assert_eq!(index, 1);
+        assert!(was_live);
+        assert_eq!(project.live, None);
+        assert_eq!(project.selected.as_deref(), Some("last"));
+        assert_eq!(project.slides.iter().map(|slide| slide.id.as_str()).collect::<Vec<_>>(), vec!["first", "last"]);
+
+        let project_id = project.id.clone();
+        restore_slide(&mut project, deleted, index, &project_id).unwrap();
+
+        assert_eq!(project.slides.iter().map(|slide| slide.id.as_str()).collect::<Vec<_>>(), vec!["first", "middle", "last"]);
+        assert_eq!(project.selected.as_deref(), Some("middle"));
+        assert_eq!(project.live, None);
+    }
+
+    #[test]
+    fn restoring_slide_with_existing_id_is_rejected_without_mutation() {
+        let mut project = Project::test();
+        project.slides = vec![test_slide("first", Some("item"), None)];
+        project.selected = Some("first".into());
+        let duplicate = test_slide("first", Some("item"), None);
+
+        let project_id = project.id.clone();
+        let result = restore_slide(&mut project, duplicate, 0, &project_id);
+
+        assert!(result.unwrap_err().contains("slide first already exists"));
+        assert_eq!(project.slides.len(), 1);
+        assert_eq!(project.selected.as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn restoring_slide_into_another_view_is_rejected_without_mutation() {
+        let mut project = Project::test();
+        project.slides = vec![test_slide("first", Some("item"), None)];
+        project.selected = Some("first".into());
+        let slide = test_slide("deleted", Some("item"), None);
+
+        let result = restore_slide(&mut project, slide, 0, "different-view");
+
+        assert!(result.unwrap_err().contains("current View has changed"));
+        assert_eq!(project.slides.len(), 1);
+        assert_eq!(project.slides[0].id, "first");
+        assert_eq!(project.selected.as_deref(), Some("first"));
+    }
+
+    #[test]
     fn legacy_project_groups_consecutive_song_slides_in_memory() {
         let mut project = Project::test();
         project.slides = vec![
@@ -2653,8 +2821,13 @@ pub fn spawn_autosave(
         if rx.recv().is_err() {
             return;
         }
+        // Tell the editor as soon as an edit reaches the save queue, rather
+        // than leaving the previous "Saved" timestamp visible during debounce.
+        let _ = app.emit("autosave", serde_json::json!({ "status": "pending" }));
         // Keep draining until the project has been quiet long enough.
         while rx.recv_timeout(Duration::from_millis(AUTOSAVE_DEBOUNCE_MS)).is_ok() {}
+
+        let _ = app.emit("autosave", serde_json::json!({ "status": "saving" }));
 
         // Clone under lock, then release before doing any file I/O. Holding a
         // RwLock across `persist`/`write_library` would block every `mutate`

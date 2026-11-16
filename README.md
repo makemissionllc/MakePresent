@@ -1,5 +1,23 @@
 # MakrStudio (formerly MakePresent)
 
+## Changed (2026-11-03) — Faster slide preparation and Scripture search
+
+- Duplicate a slide from its grid card or press Ctrl+Shift+D (⌘⇧D on Mac). The copy keeps its content and settings, appears directly after the original, and is selected so you can edit it right away.
+- Undo a slide deletion for eight seconds. The slide returns to its previous position and is selected without being put live.
+- Use Previous and Next in the slide editor to review a whole item without returning to the grid. Pending text and auto-advance edits are saved before switching; Output stays unchanged.
+- Copy a slide's on-screen title and body from the editor, including current unsaved draft text.
+- See live word, nonblank line, and character counts under the slide body while editing. Character counts include spaces and line breaks.
+- Scripture opens with reference search and Browse Scripture ready side by side. The Continue reading and One chapter a day cards are removed from the content shelf.
+- Add the top Scripture search result by pressing Enter; use ↑ and ↓ first to choose another match.
+
+## Changed (2026-11-02) — A clearer, more focused workspace
+
+- Focus mode hides the Playlist and Output panels for more room, remembers your choice on this device, keeps keyboard focus on the visible control, and leaves the live screen unchanged. Exit with the Focus control, Ctrl+Shift+F (⌘⇧F on Mac), or Escape.
+- Save the current View as a reusable Playlist with Ctrl+Shift+S (⌘⇧S on Mac); the current View title is prefilled.
+- Help and Settings share a labeled More menu that closes with Escape or a click elsewhere.
+- The header now shows when project and library changes are waiting for autosave or being written, then updates with the saved time or any error. In compact windows, autosave errors remain visible.
+- View Hub disables Create when the selected starting playlist is hidden by the current search or Favorites filter, and offers Clear filters to reveal it.
+
 ## Changed (2026-10-20) — Quicker, calmer motion
 
 - Search opens instantly and scope changes update without animation. Other surfaces use brief ease-out entrances, existing selections and progress move with ease-in-out, playlist-card delays are capped, and reduced-motion settings clear queued animation delays. The Search tutorial, Help, Settings → What’s New, and [CHANGELOG.md](CHANGELOG.md) describe the motion behavior. Device temperature was not measured.
@@ -37,18 +55,18 @@
 - Ctrl+Shift+L (⌘⇧L on Mac) follows the live slide from the keyboard without changing Output.
 - Settings → Logs handles duplicate records safely and filters by time, level, or text. Copy and export still include the full log.
 - View Hub names the current autosaved View and provides a one-click Continue this View return path. The interactive tutorial, Help, and Settings → What’s New explain it.
-- Read book stays inside the Bible browser with responsive verse text, 14–22 text sizing, chapter navigation, and explicit preview/add actions. Completed chapter progress and Continue reading remain on this device.
+- Read book stays inside the Bible browser with responsive verse text, 14–22 text sizing, chapter navigation, and explicit preview/add actions. Per-book chapter marks remain on this device.
 - Read book adds saved Auto, One, and Two column layouts that adapt to panel width, plus Mark read & next to save progress and open another unread chapter in one step.
 - The interactive tutorial, onboarding, Help, and Settings → What’s New explain the reader layouts, Mark read & next, service readiness, Follow live slide, its keyboard shortcut, and log filtering. Scripture layout breakpoints follow the panel width, including split-pane layouts. Video thumbnails use cached posters; offscreen slides and verses skip unnecessary rendering; hidden editor previews and hidden Output/Stage windows release media playback. The Stage clock pauses while hidden; device temperature has not been measured.
 - All prior release details remain in [CHANGELOG.md](CHANGELOG.md).
 
 ## Changed (2026-10-13) — A calmer Scripture reading flow
 
-- Continue reading restores the last Bible, book, and chapter from this device. Read book offers expanded verse text, saved text sizing, chapter navigation, and preview-before-add behavior; book search ranks exact names and close spellings.
-- Mark chapters read to track progress through a translation and jump to the next unread chapter. The daily goal and streak update on that action, stay local, and use no background polling or reminders.
+- Read book offers expanded verse text, saved text sizing, chapter navigation, and preview-before-add behavior; book search ranks exact names and close spellings. The resume and daily-goal cards were removed from the Scripture shelf on 2026-11-03 to keep passage search visible.
+- Mark chapters read to track progress through a translation and jump to the next unread chapter. Per-book marks remain available; the daily goal and streak were retired with the shelf card.
 - Fixed numbered-book XML such as the bundled NIRV Bible, added common legacy encoding support, and filter empty verse placeholders so translations no longer present blank books/chapters.
 - Scripture panels adapt to their actual width. A two-translation memory cache, one-time imported XML parsing, and delayed minimum-length Bible text search reduce repeated file reads and CPU work.
-- The animated guided tour, first-run onboarding, Help, and Settings → What’s New explain how to find, read, and resume a passage. All prior release details remain in [CHANGELOG.md](CHANGELOG.md).
+- The guided tour, first-run onboarding, Help, and Settings → What’s New explain how to search, browse, and add a passage. All prior release details remain in [CHANGELOG.md](CHANGELOG.md).
 
 ## Changed (2026-10-12) — Smarter song layout and safer arrangement editing
 

@@ -111,6 +111,9 @@
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></span> Save the current View as a Playlist <span class="muted">(⌘⇧S on Mac)</span></li>
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></span> Duplicate the selected slide <span class="muted">(⌘⇧D on Mac)</span></li>
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></span> Follow the live slide <span class="muted">(⌘⇧L on Mac)</span></li>
+        <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span> Send the selected slide live <span class="muted">(⌘Enter on Mac)</span></li>
+        <li><span class="keys"><kbd>C</kbd></span> Clear the Output screen (when not typing)</li>
+        <li><span class="keys"><kbd>T</kbd></span> Hide text on Output (when not typing)</li>
         <li><span class="keys"><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd></span> Previous / next chapter in reading mode</li>
         <li><span class="keys"><kbd>Ctrl</kbd>+<kbd>K</kbd></span> Search songs, Bibles &amp; media <span class="muted">(⌘K on Mac)</span></li>
         <li><span class="keys"><kbd>?</kbd></span> Open or close this shortcut guide</li>

@@ -16,14 +16,14 @@
   --color-green-bright: #1f9d6a;
   --color-xanthous: #f7b538;
 
-  /* Surfaces (dark theme neutral scale) */
-  --bg: #15191a;
-  --panel: #1b2021;
-  --panel-2: #222829;
-  --border: #303839;
-  --text: #e8edeb;
-  --text-dim: #9aa6a2;
-  --accent: #81aa95;
+  /* Surfaces: warm charcoal, closer to paper than to a terminal. */
+  --bg: #171513;
+  --panel: #1e1c19;
+  --panel-2: #26231f;
+  --border: #37332d;
+  --text: #f0ebe2;
+  --text-dim: #a29a8c;
+  --accent: #d69a72;
 
   /* Semantic aliases — components reference these, not raw hex. */
   --danger: var(--color-burgundy);
@@ -178,7 +178,7 @@ textarea {
 }
 
 ::selection {
-  background: rgba(129, 170, 149, 0.34);
+  background: rgba(214, 154, 114, 0.3);
   color: var(--text);
 }
 

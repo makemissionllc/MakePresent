@@ -917,6 +917,29 @@ pub fn normalize_playlist_items(project: &mut Project) {
     }
 }
 
+/// Move one slide to `new_index` (counted after it leaves its current spot) and
+/// place it in the playlist item `item_id`. Moving within the same item keeps
+/// its name; moving into another item adopts that item's name.
+pub fn move_slide_to_item(slides: &mut Vec<Slide>, slide_id: &str, new_index: usize, item_id: &str) -> Result<(), String> {
+    let old_pos = slides
+        .iter()
+        .position(|s| s.id == slide_id)
+        .ok_or_else(|| format!("slide {slide_id} not found"))?;
+    let target = slides
+        .iter()
+        .find(|s| s.item_id.as_deref() == Some(item_id))
+        .ok_or_else(|| format!("playlist item {item_id} not found"))?;
+    let target_name = target.item_name.clone();
+    let mut slide = slides.remove(old_pos);
+    if slide.item_id.as_deref() != Some(item_id) {
+        slide.item_id = Some(item_id.to_string());
+        slide.item_name = target_name;
+    }
+    let clamped = new_index.min(slides.len());
+    slides.insert(clamped, slide);
+    Ok(())
+}
+
 pub fn reorder_item_slides(slides: Vec<Slide>, item_id: &str, new_index: usize) -> Result<Vec<Slide>, String> {
     let mut groups: Vec<(String, Vec<Slide>)> = Vec::new();
     for slide in slides {
@@ -2164,6 +2187,67 @@ mod tests {
             background_mode: BackgroundMode::Custom,
             auto_advance_secs: None,
         }
+    }
+
+    fn grouped_slides() -> Vec<Slide> {
+        let mut first = test_slide("a1", Some("alpha"), None);
+        first.item_name = Some("Alpha".into());
+        let mut second = test_slide("a2", Some("alpha"), None);
+        second.item_name = Some("Alpha".into());
+        let mut third = test_slide("b1", Some("beta"), None);
+        third.item_name = Some("Beta".into());
+        vec![first, second, third]
+    }
+
+    fn ids(slides: &[Slide]) -> Vec<&str> {
+        slides.iter().map(|s| s.id.as_str()).collect()
+    }
+
+    #[test]
+    fn move_slide_to_item_reorders_within_same_group() {
+        let mut slides = grouped_slides();
+        move_slide_to_item(&mut slides, "a2", 0, "alpha").unwrap();
+        assert_eq!(ids(&slides), vec!["a2", "a1", "b1"]);
+        assert_eq!(slides[0].item_name.as_deref(), Some("Alpha"));
+    }
+
+    #[test]
+    fn move_slide_to_item_moves_into_another_group_and_adopts_its_name() {
+        let mut slides = grouped_slides();
+        move_slide_to_item(&mut slides, "a1", 2, "beta").unwrap();
+        assert_eq!(ids(&slides), vec!["a2", "b1", "a1"]);
+        assert_eq!(slides[2].item_id.as_deref(), Some("beta"));
+        assert_eq!(slides[2].item_name.as_deref(), Some("Beta"));
+    }
+
+    #[test]
+    fn move_slide_to_item_clamps_index_past_end() {
+        let mut slides = grouped_slides();
+        move_slide_to_item(&mut slides, "a1", 99, "alpha").unwrap();
+        assert_eq!(ids(&slides), vec!["a2", "b1", "a1"]);
+    }
+
+    #[test]
+    fn move_slide_to_item_same_spot_is_a_no_op() {
+        let mut slides = grouped_slides();
+        move_slide_to_item(&mut slides, "a1", 0, "alpha").unwrap();
+        assert_eq!(ids(&slides), vec!["a1", "a2", "b1"]);
+    }
+
+    #[test]
+    fn move_slide_to_item_rejects_unknown_slide() {
+        let mut slides = grouped_slides();
+        let error = move_slide_to_item(&mut slides, "missing", 0, "alpha").unwrap_err();
+        assert!(error.contains("missing"));
+        assert_eq!(ids(&slides), vec!["a1", "a2", "b1"]);
+    }
+
+    #[test]
+    fn move_slide_to_item_rejects_unknown_target_item_without_moving() {
+        let mut slides = grouped_slides();
+        let error = move_slide_to_item(&mut slides, "a1", 0, "gamma").unwrap_err();
+        assert!(error.contains("gamma"));
+        assert_eq!(ids(&slides), vec!["a1", "a2", "b1"]);
     }
 
     #[test]

@@ -3374,6 +3374,19 @@ import {
       followLiveSlide();
       return;
     }
+    if (mod && !e.shiftKey && !e.altKey && !e.repeat && e.key === "Enter" && centralView === "slides" && selected && !isTextInputFocused()) {
+      e.preventDefault();
+      use("shortcuts");
+      goLive(selected);
+      return;
+    }
+    if (!mod && !e.altKey && !e.shiftKey && !e.repeat && !isTextInputFocused() && (e.key === "c" || e.key === "t")) {
+      e.preventDefault();
+      use("shortcuts");
+      if (e.key === "c") clearOutput();
+      else clearText();
+      return;
+    }
     if (sourceOpen && sourceTab === "scripture" && readerMode && !browseCollapsed) {
       // Reading keys belong to the passage, never to live projection.
       if (e.key === "Escape") { e.preventDefault(); toggleReaderMode(); }
@@ -8081,7 +8094,7 @@ import {
      the middle, and the live screens on the right. */
   .body {
     grid-template-columns: clamp(228px, 20vw, 320px) minmax(0, 1fr) clamp(230px, 20vw, 320px);
-    background: radial-gradient(ellipse at 48% 4%, rgba(129, 170, 149, 0.055), transparent 52%), var(--bg);
+    background: radial-gradient(ellipse at 48% 0%, rgba(214, 154, 114, 0.045), transparent 55%), var(--bg);
   }
   .sidebar {
     gap: 13px;

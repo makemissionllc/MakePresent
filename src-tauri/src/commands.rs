@@ -1963,6 +1963,34 @@ pub fn reorder_slides(app: AppHandle, ordered_ids: Vec<String>) -> Result<Client
     })
 }
 
+/// Move one slide to `new_index` (counted after it is removed from its current
+/// spot) and place it in the playlist item `item_id`, so a slide can be picked
+/// up and dropped into any group.
+#[tauri::command]
+pub fn move_slide(app: AppHandle, slide_id: String, new_index: usize, item_id: String) -> Result<ClientState, String> {
+    mutate(&app, |project| {
+        let old_pos = project
+            .slides
+            .iter()
+            .position(|s| s.id == slide_id)
+            .ok_or_else(|| format!("slide {slide_id} not found"))?;
+        let inherited_name = project
+            .slides
+            .iter()
+            .find(|s| s.item_id.as_deref() == Some(item_id.as_str()))
+            .map(|s| s.item_name.clone());
+        let mut slide = project.slides.remove(old_pos);
+        if slide.item_id.as_deref() != Some(item_id.as_str()) {
+            let name = inherited_name.ok_or_else(|| format!("playlist item {item_id} not found"))?;
+            slide.item_id = Some(item_id);
+            slide.item_name = name;
+        }
+        let clamped = new_index.min(project.slides.len());
+        project.slides.insert(clamped, slide);
+        Ok(())
+    })
+}
+
 #[tauri::command]
 pub fn reorder_item(app: AppHandle, item_id: String, new_index: usize) -> Result<ClientState, String> {
     mutate(&app, |project| {

@@ -727,6 +727,7 @@ pub fn run() {
             commands::restore_slide,
             commands::reorder_slide,
             commands::reorder_slides,
+            commands::move_slide,
             commands::reorder_item,
             commands::copy_playlist_item_into_group,
             commands::delete_item,

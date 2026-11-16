@@ -324,6 +324,9 @@ export const api = {
   reorderSlide: (slideId: string, newIndex: number) =>
     invoke<ClientState>("reorder_slide", { slideId, newIndex }),
 
+  moveSlide: (slideId: string, newIndex: number, itemId: string) =>
+    invoke<ClientState>("move_slide", { slideId, newIndex, itemId }),
+
   reorderSlides: (orderedIds: string[]) =>
     invoke<ClientState>("reorder_slides", { orderedIds }),
 

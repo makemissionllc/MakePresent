@@ -2164,10 +2164,49 @@ import {
     dragPayload = null;
   }
 
+  // Slides move freely: dropping one on a slide or group header places it in
+  // that group at that spot. Groups are derived from each slide's item id.
+  function movePlaylistSlide(slideId: string, located: NonNullable<typeof pointerDropTarget>): void {
+    if (!project) return;
+    const fromIdx = project.slides.findIndex((s) => s.id === slideId);
+    if (fromIdx === -1) return;
+    let itemId: string | null | undefined;
+    let index: number | undefined;
+    if (located.kind === "slide") {
+      itemId = project.slides.find((s) => s.id === located.id)?.itemId;
+      index = located.index;
+    } else if (located.kind === "item") {
+      // Hovering a group header: upper half puts the slide first in that group, lower half last.
+      const hovered = items.find((item) => item.id === located.id);
+      const hoveredIdx = hovered ? items.indexOf(hovered) : -1;
+      if (hovered && hovered.slideIds.length > 0) {
+        const lower = (located.index ?? 0) > hoveredIdx;
+        const edgeId = lower ? hovered.slideIds.at(-1) : hovered.slideIds[0];
+        const edge = project.slides.findIndex((s) => s.id === edgeId);
+        itemId = hovered.id;
+        index = lower ? edge + 1 : edge;
+      }
+    } else if (located.kind === "playlist" || located.kind === "external") {
+      // Empty space below the groups: add to the end of the last group.
+      itemId = items.at(-1)?.id;
+      index = project.slides.length;
+    }
+    if (!itemId || index === undefined) return;
+    use("dragdrop");
+    const insertAt = index > fromIdx ? index - 1 : index;
+    if (insertAt === fromIdx && project.slides[fromIdx]?.itemId === itemId) return;
+    void api.moveSlide(slideId, insertAt, itemId).then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
+  }
+
   function pointerDragDrop(payload: any, point: PointerDragPoint, target: Element | null): void {
     const located = locateDropTarget(target, point);
     pointerDropTarget = null;
     if (!located) { pointerDragCancel(); return; }
+    if (payload.type === "playlist-reorder" && payload.slideId) {
+      movePlaylistSlide(payload.slideId, located);
+      pointerDragCancel();
+      return;
+    }
     if (payload.type === "item-reorder") {
       if (located.kind === "item" || located.kind === "playlist") void dropPlaylistItem(payload.itemId, Math.min(located.index ?? items.length, items.length - 1));
       else if (located.kind === "slide" && located.id) void copyPlaylistItemIntoGroup(payload.itemId, located.id, located.index ?? project?.slides.length ?? 0);
@@ -2190,10 +2229,6 @@ import {
     }
     let slidePosition = located.kind === "slide" ? located.index : undefined;
     let itemPosition = located.kind === "item" || located.kind === "playlist" || located.kind === "external" ? located.index : undefined;
-    if (payload.type === "playlist-reorder" && (located.kind === "item" || located.kind === "playlist" || located.kind === "external")) {
-      const nextItem = items[located.index ?? items.length];
-      slidePosition = nextItem ? project?.slides.findIndex((slide) => slide.id === nextItem.slideIds[0]) ?? 0 : project?.slides.length ?? 0;
-    }
     if (itemPosition === undefined) itemPosition = itemIndexForSlidePosition(slidePosition ?? project?.slides.length ?? 0);
     onPlaylistDrop(null, slidePosition, itemPosition, payload);
   }
@@ -2246,25 +2281,7 @@ import {
     // the inline hint hides itself from here on.
     use("dragdrop");
 
-    if (payload.type === "playlist-reorder" && payload.slideId) {
-      const fromIdx = project.slides.findIndex((s) => s.id === payload.slideId);
-      const draggedSlide = project.slides[fromIdx];
-      if (fromIdx !== -1 && draggedSlide) {
-        const group = items.find((item) => item.id === draggedSlide.itemId);
-        const groupIndexes = group?.slideIds.map((id) => project.slides.findIndex((s) => s.id === id)).filter((idx) => idx >= 0) ?? [fromIdx];
-        const start = Math.min(...groupIndexes);
-        const end = Math.max(...groupIndexes) + 1;
-        const safeTarget = Math.max(start, Math.min(targetIdx, end));
-        if (fromIdx !== safeTarget && safeTarget !== fromIdx + 1) {
-        const ids = project.slides.map((s) => s.id);
-        const [moved] = ids.splice(fromIdx, 1);
-        if (moved === undefined) return;
-        const insertAt = safeTarget > fromIdx ? safeTarget - 1 : safeTarget;
-        ids.splice(insertAt, 0, moved);
-        void api.reorderSlides(ids).then((s) => (appState = s)).catch((err: unknown) => (errorMsg = String(err)));
-        }
-      }
-    } else if (payload.type === "library-song" && payload.songId) {
+    if (payload.type === "library-song" && payload.songId) {
       void (async () => {
         try {
           const beforeLen = project.slides.length;
@@ -3947,7 +3964,7 @@ import {
         </ul>
         <button class="add" onclick={() => addSlide(false, true)}>+ Add slide</button>
         {#if showHint(onboarding, "dragdrop")}
-          <p class="hint-line">Drag a Playlist item onto a slide to copy it into that slide group. Drag items here to reorder them.<button class="hint-x" title="Dismiss" aria-label="Dismiss drag-and-drop hint" onclick={() => dismiss("dragdrop")}>×</button></p>
+          <p class="hint-line">Drag a slide to reorder it or move it into another group. Drag a group onto a slide to copy it there.<button class="hint-x" title="Dismiss" aria-label="Dismiss drag-and-drop hint" onclick={() => dismiss("dragdrop")}>×</button></p>
         {/if}
         {#if showHint(onboarding, "shortcuts")}
           <p class="hint-line"><kbd>←</kbd> <kbd>→</kbd> advance live · <kbd>Ctrl+Shift+L</kbd> follow live · <kbd>Ctrl+K</kbd> search.<button class="hint-x" title="Dismiss" aria-label="Dismiss shortcuts hint" onclick={() => dismiss("shortcuts")}>×</button></p>
@@ -6947,7 +6964,9 @@ import {
     border: 1px solid var(--border);
     padding: 0;
     width: 100%;
+    cursor: grab;
   }
+  .grid-thumb:active { cursor: grabbing; }
   .grid-thumb-inner {
     position: absolute;
     inset: 0;

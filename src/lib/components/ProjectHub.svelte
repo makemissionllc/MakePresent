@@ -430,7 +430,7 @@
         <aside class="inspector" aria-label="View Configuration">
           <div class="inspector-head">
             <h3>{selected?.name ?? "Choose a starting playlist"}</h3>
-            <p>{selected?.description ?? "Starting playlists are loading."}</p>
+            <p>{selected?.description ?? (startingPointsReady ? "Choose a starting playlist on the left to continue." : "Starting playlists are loading.")}</p>
           </div>
 
           <label class="field">
@@ -489,30 +489,30 @@
   .close:hover{background:var(--panel); color:var(--text);}
   .hub-body{display:grid; grid-template-columns: minmax(0,1fr) 340px; grid-template-rows:minmax(0,1fr); gap:0; min-height:0; flex:1; overflow:hidden;}
   @media (max-width:900px){ .hub-body{grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr) minmax(230px,42vh);} .inspector{border-left:none; border-top:1px solid var(--border);} }
-  .gallery{padding:18px; overflow:auto; background: var(--panel-2); min-height:0;}
+  .gallery{padding:24px; overflow:auto; background: var(--panel-2); min-height:0;}
   .gallery-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px;}
   .gallery-head h2{margin:0; font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-dim);}
-  .gallery-note{font-size:11px; color:var(--text-dim); margin:-4px 0 10px;}
+  .gallery-note{font-size:12px; color:var(--text-dim); margin:-4px 0 10px;}
   .gallery-tools{display:flex; align-items:center; gap:8px; margin:0 0 10px; flex-wrap:wrap;}
   .gallery-search{display:flex; align-items:center; gap:10px; flex:1 1 220px; min-width:0; margin:0;}
   .gallery-search input{flex:1; min-width:0; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); font-size:12px;}
   .gallery-search input:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
-  .search-count{flex:none; color:var(--text-dim); font-size:10px; font-variant-numeric:tabular-nums;}
+  .search-count{flex:none; color:var(--text-dim); font-size:11px; font-variant-numeric:tabular-nums;}
   .favorites-filter{display:flex; align-items:center; justify-content:center; gap:5px; min-height:34px; padding:6px 10px; border-radius:8px; color:var(--text-dim); font-size:11px; white-space:nowrap;}
   .favorites-filter:hover,.favorites-filter.active{border-color:color-mix(in srgb,var(--accent) 55%,var(--border)); color:var(--text); background:color-mix(in srgb,var(--accent) 10%,var(--panel));}
   .favorites-filter>span:first-child{color:var(--accent);}
-  .favorite-count{min-width:16px; padding:1px 5px; border-radius:999px; background:var(--panel); color:var(--text-dim); font-size:10px; font-variant-numeric:tabular-nums;}
+  .favorite-count{min-width:16px; padding:1px 5px; border-radius:999px; background:var(--panel); color:var(--text-dim); font-size:11px; font-variant-numeric:tabular-nums;}
   .empty-search{grid-column:1/-1; display:grid; justify-items:start; gap:6px; margin:10px 0;}
   .show-all{padding:5px 8px; color:var(--accent); font-size:11px;}
   .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
-  .recent-hint{font-size:11px; color:var(--text-dim);}
-  .grid{display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px;}
+  .recent-hint{font-size:12px; color:var(--text-dim);}
+  .grid{display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:16px;}
   @media (max-width:640px){ .grid{grid-template-columns:1fr;} }
   .card-wrap{position:relative; min-width:0;}
-  .card{position:relative; width:100%; text-align:left; padding:14px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color var(--motion-normal) var(--ease-in-out),border-color var(--motion-normal) var(--ease-in-out),box-shadow var(--motion-normal) var(--ease-in-out),transform var(--motion-fast) var(--ease-in-out);}
+  .card{position:relative; width:100%; text-align:left; padding:18px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color var(--motion-normal) var(--ease-in-out),border-color var(--motion-normal) var(--ease-in-out),box-shadow var(--motion-normal) var(--ease-in-out),transform var(--motion-fast) var(--ease-in-out);}
   .card:hover{border-color:#46514e; background:var(--panel); transform:translateY(-1px);}
-  .card.selected{border-color:var(--accent); background:#202825; box-shadow:0 0 0 2px rgba(129,170,149,0.12);}
-  .card-badge{position:absolute; top:10px; right:42px; font-size:9px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:3px 7px; border-radius:999px; border:1px solid transparent; color:white;}
+  .card.selected{border-color:var(--accent); background:#202825; box-shadow:0 0 0 2px rgba(214,154,114,0.12);}
+  .card-badge{position:absolute; top:10px; right:42px; font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:3px 7px; border-radius:999px; border:1px solid transparent; color:white;}
   .card-badge[data-category="Sunday Service"]{background: var(--color-green); border-color: var(--color-green);}
   .card-badge[data-category="Midweek"]{background: #1e3a4d; border-color: #234a5e; color: white;}
   .card-badge[data-category="Youth"]{background: var(--brand-orange-500); border-color: var(--brand-orange-500); color:white;}
@@ -520,9 +520,9 @@
   .card-badge[data-kind="playlist"]{background: var(--accent); border-color: var(--accent); color:white;}
   .card-icon{font-size:20px; margin-top:6px; opacity:0.8;}
   .card-title{font-family:var(--font-display); font-size:13px; font-weight:700; line-height:1.2; color:var(--text);}
-  .last-starting-tag{align-self:flex-start; padding:3px 7px; border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:999px; background:color-mix(in srgb,var(--accent) 8%,var(--panel)); color:var(--accent); font-size:9px; font-weight:650; line-height:1.2;}
-  .card-desc{font-size:11px; color:var(--text-dim); line-height:1.35; white-space:pre-line;}
-  .card-meta{margin-top:auto; padding-right:28px; font-size:10px; color:var(--text-dim);}
+  .last-starting-tag{align-self:flex-start; padding:3px 7px; border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:999px; background:color-mix(in srgb,var(--accent) 8%,var(--panel)); color:var(--accent); font-size:11px; font-weight:650; line-height:1.2;}
+  .card-desc{font-size:12px; color:var(--text-dim); line-height:1.35; white-space:pre-line;}
+  .card-meta{margin-top:auto; padding-right:28px; font-size:12px; color:var(--text-dim);}
   .favorite-starting-point{position:absolute; top:8px; right:8px; z-index:2; display:grid; place-items:center; width:28px; height:28px; padding:0; border-radius:8px; background:var(--panel-2); color:var(--text-dim); font-size:16px; line-height:1; transition:color var(--motion-fast) var(--ease-in-out),border-color var(--motion-fast) var(--ease-in-out),background-color var(--motion-fast) var(--ease-in-out),transform var(--motion-fast) var(--ease-in-out);}
   .favorite-starting-point:hover{border-color:var(--accent); color:var(--text); transform:scale(1.04);}
   .favorite-starting-point.favorited{color:var(--accent); border-color:color-mix(in srgb,var(--accent) 45%,var(--border));}
@@ -541,21 +541,21 @@
   @keyframes resume-pulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 18%,transparent);}}
   @media (prefers-reduced-motion: reduce){.resume-current{transition:none}.resume-current.tutorial-highlight{animation:none}}
   .dot{width:8px; height:8px; border-radius:999px; background:var(--accent);}
-  .muted{font-size:11px; color:var(--text-dim);}
-  .inspector{padding:16px; overflow:auto; background:var(--panel); border-left:1px solid var(--border); display:flex; flex-direction:column; gap:14px; min-height:0;}
+  .muted{font-size:12px; color:var(--text-dim);}
+  .inspector{padding:22px; overflow:auto; background:var(--panel); border-left:1px solid var(--border); display:flex; flex-direction:column; gap:18px; min-height:0;}
   .inspector-head h3{margin:0; font-size:13px; font-weight:700; color:var(--text);}
   .inspector-head p{margin:4px 0 0; font-size:11px; color:var(--text-dim); line-height:1.4; white-space:pre-line;}
   .selection-filter-warning{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:9px 10px; border:1px solid color-mix(in srgb,var(--semantic-warning) 40%,var(--border)); border-radius:8px; background:var(--semantic-warning-bg); color:var(--text); font-size:11px; line-height:1.35;}
   .show-selected{flex:none; padding:5px 8px; border-color:var(--border); color:var(--accent); font-size:11px;}
   .field{display:flex; flex-direction:column; gap:6px; font-size:11px; color:var(--text-dim);}
   .field input, .field select{width:100%; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:8px 10px; color:var(--text); font-size:13px;}
-  .field input:focus, .field select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(129,170,149,0.14);}
-  .help{font-size:10px; color:var(--text-dim);}
+  .field input:focus, .field select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 2px rgba(214,154,114,0.14);}
+  .help{font-size:11px; color:var(--text-dim);}
   .toggles{display:grid; grid-template-columns:1fr 1fr; gap:6px;}
   .toggles button{display:flex; flex-direction:column; gap:2px; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--panel-2); text-align:left; font-size:11px; color:var(--text);}
-  .toggles button.selected{border-color:var(--accent); background:rgba(129,170,149,0.12); color:var(--text);}
+  .toggles button.selected{border-color:var(--accent); background:rgba(214,154,114,0.12); color:var(--text);}
   .toggles button strong{font-size:11px;}
-  .toggles button span{font-size:10px; color:var(--text-dim);}
+  .toggles button span{font-size:11px; color:var(--text-dim);}
   .inspector-actions{display:flex; gap:8px; margin-top:auto; padding-top:6px;}
   button{border:1px solid var(--border); border-radius:6px; background:var(--panel-2); color:var(--text); padding:7px 12px; font-size:13px; font-weight:500;}
   button.ghost{background:transparent;}

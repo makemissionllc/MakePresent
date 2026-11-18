@@ -1156,11 +1156,11 @@
               </label>
               {#if appState?.broadcast.enabled}
                 {#if appState.broadcast.message !== "Live" && appState.broadcast.message !== "Stale"}
-                  <span class="badge" style="background: var(--semantic-idle, #64748b); color: white; font-size: 10px; padding: 3px 7px; border-radius: 4px;">{appState.broadcast.message}</span>
+                  <span class="badge" style="background: var(--semantic-idle, #64748b); color: white; font-size: 11px; padding: 3px 7px; border-radius: 4px;">{appState.broadcast.message}</span>
                 {:else if appState.broadcast.isStale || !appState.broadcast.hasRealFrames}
-                  <span class="badge" style="background: var(--semantic-warning, #f7b538); color: var(--semantic-warning-text, #3a2e10); font-size: 10px; padding: 3px 7px; border-radius: 4px;">Stale</span>
+                  <span class="badge" style="background: var(--semantic-warning, #f7b538); color: var(--semantic-warning-text, #3a2e10); font-size: 11px; padding: 3px 7px; border-radius: 4px;">Stale</span>
                 {:else}
-                  <span class="badge" style="background: var(--semantic-live, #1f9d6a); color: white; font-size: 10px; padding: 3px 7px; border-radius: 4px;">Live</span>
+                  <span class="badge" style="background: var(--semantic-live, #1f9d6a); color: white; font-size: 11px; padding: 3px 7px; border-radius: 4px;">Live</span>
                 {/if}
               {/if}
             </div>
@@ -1187,7 +1187,7 @@
                 NDI feed is stale — no valid frame recently. Last frame: {appState.broadcast.lastFrameAt ?? "never"}.
               </p>
             {/if}
-            <p class="hint" style="font-size: 11px; opacity: 0.8;">NDI® is a registered trademark of Vizrt NDI AB. Bundled NDI 6 Runtime 6.0.1 (Apr 16 2026) — see <code>src-tauri/resources/NDI_VERSION.txt</code> for currency. In OBS, add a DistroAV NDI Source and select <code>{appState?.broadcast.sourceName}</code>; the status above confirms when real frames are flowing.</p>
+            <p class="hint" style="font-size: 12px; opacity: 0.8;">NDI® is a registered trademark of Vizrt NDI AB. Bundled NDI 6 Runtime 6.0.1 (Apr 16 2026) — see <code>src-tauri/resources/NDI_VERSION.txt</code> for currency. In OBS, add a DistroAV NDI Source and select <code>{appState?.broadcast.sourceName}</code>; the status above confirms when real frames are flowing.</p>
           </div>
 
           <div class="bcast-block">
@@ -2080,31 +2080,31 @@
   .whats-new-intro p { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
   .release-card { margin: 0 0 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
   .release-card header { display: grid; gap: 3px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
-  .release-date { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .release-date { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .release-card h4 { margin: 0; color: var(--text); font-size: 14px; }
   .release-card ul { display: grid; gap: 10px; margin: 11px 0 0; padding: 0; list-style: none; }
   .release-card li { display: grid; grid-template-columns: 68px minmax(0, 1fr); align-items: start; gap: 9px; }
-  .change-kind { display: inline-flex; justify-content: center; padding: 3px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); font-size: 9px; font-weight: 700; }
+  .change-kind { display: inline-flex; justify-content: center; padding: 3px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); font-size: 11px; font-weight: 700; }
   .change-kind.new { border-color: var(--semantic-live-border); background: var(--semantic-live-bg); color: var(--accent); }
   .change-kind.improved { color: var(--text); }
   .change-kind.fixed { border-color: rgba(232, 174, 113, .4); background: rgba(232, 174, 113, .08); color: #e8ae71; }
-  .release-card li p { margin: 1px 0 0; color: var(--text-dim); font-size: 11px; line-height: 1.5; }
+  .release-card li p { margin: 1px 0 0; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
   .plugin-intro { margin: 4px 0 20px; }
-  .plugin-kicker { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+  .plugin-kicker { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .12em; }
   .plugin-intro h3 { margin: 6px 0; color: var(--text); font-size: 20px; }
   .plugin-intro p, .plugin-card p, .plugin-footnote { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
   .plugin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 275px), 1fr)); gap: 12px; }
   .plugin-card { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: start; gap: 10px 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
-  .plugin-icon { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid rgba(129,170,149,.2); border-radius: 9px; background: rgba(129,170,149,.08); color: var(--accent); font-size: 18px; }
+  .plugin-icon { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid rgba(214,154,114,.2); border-radius: 9px; background: rgba(214,154,114,.08); color: var(--accent); font-size: 18px; }
   .plugin-copy { min-width: 0; }
   .plugin-title { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin: 1px 0 5px; }
   .plugin-title h4 { margin: 0; color: var(--text); font-size: 13px; }
-  .plugin-status { flex: none; padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); font-size: 10px; line-height: 1.2; }
+  .plugin-status { flex: none; padding: 3px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); font-size: 11px; line-height: 1.2; }
   .plugin-status.connected { border-color: var(--semantic-live-border); background: var(--semantic-live-bg); color: var(--accent); }
   .plugin-action { grid-column: 2; display: flex; justify-content: space-between; align-items: center; width: 100%; min-height: 34px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); color: var(--text); font-size: 11px; text-align: left; }
-  .plugin-action:hover { border-color: var(--accent); background: rgba(129,170,149,.08); }
+  .plugin-action:hover { border-color: var(--accent); background: rgba(214,154,114,.08); }
   .plugin-action span { color: var(--accent); }
-  .plugin-footnote { margin: 16px 0 4px; font-size: 11px; }
+  .plugin-footnote { margin: 16px 0 4px; font-size: 12px; }
 
   .content {
     flex: 1;
@@ -2165,7 +2165,7 @@
   .log-filter { flex: 1 1 190px; min-width: min(190px, 100%); }
   .log-filter input { width: 100%; min-height: 34px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-2); color: var(--text); font: inherit; font-size: 12px; }
   .log-filter input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .log-summary { margin: 10px 0 0; color: var(--text-dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .log-summary { margin: 10px 0 0; color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
   .log-empty { color: var(--text-dim); font-style: italic; }
 
   .bcast-block {
@@ -2413,7 +2413,7 @@
 
   .badge {
     margin-left: auto;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;

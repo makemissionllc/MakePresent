@@ -378,9 +378,9 @@
     display: grid;
     gap: 0.4vh;
     padding: 1.2vh 1.2vw;
-    border: 1px solid rgba(129, 170, 149, 0.35);
+    border: 1px solid rgba(214, 154, 114, 0.35);
     border-radius: 10px;
-    background: rgba(129, 170, 149, 0.1);
+    background: rgba(214, 154, 114, 0.1);
     color: #e8edeb;
     font-variant-numeric: tabular-nums;
   }

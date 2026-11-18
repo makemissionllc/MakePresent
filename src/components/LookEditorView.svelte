@@ -866,7 +866,7 @@
       </svelte:boundary>
       {/key}
     {:else}
-      <p class="looks-empty">Select or create a Look to edit its style.</p>
+      <p class="looks-empty">{looks.length === 0 ? "No Looks yet. Create one with + New, or add the starter Looks above." : "Select a Look to edit its style."}</p>
     {/if}
   </div>
 </div>
@@ -935,7 +935,7 @@
     font-size: 13px;
   }
   .badge {
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     padding: 2px 5px;
     border-radius: 4px;
@@ -1028,7 +1028,7 @@
   }
   .box.body { border-color: #1f9d6a; background: rgba(31,157,106,0.08); }
   .box-label {
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -1115,7 +1115,7 @@
     font-weight: 700;
   }
   .look-pill { background: rgba(255,255,255,0.025); border-color: rgba(255,255,255,0.06); }
-  .look-pill.active { background: rgba(129,170,149,0.11); border-color: rgba(129,170,149,0.42); box-shadow: inset 2px 0 var(--accent); }
+  .look-pill.active { background: rgba(214,154,114,0.11); border-color: rgba(214,154,114,0.42); box-shadow: inset 2px 0 var(--accent); }
   .look-main {
     display: flex;
     flex-direction: column;
@@ -1174,7 +1174,7 @@
     gap: 3px;
     color: #fff;
     text-shadow: 0 1px 3px #000;
-    font-size: 10px;
+    font-size: 11px;
     letter-spacing: .08em;
   }
   .layout-presets {
@@ -1187,7 +1187,7 @@
   }
   .preset-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
   .preset-heading span { color: var(--text); font-size: 11px; font-weight: 700; }
-  .preset-heading small { color: var(--text-dim); font-size: 9px; }
+  .preset-heading small { color: var(--text-dim); font-size: 12px; }
   .preset-options { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
   .preset-card {
     display: grid;
@@ -1198,14 +1198,14 @@
     border-radius: 8px;
     background: rgba(0,0,0,0.16);
     color: var(--text-dim);
-    font-size: 9px;
+    font-size: 11px;
   }
-  .preset-card:hover { border-color: rgba(129,170,149,0.48); background: rgba(129,170,149,0.08); color: var(--text); }
+  .preset-card:hover { border-color: rgba(214,154,114,0.48); background: rgba(214,154,114,0.08); color: var(--text); }
   .look-editor-view { animation: looks-arrive var(--motion-normal) var(--ease-out) both; }
   .look-pill, .preset-card {
     transition: background var(--motion-normal) var(--ease-in-out), border-color var(--motion-normal) var(--ease-in-out), box-shadow var(--motion-normal) var(--ease-in-out), color var(--motion-normal) var(--ease-in-out);
   }
-  .look-pill:hover { border-color: rgba(129,170,149,0.45); }
+  .look-pill:hover { border-color: rgba(214,154,114,0.45); }
   .preset-card:hover { box-shadow: 0 5px 14px rgba(0,0,0,0.15); }
   @keyframes looks-arrive {
     from { opacity: 0; transform: translateY(6px); }
@@ -1213,7 +1213,7 @@
   }
   .look-form.context-selected > :not(.element-inspector) { display: none; }
   .look-form:not(.context-selected) > .element-only { display:none; }
-  .element-inspector { display: grid; gap: 11px; padding: 12px; border: 1px solid rgba(129,170,149,.25); border-radius: 10px; background: rgba(129,170,149,.055); }
+  .element-inspector { display: grid; gap: 11px; padding: 12px; border: 1px solid rgba(214,154,114,.25); border-radius: 10px; background: rgba(214,154,114,.055); }
   .element-inspector header { display:flex; align-items:center; justify-content:space-between; color:var(--text); }
   .element-inspector small { color:var(--text-dim); }
   .font-preview { margin:0; padding:8px; border-radius:6px; background:rgba(0,0,0,.2); font-size:18px; }
@@ -1221,7 +1221,7 @@
   .format-toggles label { display:flex; align-items:center; flex-direction:row; gap:6px; }
   .align-options { display:flex; gap:6px; align-items:center; }
   .align-options span { margin-right:auto; color:var(--text-dim); }
-  .align-options button.active { border-color:var(--accent); background:rgba(129,170,149,.14); }
+  .align-options button.active { border-color:var(--accent); background:rgba(214,154,114,.14); }
   .numeric-boxes { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
   .numeric-boxes label { font-size:10px; }
   .numeric-boxes input { width:100%; min-width:0; }
@@ -1264,7 +1264,7 @@
     justify-content: center;
     flex-direction: column;
     gap: 3px;
-    border: 1px solid rgba(129,170,149,0.32);
+    border: 1px solid rgba(214,154,114,0.32);
     border-radius: 4px;
     background: linear-gradient(145deg, #1e4437, #122a23);
   }
@@ -1289,12 +1289,12 @@
   .look-form .field-row { gap: 8px; }
   .look-form .field-row label { min-width: 0; }
   .positioning-row, .box-editor, .assign-block { border-color: rgba(255,255,255,0.08); }
-  .positioning-row { flex-wrap: wrap; padding: 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.02); }
+  .positioning-row { flex-wrap: wrap; padding: 14px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.02); }
   .box-editor { padding: 8px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; }
   .box-fields { flex-direction: column; gap: 8px; }
-  .box-field code { font-size: 9px; }
-  .look-form :global(.ts-section) { padding: 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.018); }
-  .look-form .assign-block { padding: 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.018); }
+  .box-field code { font-size: 11px; }
+  .look-form :global(.ts-section) { padding: 14px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.018); }
+  .look-form .assign-block { padding: 14px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.018); }
   @media (max-width: 960px) {
     .look-editor-view { height: auto; min-height: 0; }
     .look-main { display: flex; flex-direction: column; overflow: visible; }
@@ -1302,7 +1302,7 @@
     .look-form { max-height: none; overflow: visible; }
 
   }
-  .looks-list { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; }
+  .looks-list { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:12px; }
   .looks-sidebar { border-right:0; border-bottom:1px solid var(--border); padding:0 0 12px; }
   .look-pill { min-width:0; flex-wrap:wrap; }
   .thumbnail-error { display:grid; place-items:center; height:100%; font-size:8px; color:white; }

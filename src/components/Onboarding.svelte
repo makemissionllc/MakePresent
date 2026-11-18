@@ -108,7 +108,7 @@
   .sample-playlist > span:first-child { padding: 5px; font-size: 8px; letter-spacing: .08em; }
   .sample-row { padding: 8px; border-radius: 5px; }
   .sample-row b { margin-left: 8px; color: var(--text); font-weight: 500; }
-  .selected { background: #81aa951a; outline: 1px solid #81aa9550; }
+  .selected { background: #d69a721a; outline: 1px solid #d69a7250; }
   .sample-output { min-height: 148px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; background: #263c32; border-radius: 5px; text-align: center; }
   .sample-output span { color: #edf4ed; font-size: 22px; font-weight: 600; letter-spacing: -.04em; }
   .sample-output small { font-size: 10px; color: #becfc4; }

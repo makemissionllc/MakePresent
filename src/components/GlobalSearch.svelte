@@ -757,7 +757,7 @@
   }
   .result:hover { border-color: var(--accent); background: var(--panel); }
   .result { transition: none; }
-  .result:focus-visible { box-shadow: 0 0 0 3px rgba(129,170,149,0.14); }
+  .result:focus-visible { box-shadow: 0 0 0 3px rgba(214,154,114,0.14); }
   .online-result { position: relative; padding-right: 130px; }
   .online-note { margin: -3px 0 8px; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
   .online-action { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--accent); font-size: 10px; font-weight: 700; white-space: nowrap; }

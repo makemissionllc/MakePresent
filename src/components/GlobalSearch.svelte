@@ -618,7 +618,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 12px 14px;
+    padding: 16px 20px;
     border-bottom: 1px solid var(--border);
     background: var(--panel-2);
   }
@@ -630,7 +630,7 @@
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 8px 10px;
+    padding: 10px 14px;
   }
   .search-icon {
     color: var(--text-dim);
@@ -665,8 +665,8 @@
   }
   .close:hover { background: var(--panel); color: var(--text); }
   .palette-error {
-    margin: 8px 14px 0;
-    padding: 8px 10px;
+    margin: 10px 20px 0;
+    padding: 10px 14px;
     background: var(--semantic-error-bg, rgba(225, 29, 72, 0.12));
     border: 1px solid var(--semantic-error, #e11d48);
     border-radius: 6px;
@@ -676,7 +676,7 @@
   .palette-body {
     flex: 1;
     overflow: auto;
-    padding: 14px;
+    padding: 20px;
     min-height: 0;
   }
   .search-results {
@@ -753,7 +753,7 @@
     background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 9px 10px;
+    padding: 12px 14px;
   }
   .result:hover { border-color: var(--accent); background: var(--panel); }
   .result { transition: none; }
@@ -762,7 +762,7 @@
   .online-note { margin: -3px 0 8px; color: var(--text-dim); font-size: 10px; line-height: 1.4; }
   .online-action { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--accent); font-size: 10px; font-weight: 700; white-space: nowrap; }
   @media (max-width: 560px) { .online-result { padding-right: 10px; } .online-action { position: static; transform: none; margin-top: 4px; } }
-  .search-scopes { display: flex; gap: 6px; min-width: 0; overflow-x: auto; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--panel); scrollbar-width: thin; }
+  .search-scopes { display: flex; gap: 6px; min-width: 0; overflow-x: auto; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--panel); scrollbar-width: thin; }
   .search-scopes button { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); background: var(--panel-2); font: inherit; font-size: 11px; cursor: pointer; }
   .search-scopes button:hover { border-color: var(--accent); color: var(--text); }
   .search-scopes button.active { border-color: color-mix(in srgb, var(--accent) 65%, var(--border)); color: var(--text); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
@@ -798,7 +798,7 @@
   .palette-foot {
     display: flex;
     gap: 14px;
-    padding: 8px 14px;
+    padding: 12px 20px;
     border-top: 1px solid var(--border);
     background: var(--panel-2);
     color: var(--text-dim);

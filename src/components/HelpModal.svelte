@@ -141,10 +141,10 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-    padding: 14px 16px;
+    padding: 22px 24px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 14px;
   }
   .help-head {
     display: flex;
@@ -179,7 +179,7 @@
     border-radius: 6px;
     background: transparent;
     color: var(--text);
-    padding: 6px 12px;
+    padding: 8px 14px;
     cursor: pointer;
   }
   .section-title {

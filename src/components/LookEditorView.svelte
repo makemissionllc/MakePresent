@@ -604,9 +604,11 @@
           <label class="toggle"><input type="checkbox" bind:checked={safeMargins} /> Safe margins</label>
           <label class="toggle"><input type="checkbox" bind:checked={showGuides} /> Guides</label>
           <span class="toolbar-spacer"></span>
-          <button class="ghost" disabled={!undoStack.length} onclick={undo} title="Undo (Ctrl+Z)">↶</button>
-          <button class="ghost" disabled={!redoStack.length} onclick={redo} title="Redo (Ctrl+Shift+Z)">↷</button>
-          <button class="ghost" disabled={!baseline || JSON.stringify(baseline) === JSON.stringify(draft)} onclick={revertChanges}>Revert changes</button>
+          <div class="history-group" role="group" aria-label="Undo, redo and revert">
+            <button class="ghost" disabled={!undoStack.length} onclick={undo} title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+            <button class="ghost" disabled={!redoStack.length} onclick={redo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
+            <button class="ghost" disabled={!baseline || JSON.stringify(baseline) === JSON.stringify(draft)} onclick={revertChanges}>Revert changes</button>
+          </div>
         </div>
         <div class="look-preview-stage" data-look-canvas class:native-drop={nativeDropActive}>
           <svelte:boundary onerror={drawingError}>
@@ -1106,7 +1108,7 @@
   }
   .looks-sidebar {
     width: 100%;
-    padding: 4px 12px 4px 0;
+    padding: 8px 18px 8px 4px;
     border-color: rgba(255,255,255,0.07);
   }
   .looks-sidebar-head .section-title {
@@ -1122,7 +1124,7 @@
     align-items: start;
     gap: 18px;
     overflow: visible;
-    padding: 0 2px 0 0;
+    padding: 0 8px 0 4px;
   }
   .look-preview-wrap {
     position: static;
@@ -1226,6 +1228,7 @@
   .numeric-boxes label { font-size:10px; }
   .numeric-boxes input { width:100%; min-width:0; }
   .preview-toolbar { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+  .history-group { display:flex; align-items:center; gap:4px; flex:none; }
   .preview-toolbar label { display:flex; align-items:center; flex-direction:row; gap:6px; font-size:10px; }
   .preview-toolbar select { width:auto; min-width:130px; }
   .preview-toolbar .toggle input { width:auto; }
@@ -1249,7 +1252,7 @@
   .badge.kind-scripture { background:#566db3; }
   .badge.kind-text { background:#686879; }
   .kind-chips, .starter-banner, .assignment-notice { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
-  .starter-banner, .assignment-notice { padding:10px; border:1px solid var(--border); border-radius:8px; font-size:12px; }
+  .starter-banner, .assignment-notice { padding:14px; border:1px solid var(--border); border-radius:8px; font-size:12px; }
   .kind-chips button.active { border-color:var(--accent); background:var(--panel-2); }
   .look-actions { display:flex; gap:6px; flex-wrap:wrap; }
   .import-look { position:relative; display:inline-flex; align-items:center; padding:6px 10px; border:1px solid var(--border); border-radius:6px; cursor:pointer; }
@@ -1283,9 +1286,9 @@
     min-height: 0;
     overflow: visible;
     gap: 11px;
-    padding: 4px 8px 20px 2px;
+    padding: 8px 14px 24px 6px;
   }
-  .look-form > label, .look-form > .field { padding: 9px; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; background: rgba(255,255,255,0.018); }
+  .look-form > label, .look-form > .field { padding: 14px; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; background: rgba(255,255,255,0.018); }
   .look-form .field-row { gap: 8px; }
   .look-form .field-row label { min-width: 0; }
   .positioning-row, .box-editor, .assign-block { border-color: rgba(255,255,255,0.08); }

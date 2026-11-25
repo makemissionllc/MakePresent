@@ -66,8 +66,8 @@
 </div>
 
 <style>
-  .service-check-layer { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: #080d10aa; backdrop-filter: blur(4px); animation: veil-in 160ms ease-out both; }
-  .service-check { width: min(560px, 100%); max-height: min(760px, calc(100dvh - 40px)); overflow-y: auto; padding: 22px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 24px 80px #0008; }
+  .service-check-layer { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 28px; background: #080d10aa; backdrop-filter: blur(4px); animation: veil-in 160ms ease-out both; }
+  .service-check { width: min(560px, 100%); max-height: min(760px, calc(100dvh - 40px)); overflow-y: auto; padding: 32px; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 24px 80px #0008; }
   header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
   .eyebrow { color: var(--accent); font-size: 9px; font-weight: 800; letter-spacing: .13em; }
   h2 { margin: 5px 0 0; font-family: var(--font-display); font-size: 22px; letter-spacing: -.03em; }
@@ -78,16 +78,16 @@
   .progress-copy span { color: var(--text-dim); font-size: 11px; }
   .progress-track { height: 5px; margin: 11px 0 16px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
   .progress-track span { display: block; width: 100%; height: 100%; transform-origin: left; background: var(--accent); transition: transform var(--motion-normal) var(--ease-in-out); }
-  .check-list { display: grid; gap: 9px; }
-  .check-item { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 11px; padding: 13px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg); }
+  .check-list { display: grid; gap: 12px; }
+  .check-item { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 14px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg); }
   .check-mark { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid var(--border); border-radius: 50%; color: var(--text-dim); font-size: 11px; font-weight: 700; }
   .check-item.ready .check-mark { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
   .check-copy { min-width: 0; }
   .check-copy strong, .stage-note strong { font-size: 12px; }
   .check-copy p, .stage-note p { margin: 4px 0 0; color: var(--text-dim); font-size: 10px; line-height: 1.5; }
-  .check-action, .done { padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--panel-2); font-size: 10px; font-weight: 700; white-space: nowrap; }
+  .check-action, .done { padding: 9px 14px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--panel-2); font-size: 10px; font-weight: 700; white-space: nowrap; }
   .check-action span { color: var(--accent); }
-  .stage-note { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 11px; margin-top: 12px; padding: 12px 4px; }
+  .stage-note { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 11px; margin-top: 12px; padding: 16px 6px; }
   .stage-mark { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-dim); font-size: 12px; }
   .stage-note strong span { margin-left: 5px; color: var(--text-dim); font-size: 9px; font-weight: 500; }
   .text-action { border: 0; color: var(--accent); background: transparent; font-size: 10px; font-weight: 700; white-space: nowrap; }

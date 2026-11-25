@@ -197,7 +197,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 18px;
+    padding: 18px 24px;
     border-bottom: 1px solid var(--border);
     background: var(--panel-2);
   }
@@ -228,7 +228,7 @@
   }
 
   .content {
-    padding: 18px;
+    padding: 24px;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -236,7 +236,7 @@
 
   .dialog-message {
     margin: -4px 0 0;
-    padding: 9px 10px;
+    padding: 12px 14px;
     border: 1px solid color-mix(in srgb, var(--danger-text, #f87171) 35%, var(--border));
     border-radius: 7px;
     color: var(--danger-text, #f87171);
@@ -276,7 +276,7 @@
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-    padding-top: 4px;
+    padding-top: 8px;
   }
 
   button {
@@ -284,7 +284,7 @@
     border-radius: 6px;
     background: var(--panel-2);
     color: var(--text);
-    padding: 7px 14px;
+    padding: 9px 18px;
     font-size: 13px;
     font-weight: 500;
   }

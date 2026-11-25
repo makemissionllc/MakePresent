@@ -79,24 +79,24 @@
     border: 1px solid var(--accent, #4f8cff);
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-    padding: 12px 14px;
+    padding: 18px 20px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
     max-height: calc(100dvh - 100px);
     overflow-y: auto;
   }
   .tour-progress { height: 3px; overflow: hidden; border-radius: 99px; background: var(--panel-2); }
   .tour-progress span { display: block; width: 100%; height: 100%; background: var(--accent, #4f8cff); transform-origin: left center; transition: transform var(--motion-normal) var(--ease-in-out); }
   .tour-copy { display: grid; gap: 8px; }
-  .topic-picker { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; color: var(--text-dim); font-size: 10px; }
+  .topic-picker { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; color: var(--text-dim); font-size: 11px; }
   .topic-picker select { min-width: 0; padding: 5px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 11px; }
   .try-action { padding: 9px 12px; border: 1px solid var(--accent); border-radius: 7px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); color: var(--text); font-size: 12px; font-weight: 700; text-align: left; }
   .try-action span { float: right; color: var(--accent); }
   .tour-top {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
   }
   .tour-eyebrow {
     font-size: 11px;
@@ -143,7 +143,7 @@
   .tour-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
   }
   .tour-actions .spacer {
     flex: 1;
@@ -153,7 +153,7 @@
     border-radius: 6px;
     background: var(--panel-2);
     color: var(--text);
-    padding: 6px 12px;
+    padding: 8px 14px;
     cursor: pointer;
   }
   .tour-actions button.ghost {

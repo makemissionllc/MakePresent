@@ -2021,7 +2021,7 @@
     flex: 0 0 auto;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 18px;
+    padding: 18px 24px;
     border-bottom: 1px solid var(--border);
   }
 
@@ -2046,8 +2046,8 @@
   .tabs {
     display: flex;
     flex: 0 0 auto;
-    gap: 4px;
-    padding: 10px 14px 0;
+    gap: 2px;
+    padding: 14px 24px 0;
     border-bottom: 1px solid var(--border);
     /* Tabs scroll on narrow dialogs (dialog is overflow:hidden) — scroll
        the tab strip instead of clipping Audio/Logs out of reach. */
@@ -2059,7 +2059,7 @@
     border: 1px solid transparent;
     border-bottom: none;
     border-radius: 6px 6px 0 0;
-    padding: 8px 14px;
+    padding: 10px 14px;
     color: var(--text-dim);
     flex: none;
   }
@@ -2078,7 +2078,7 @@
   .whats-new-intro { margin: 4px 0 18px; }
   .whats-new-intro h3 { margin: 6px 0; color: var(--text); font-size: 20px; }
   .whats-new-intro p { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
-  .release-card { margin: 0 0 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+  .release-card { margin: 0 0 12px; padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
   .release-card header { display: grid; gap: 3px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
   .release-date { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .release-card h4 { margin: 0; color: var(--text); font-size: 14px; }
@@ -2094,7 +2094,7 @@
   .plugin-intro h3 { margin: 6px 0; color: var(--text); font-size: 20px; }
   .plugin-intro p, .plugin-card p, .plugin-footnote { margin: 0; color: var(--text-dim); font-size: 12px; line-height: 1.5; }
   .plugin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 275px), 1fr)); gap: 12px; }
-  .plugin-card { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: start; gap: 10px 12px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+  .plugin-card { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: start; gap: 12px 14px; padding: 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
   .plugin-icon { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid rgba(214,154,114,.2); border-radius: 9px; background: rgba(214,154,114,.08); color: var(--accent); font-size: 18px; }
   .plugin-copy { min-width: 0; }
   .plugin-title { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin: 1px 0 5px; }
@@ -2110,7 +2110,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 16px 18px;
+    padding: 24px;
   }
 
   .hint {
@@ -2133,7 +2133,7 @@
     display: flex;
     justify-content: space-between;
     gap: 12px;
-    padding: 9px 12px;
+    padding: 11px 14px;
     font-size: 13px;
     border-bottom: 1px solid var(--border);
   }
@@ -2173,7 +2173,7 @@
     flex-direction: column;
     gap: 8px;
     margin-bottom: 16px;
-    padding: 12px 14px;
+    padding: 16px 18px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--panel-2);
@@ -2317,7 +2317,7 @@
   .status {
     font-size: 13px;
     margin: 12px 0 0;
-    padding: 8px 10px;
+    padding: 10px 12px;
     border-radius: 6px;
     background: var(--live-bg);
     color: #c9f4d8;
@@ -2330,7 +2330,7 @@
 
   .log-view {
     margin: 12px 0 0;
-    padding: 10px;
+    padding: 18px;
     background: #101218;
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -2393,7 +2393,7 @@
     background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 8px 10px;
+    padding: 10px 12px;
     font-size: 13px;
     color: var(--text);
   }
@@ -2436,7 +2436,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    padding: 14px;
+    padding: 18px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--panel-2);
@@ -2640,7 +2640,7 @@
   .trigger-section {
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 14px;
+    padding: 18px;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -2819,7 +2819,7 @@
   .panel-network .net-section {
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 14px;
+    padding: 18px;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -2846,7 +2846,7 @@
 
   .net-url {
     display: inline-block;
-    padding: 8px 10px;
+    padding: 10px 12px;
     background: #101218;
     border: 1px solid var(--border);
     border-radius: 6px;

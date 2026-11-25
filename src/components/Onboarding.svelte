@@ -86,39 +86,39 @@
 <style>
   dialog { width: min(820px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 24px 80px #0008; overflow: auto; }
   dialog::backdrop { background: #080d10bf; }
-  header, footer { display: flex; align-items: center; gap: 12px; padding: 20px 24px; }
+  header, footer { display: flex; align-items: center; gap: 12px; padding: 24px 32px; }
   header { justify-content: space-between; border-bottom: 1px solid var(--border); }
   button { font: inherit; font-size: 13px; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 7px; padding: 9px 13px; cursor: pointer; }
   button:hover { border-color: var(--accent); }
   .quiet { background: transparent; border-color: transparent; color: var(--text-dim); }
   header .quiet { font-size: 22px; padding: 0; width: 32px; height: 32px; }
   .content { display: grid; grid-template-columns: 176px minmax(0, 1fr); }
-  nav { padding: 24px 12px; border-right: 1px solid var(--border); background: var(--bg); }
-  nav button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; border-color: transparent; color: var(--text-dim); margin-bottom: 8px; padding: 10px 8px; font-size: 12px; }
+  nav { padding: 28px 16px; border-right: 1px solid var(--border); background: var(--bg); }
+  nav button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: transparent; border-color: transparent; color: var(--text-dim); margin-bottom: 8px; padding: 12px 12px; font-size: 12px; }
   nav button.current { color: var(--text); background: var(--panel-2); }
-  .step-number { display: grid; place-items: center; width: 21px; height: 21px; flex: none; border: 1px solid var(--border); border-radius: 50%; font-size: 10px; }
+  .step-number { display: grid; place-items: center; width: 21px; height: 21px; flex: none; border: 1px solid var(--border); border-radius: 50%; font-size: 11px; }
   .current .step-number { color: var(--bg); background: var(--accent); border-color: var(--accent); }
-  section { padding: 30px; min-height: 380px; }
-  .eyebrow { margin: 0 0 12px; font-size: 10px; font-weight: 600; letter-spacing: .14em; color: var(--accent); }
+  section { padding: 36px 40px; min-height: 380px; }
+  .eyebrow { margin: 0 0 12px; font-size: 11px; font-weight: 600; letter-spacing: .14em; color: var(--accent); }
   h1 { margin: 0; font-family: var(--font-body); font-size: clamp(22px, 3vw, 30px); line-height: 1.2; font-weight: 600; letter-spacing: -.04em; outline: none; }
   p { font-size: 13px; line-height: 1.6; color: var(--text-dim); }
   .intro { margin: 14px 0 22px; }
-  .preview { display: grid; grid-template-columns: 118px minmax(0, 1fr); padding: 12px; gap: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
-  .sample-playlist { display: flex; flex-direction: column; gap: 8px; color: var(--text-dim); font-size: 9px; }
-  .sample-playlist > span:first-child { padding: 5px; font-size: 8px; letter-spacing: .08em; }
+  .preview { display: grid; grid-template-columns: 118px minmax(0, 1fr); padding: 16px; gap: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+  .sample-playlist { display: flex; flex-direction: column; gap: 8px; color: var(--text-dim); font-size: 11px; }
+  .sample-playlist > span:first-child { padding: 5px; font-size: 11px; letter-spacing: .08em; }
   .sample-row { padding: 8px; border-radius: 5px; }
   .sample-row b { margin-left: 8px; color: var(--text); font-weight: 500; }
   .selected { background: #d69a721a; outline: 1px solid #d69a7250; }
   .sample-output { min-height: 148px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; background: #263c32; border-radius: 5px; text-align: center; }
   .sample-output span { color: #edf4ed; font-size: 22px; font-weight: 600; letter-spacing: -.04em; }
-  .sample-output small { font-size: 10px; color: #becfc4; }
+  .sample-output small { font-size: 11px; color: #becfc4; }
   .note { font-size: 12px; margin: 18px 0 0; }
   .guide { display: flex; flex-direction: column; gap: 20px; list-style: none; margin: 0; padding: 0; }
   .guide li, .display-status { display: flex; gap: 12px; }
   .guide-icon { width: 28px; height: 28px; display: grid; place-items: center; flex: none; background: var(--panel-2); border-radius: 7px; color: var(--accent); font-size: 12px; }
   strong { font-size: 13px; font-weight: 600; }
   .guide p, .display-status p, .connection-notes p { margin: 4px 0 0; font-size: 12px; }
-  .display-status { padding: 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2); }
+  .display-status { padding: 20px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2); }
   .status-dot { width: 7px; height: 7px; flex: none; margin-top: 6px; border-radius: 50%; background: var(--accent); }
   .connection-notes { margin-top: 20px; }
   .next-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }

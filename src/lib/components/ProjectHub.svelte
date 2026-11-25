@@ -144,6 +144,7 @@
 
   const hasSaved = $derived(playlists.length > 0);
   let galleryQuery = $state("");
+  let gallerySearchInput: HTMLInputElement | undefined = $state();
   let favoritesOnly = $state(false);
   let favoriteStartingPointIds = $state(readFavoriteStartingPoints());
   const favoriteStartingPointSet = $derived(new Set(favoriteStartingPointIds));
@@ -273,11 +274,43 @@
     onDeletePlaylist(id);
   }
 
+  const cardStep: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -2, ArrowDown: 2 };
+  function onCardKey(e: KeyboardEvent): void {
+    const step = cardStep[e.key];
+    if (step === undefined || e.altKey || e.ctrlKey || e.metaKey) return;
+    const grid = (e.currentTarget as HTMLElement).closest(".grid");
+    if (!grid) return;
+    const cards = Array.from(grid.querySelectorAll<HTMLButtonElement>(".card"));
+    const from = cards.indexOf(e.currentTarget as HTMLButtonElement);
+    if (from < 0) return;
+    const to = Math.max(0, Math.min(cards.length - 1, from + step));
+    if (to === from) return;
+    e.preventDefault();
+    cards[to].focus();
+  }
+
   function onKey(e: KeyboardEvent): void {
+    if (e.key === "Escape" && galleryQuery && e.target === gallerySearchInput) {
+      e.preventDefault();
+      e.stopPropagation();
+      galleryQuery = "";
+      return;
+    }
     if (e.key === "Escape" && !creating) {
       e.preventDefault();
       e.stopPropagation();
       onClose();
+      return;
+    }
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !creating && selectedIsVisible) {
+      e.preventDefault();
+      void create();
+      return;
+    }
+    const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
+    if (e.key === "/" && !typing && !creating && !e.ctrlKey && !e.metaKey && !e.altKey && gallerySearchInput) {
+      e.preventDefault();
+      gallerySearchInput.focus();
       return;
     }
     if (e.key !== "Tab") return;
@@ -335,7 +368,7 @@
               {#if gallery.length > 5}
                 <label class="gallery-search">
                   <span class="sr-only">Filter starting playlists</span>
-                  <input type="search" bind:value={galleryQuery} placeholder="Find a starting playlist" autocomplete="off" disabled={creating} />
+                  <input bind:this={gallerySearchInput} type="search" bind:value={galleryQuery} placeholder="Find a starting playlist (press /)" aria-keyshortcuts="/" autocomplete="off" disabled={creating} />
                   {#if galleryQuery.trim()}<span class="search-count" aria-live="polite">{visibleGallery.length} of {gallery.length}</span>{/if}
                 </label>
               {/if}
@@ -358,6 +391,7 @@
                   class:selected={item.id === selectedId}
                   data-kind={item.kind}
                   onclick={() => chooseStartingPoint(item.id)}
+                  onkeydown={onCardKey}
                   aria-pressed={item.id === selectedId}
                   disabled={creating}
                 >
@@ -400,7 +434,7 @@
             {#if gallery.length > 0 && visibleGallery.length === 0}
               <div class="empty-search">
                 <p class="muted">{favoritesOnly && favoriteCount === 0 ? "No favorites yet. Star a starting playlist to keep it here." : favoritesOnly ? "No favorite starting playlists match that search." : `No starting playlists match “${galleryQuery.trim()}”.`}</p>
-                {#if favoritesOnly}<button class="show-all" onclick={() => { favoritesOnly = false; galleryQuery = ""; }} disabled={creating}>Show all starting playlists</button>{/if}
+                {#if favoritesOnly}<button class="show-all" onclick={() => { favoritesOnly = false; galleryQuery = ""; }} disabled={creating}>Show all starting playlists</button>{:else if galleryQuery.trim()}<button class="show-all" onclick={() => { galleryQuery = ""; gallerySearchInput?.focus(); }} disabled={creating}>Clear search</button>{/if}
               </div>
             {:else if gallery.length === 0}
               <p class="muted" role="status">{startingPointsReady ? "No starting playlists are available yet. Start from a blank View instead." : "Loading starting playlists…"}</p>
@@ -435,7 +469,7 @@
 
           <label class="field">
             <span>View Title / Date</span>
-            <input type="text" value={title} placeholder="Sunday Morning - {todayLabel()}" oninput={(e)=> title=(e.target as HTMLInputElement).value} disabled={creating} />
+            <input type="text" value={title} placeholder="Sunday Morning - {todayLabel()}" oninput={(e)=> title=(e.target as HTMLInputElement).value} onkeydown={(e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); void create(); } }} disabled={creating} />
             <span class="help">Auto-naming: e.g. “Sunday Morning - Sept 6, 2026”</span>
           </label>
 
@@ -481,7 +515,7 @@
 <style>
   .hub-overlay{position:fixed; inset:0; z-index:70; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.62);}
   .hub{width:min(1120px,96vw); max-height:92vh; background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.48);}
-  .hub-head{display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); background:var(--panel);}
+  .hub-head{display:flex; align-items:center; justify-content:space-between; padding:20px 28px; border-bottom:1px solid var(--border); background:var(--panel);}
   .brand{display:flex; gap:20px; align-items:center; flex-wrap:wrap; min-width:0; color:var(--text);}
   .brand h1{margin:0; font-family:var(--font-body); font-size:16px; font-weight:650; letter-spacing:-0.01em; color:var(--text);}
   .brand p{margin:2px 0 0; font-size:11px; color:var(--text-dim);}
@@ -489,13 +523,13 @@
   .close:hover{background:var(--panel); color:var(--text);}
   .hub-body{display:grid; grid-template-columns: minmax(0,1fr) 340px; grid-template-rows:minmax(0,1fr); gap:0; min-height:0; flex:1; overflow:hidden;}
   @media (max-width:900px){ .hub-body{grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr) minmax(230px,42vh);} .inspector{border-left:none; border-top:1px solid var(--border);} }
-  .gallery{padding:24px; overflow:auto; background: var(--panel-2); min-height:0;}
+  .gallery{padding:32px 28px; overflow:auto; background: var(--panel-2); min-height:0;}
   .gallery-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px;}
   .gallery-head h2{margin:0; font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-dim);}
   .gallery-note{font-size:12px; color:var(--text-dim); margin:-4px 0 10px;}
   .gallery-tools{display:flex; align-items:center; gap:8px; margin:0 0 10px; flex-wrap:wrap;}
   .gallery-search{display:flex; align-items:center; gap:10px; flex:1 1 220px; min-width:0; margin:0;}
-  .gallery-search input{flex:1; min-width:0; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); font-size:12px;}
+  .gallery-search input{flex:1; min-width:0; padding:10px 14px; border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); font-size:12px;}
   .gallery-search input:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
   .search-count{flex:none; color:var(--text-dim); font-size:11px; font-variant-numeric:tabular-nums;}
   .favorites-filter{display:flex; align-items:center; justify-content:center; gap:5px; min-height:34px; padding:6px 10px; border-radius:8px; color:var(--text-dim); font-size:11px; white-space:nowrap;}
@@ -509,7 +543,7 @@
   .grid{display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:16px;}
   @media (max-width:640px){ .grid{grid-template-columns:1fr;} }
   .card-wrap{position:relative; min-width:0;}
-  .card{position:relative; width:100%; text-align:left; padding:18px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color var(--motion-normal) var(--ease-in-out),border-color var(--motion-normal) var(--ease-in-out),box-shadow var(--motion-normal) var(--ease-in-out),transform var(--motion-fast) var(--ease-in-out);}
+  .card{position:relative; width:100%; text-align:left; padding:22px 24px; border-radius:9px; border:1px solid var(--border); background:var(--panel); color:var(--text); min-height:140px; display:flex; flex-direction:column; gap:6px; overflow:hidden; transition:background-color var(--motion-normal) var(--ease-in-out),border-color var(--motion-normal) var(--ease-in-out),box-shadow var(--motion-normal) var(--ease-in-out),transform var(--motion-fast) var(--ease-in-out);}
   .card:hover{border-color:#46514e; background:var(--panel); transform:translateY(-1px);}
   .card.selected{border-color:var(--accent); background:#202825; box-shadow:0 0 0 2px rgba(214,154,114,0.12);}
   .card-badge{position:absolute; top:10px; right:42px; font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:3px 7px; border-radius:999px; border:1px solid transparent; color:white;}
@@ -535,14 +569,14 @@
   .recent-item{display:flex; gap:9px; align-items:flex-start; font-size:12px; color:var(--text);}
   .recent-copy{display:grid; gap:3px; min-width:0;}
   .recent-copy strong{overflow-wrap:anywhere; font-size:12px;}
-  .resume-current{display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:10px 12px; border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:8px; background:color-mix(in srgb,var(--accent) 8%,var(--panel)); color:var(--accent); font-size:12px; font-weight:650; text-align:left; cursor:pointer; transition:background var(--motion-fast) var(--ease-in-out),border-color var(--motion-fast) var(--ease-in-out),transform var(--motion-fast) var(--ease-in-out);}
+  .resume-current{display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; padding:12px 16px; border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border)); border-radius:8px; background:color-mix(in srgb,var(--accent) 8%,var(--panel)); color:var(--accent); font-size:12px; font-weight:650; text-align:left; cursor:pointer; transition:background var(--motion-fast) var(--ease-in-out),border-color var(--motion-fast) var(--ease-in-out),transform var(--motion-fast) var(--ease-in-out);}
   .resume-current:hover{border-color:var(--accent); background:color-mix(in srgb,var(--accent) 13%,var(--panel)); transform:translateY(-1px);}
   .resume-current.tutorial-highlight{outline:2px solid var(--accent); outline-offset:2px; animation:resume-pulse 1.2s var(--ease-out) 2;}
   @keyframes resume-pulse{50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 18%,transparent);}}
   @media (prefers-reduced-motion: reduce){.resume-current{transition:none}.resume-current.tutorial-highlight{animation:none}}
   .dot{width:8px; height:8px; border-radius:999px; background:var(--accent);}
   .muted{font-size:12px; color:var(--text-dim);}
-  .inspector{padding:22px; overflow:auto; background:var(--panel); border-left:1px solid var(--border); display:flex; flex-direction:column; gap:18px; min-height:0;}
+  .inspector{padding:28px 26px; overflow:auto; background:var(--panel); border-left:1px solid var(--border); display:flex; flex-direction:column; gap:18px; min-height:0;}
   .inspector-head h3{margin:0; font-size:13px; font-weight:700; color:var(--text);}
   .inspector-head p{margin:4px 0 0; font-size:11px; color:var(--text-dim); line-height:1.4; white-space:pre-line;}
   .selection-filter-warning{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:9px 10px; border:1px solid color-mix(in srgb,var(--semantic-warning) 40%,var(--border)); border-radius:8px; background:var(--semantic-warning-bg); color:var(--text); font-size:11px; line-height:1.35;}
@@ -557,7 +591,7 @@
   .toggles button strong{font-size:11px;}
   .toggles button span{font-size:11px; color:var(--text-dim);}
   .inspector-actions{display:flex; gap:8px; margin-top:auto; padding-top:6px;}
-  button{border:1px solid var(--border); border-radius:6px; background:var(--panel-2); color:var(--text); padding:7px 12px; font-size:13px; font-weight:500;}
+  button{border:1px solid var(--border); border-radius:6px; background:var(--panel-2); color:var(--text); padding:9px 16px; font-size:13px; font-weight:500;}
   button.ghost{background:transparent;}
   button.primary{background:#456b58; border-color:#527962; color:#f4faf6; flex:1;}
   button.primary:hover{background:#527962;}
@@ -569,15 +603,15 @@
   button:disabled{opacity:.55; cursor:not-allowed;}
   @media (max-width:640px){
     .hub{width:100vw; height:100dvh; max-height:100dvh; border-radius:0;}
-    .hub-head{padding:12px 14px; gap:10px;}
+    .hub-head{padding:14px 18px; gap:12px;}
     .brand{gap:10px;}
     .brand p{max-width:48ch; line-height:1.35;}
-    .gallery{padding:14px;}
+    .gallery{padding:20px 18px;}
     .gallery-head{align-items:flex-start; gap:8px; flex-direction:column;}
     .grid{grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;}
-    .card{min-height:132px; padding:11px;}
+    .card{min-height:132px; padding:16px;}
     .card-badge{top:8px; right:42px;}
-    .inspector{padding:12px 14px; gap:10px;}
+    .inspector{padding:18px; gap:14px;}
     .toggles{grid-template-columns:repeat(3,minmax(0,1fr));}
     .toggles button{padding:7px;}
     .inspector-actions{position:sticky; bottom:-12px; padding:10px 0 12px; background:var(--panel);}
